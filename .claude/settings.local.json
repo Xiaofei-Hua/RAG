@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -m graph.graph --query \"什么是半导体封装？\")"
+    ]
+  }
+}
