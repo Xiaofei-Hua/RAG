@@ -139,6 +139,14 @@ def create_grade_function(
         """
         log.info("---检查文档相关性---")
 
+        # 检查重写次数限制
+        rewrite_count = state.get("rewrite_count", 0)
+        max_rewrites = state.get("max_rewrites", 3)
+
+        if rewrite_count >= max_rewrites:
+            log.warning(f"已达到最大重写次数 {rewrite_count}/{max_rewrites}, 强制进入生成节点")
+            return "generate"
+
         messages = state["messages"]
         last_message = messages[-1]
 
@@ -155,12 +163,15 @@ def create_grade_function(
                 log.info("---文档相关, 进入生成节点---")
                 return "generate"
             else:
-                log.info("---文档不相关, 进入重写节点---")
+                log.info(f"---文档不相关, 进入重写节点 ({rewrite_count + 1}/{max_rewrites})---")
                 return "rewrite"
 
         except Exception as e:
             log.error(f"Grading failed: {e}")
-            # Default to rewrite on error
+            # 检查是否还能重试
+            if rewrite_count >= max_rewrites:
+                log.warning("已达最大重写次数，强制生成")
+                return "generate"
             return "rewrite"
 
     return grade_documents
@@ -289,6 +300,7 @@ class RAGGraph:
         self,
         question: str,
         thread_id: Optional[str] = None,
+        max_rewrites: int = 3,
     ) -> Dict[str, Any]:
         """
         Invoke the graph with a question.
@@ -296,6 +308,7 @@ class RAGGraph:
         Args:
             question: User's question
             thread_id: Optional thread ID for session continuity
+            max_rewrites: Maximum number of query rewrites (default 3)
 
         Returns:
             Final state after execution
@@ -308,8 +321,11 @@ class RAGGraph:
             }
         }
 
+        # Initialize state with rewrite count tracking
         inputs = {
-            "messages": [HumanMessage(content=question)]
+            "messages": [HumanMessage(content=question)],
+            "rewrite_count": 0,
+            "max_rewrites": max_rewrites,
         }
 
         return self.graph.invoke(inputs, config=config)
@@ -319,6 +335,7 @@ class RAGGraph:
         question: str,
         thread_id: Optional[str] = None,
         stream_mode: str = "values",
+        max_rewrites: int = 3,
     ):
         """
         Stream the graph execution.
@@ -327,6 +344,7 @@ class RAGGraph:
             question: User's question
             thread_id: Optional thread ID for session continuity
             stream_mode: Streaming mode ("values" or "updates")
+            max_rewrites: Maximum number of query rewrites (default 3)
 
         Yields:
             State updates during execution
@@ -340,7 +358,9 @@ class RAGGraph:
         }
 
         inputs = {
-            "messages": [HumanMessage(content=question)]
+            "messages": [HumanMessage(content=question)],
+            "rewrite_count": 0,  # 重置重写计数
+            "max_rewrites": max_rewrites,
         }
 
         yield from self.graph.stream(inputs, config=config, stream_mode=stream_mode)

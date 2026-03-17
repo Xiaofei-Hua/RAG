@@ -43,7 +43,6 @@ __all__ = [
 
 # Config / Stats
 
-
 @dataclass(frozen=True)
 class MarkdownParserConfig:
     """Configuration for MarkdownParser with sensible defaults."""
@@ -341,7 +340,7 @@ class MarkdownParser:
         raw_docs = self._parse_markdown(md_path, encoding=encoding)
         stats.loaded_elements = len(raw_docs)
         self.log.info(
-            f"[MarkdownParser] loaded elements={stats.loaded_elements} file={md_path.name}"
+            f"[MarkdownParser] loaded elements = {stats.loaded_elements}, file = {md_path.name}"
         )
 
         # Step 2: Normalize elements
@@ -377,15 +376,15 @@ class MarkdownParser:
 
         self.log.info(
             f"[MarkdownParser] done "
-            f"merged={stats.merged_docs} chunked={stats.chunked_docs} "
-            f"dup_element_id={stats.duplicates_element_id_count} "
-            f"forward_parent_ref={stats.forward_parent_ref_count} "
-            f"orphans_out={stats.orphan_elements_output} "
-            f"semantic_in={sem_in} semantic_out={sem_out} "
-            f"semantic_fail={sem_fail} fallback_used={fb_used} "
-            f"tokenizer_model={stats.tokenizer_model_used} "
-            f"enc={stats.tokenizer_encoding_used} "
-            f"cost={stats.cost_ms:.1f}ms file={md_path.name}"
+            f"merged = {stats.merged_docs}, chunked = {stats.chunked_docs} "
+            f"dup_element_id = {stats.duplicates_element_id_count} "
+            f"forward_parent_ref = {stats.forward_parent_ref_count} "
+            f"orphans_out = {stats.orphan_elements_output} "
+            f"semantic_in = {sem_in} semantic_out = {sem_out} "
+            f"semantic_fail = {sem_fail} fallback_used = {fb_used} "
+            f"tokenizer_model = {stats.tokenizer_model_used} "
+            f"enc = {stats.tokenizer_encoding_used} "
+            f"cost = {stats.cost_ms:.1f}ms file = {md_path.name}"
         )
         return chunked_docs
 

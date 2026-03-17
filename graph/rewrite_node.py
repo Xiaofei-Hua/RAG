@@ -113,7 +113,7 @@ class RewriteNode:
         """Execute the rewrite node."""
         return self.invoke(state)
 
-    def invoke(self, state: AgentState) -> Dict[str, List[BaseMessage]]:
+    def invoke(self, state: AgentState) -> Dict[str, Any]:
         """
         Invoke the rewrite node.
 
@@ -121,11 +121,21 @@ class RewriteNode:
             state: Current graph state containing messages
 
         Returns:
-            Dictionary with rewritten question message
+            Dictionary with rewritten question message and updated rewrite_count
         """
         messages = state["messages"]
 
-        log.info("---进入Rewrite节点, 重写查询---")
+        # Get current rewrite count
+        rewrite_count = state.get("rewrite_count", 0)
+        max_rewrites = state.get("max_rewrites", 3)
+
+        log.info(f"---进入Rewrite节点, 重写查询 ({rewrite_count + 1}/{max_rewrites})---")
+
+        # Check if we've exceeded max rewrites (safety check)
+        if rewrite_count >= max_rewrites:
+            log.warning(f"已达到最大重写次数 {rewrite_count}/{max_rewrites}, 应该直接生成回答")
+            # Return without incrementing, let the grader handle it
+            return {"messages": []}
 
         # Extract the original question
         try:
@@ -143,7 +153,11 @@ class RewriteNode:
 
                 log.info(f"查询重写完成: '{original_question[:50]}...' -> '{rewritten[:50]}...'")
 
-                return {"messages": [HumanMessage(content=rewritten)]}
+                # Return rewritten message AND increment rewrite count
+                return {
+                    "messages": [HumanMessage(content=rewritten)],
+                    "rewrite_count": rewrite_count + 1,
+                }
 
             except Exception as e:
                 log.warning(f"Rewrite attempt {attempt + 1} failed: {e}")
@@ -155,11 +169,20 @@ class RewriteNode:
 
                     if self.config.preserve_original_on_failure:
                         log.info("Preserving original question")
-                        return {"messages": [HumanMessage(content=original_question)]}
+                        return {
+                            "messages": [HumanMessage(content=original_question)],
+                            "rewrite_count": rewrite_count + 1,
+                        }
 
-                    return {"messages": [AIMessage(content="查询重写失败，请重新提问。")]}
+                    return {
+                        "messages": [AIMessage(content="查询重写失败，请重新提问。")],
+                        "rewrite_count": rewrite_count + 1,
+                    }
 
-        return {"messages": [HumanMessage(content=original_question)]}
+        return {
+            "messages": [HumanMessage(content=original_question)],
+            "rewrite_count": rewrite_count + 1,
+        }
 
 
 # =============================================================================

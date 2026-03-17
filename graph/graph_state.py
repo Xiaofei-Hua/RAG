@@ -44,8 +44,15 @@ class AgentState(TypedDict):
     new messages are appended to the existing list rather than replacing it.
 
     This enables conversational memory within the graph execution.
+
+    Fields:
+        messages: List of conversation messages
+        rewrite_count: Number of query rewrites attempted (to prevent infinite loops)
+        max_rewrites: Maximum allowed rewrites before forcing generation
     """
     messages: Annotated[list[BaseMessage], add_messages]
+    rewrite_count: int  # Track number of rewrites to prevent infinite loops
+    max_rewrites: int   # Maximum allowed rewrites
 
 
 class GraphMetadata(TypedDict, total=False):
@@ -158,11 +165,29 @@ class StateManager:
         return messages[-1] if messages else None
 
     @staticmethod
-    def create_initial_state(message: str) -> AgentState:
+    def create_initial_state(message: str, max_rewrites: int = 3) -> AgentState:
         """Create initial state from a user message."""
         return {
-            "messages": [("user", message)]
+            "messages": [("user", message)],
+            "rewrite_count": 0,
+            "max_rewrites": max_rewrites,
         }
+
+    @staticmethod
+    def increment_rewrite_count(state: AgentState) -> AgentState:
+        """Increment the rewrite count (returns new state dict)."""
+        current = state.get("rewrite_count", 0)
+        return {
+            "rewrite_count": current + 1,
+            "max_rewrites": state.get("max_rewrites", 3),
+        }
+
+    @staticmethod
+    def is_rewrite_limit_reached(state: AgentState) -> bool:
+        """Check if rewrite limit has been reached."""
+        count = state.get("rewrite_count", 0)
+        max_count = state.get("max_rewrites", 3)
+        return count >= max_count
 
     @staticmethod
     def append_message(state: AgentState, message: BaseMessage) -> AgentState:

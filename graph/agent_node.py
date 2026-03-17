@@ -112,6 +112,10 @@ class AgentNode:
         """
         messages = state["messages"]
 
+        # 检查重写次数，防止无限循环
+        rewrite_count = state.get("rewrite_count", 0)
+        max_rewrites = state.get("max_rewrites", 3)
+
         # Get the last message for context
         last_message = messages[-1] if messages else None
 
@@ -119,7 +123,11 @@ class AgentNode:
             log.warning("No messages in state")
             return {"messages": [AIMessage(content="请输入您的问题。")]}
 
-        log.info(f"---进入Agent节点, 消息数: {len(messages)}---")
+        log.info(f"---进入Agent节点, 消息数: {len(messages)}, 重写次数: {rewrite_count}/{max_rewrites}---")
+
+        # 如果达到最大重写次数，直接返回原始问题让模型直接回答
+        if rewrite_count >= max_rewrites:
+            log.warning(f"已达到最大重写次数 {rewrite_count}/{max_rewrites}, 直接生成回答")
 
         # Invoke with retry
         for attempt in range(self.config.max_retries + 1):
@@ -128,9 +136,29 @@ class AgentNode:
                 return {"messages": [response]}
 
             except Exception as e:
+                error_str = str(e)
                 log.warning(f"Agent invoke attempt {attempt + 1} failed: {e}")
 
-                if attempt < self.config.max_retries:
+                # 检查是否是速率限制错误 (429)
+                if "429" in error_str or "rate limit" in error_str.lower():
+                    # 提取等待时间（如果有的话）
+                    import re
+                    wait_match = re.search(r'wait[:\s]+(\d+)\s*seconds', error_str, re.IGNORECASE)
+                    wait_time = int(wait_match.group(1)) if wait_match else 60
+
+                    log.warning(f"API速率限制，需要等待 {wait_time} 秒")
+
+                    if attempt < self.config.max_retries:
+                        # 等待更长时间
+                        time.sleep(min(wait_time, 30))  # 最多等待30秒
+                    else:
+                        return {
+                            "messages": [AIMessage(
+                                content=f"API请求频率受限，请等待约 {wait_time} 秒后再试。"
+                            )]
+                        }
+
+                elif attempt < self.config.max_retries:
                     time.sleep(self.config.retry_delay * (attempt + 1))
                 else:
                     log.error(f"Agent failed after {self.config.max_retries + 1} attempts")

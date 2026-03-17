@@ -309,13 +309,21 @@ class MilvusManager:
         return True
 
     def _ensure_collection_loaded(self) -> None:
-        """Ensure collection is loaded into memory."""
+        """Ensure collection exists and is loaded into memory."""
         if not self._collection_loaded:
             try:
+                # Check if collection exists
+                collections = self.client.list_collections()
+                if self.config.collection_name not in collections:
+                    log.warning(f"Collection '{self.config.collection_name}' not found, creating...")
+                    self.create_collection(drop_if_exists=False)
+
                 self.client.load_collection(self.config.collection_name)
                 self._collection_loaded = True
+                log.debug(f"Collection '{self.config.collection_name}' loaded successfully")
             except Exception as e:
-                log.debug(f"Collection load: {e}")
+                log.error(f"Failed to ensure collection loaded: {e}")
+                raise
 
     @retry_on_failure()
     def add_documents(
