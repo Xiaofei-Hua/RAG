@@ -80,18 +80,34 @@ class BM25Retriever:
         """Tokenize text into terms."""
         if not text:
             return []
+        text = self._normalize_text(text)
 
         # Try to use jieba for Chinese text
         try:
             import jieba
             tokens = list(jieba.cut(text))
         except ImportError:
-            # Fallback to simple whitespace/punctuation splitting
-            tokens = re.findall(r'\w+', text.lower())
+            # Fallback for Chinese + English mixed text
+            tokens = re.findall(r"[a-zA-Z0-9_]+|[\u4e00-\u9fff]+", text.lower())
 
         # Filter short tokens
         min_len = self.config.min_token_length
-        return [t.lower() for t in tokens if len(t) >= min_len]
+        clean_tokens = []
+        for t in tokens:
+            token = t.strip().lower()
+            if not token or len(token) < min_len:
+                continue
+            clean_tokens.append(token)
+        return clean_tokens
+
+    def _normalize_text(self, text: str) -> str:
+        """Normalize query/document text for robust matching."""
+        normalized = text.lower()
+        # Unify common ATA forms: ATA32 / ATA-32 / ata 32 -> ata32
+        normalized = re.sub(r"\bata[\s\-_:]*([0-9]{2})\b", r"ata\1", normalized)
+        # Normalize repeated whitespace
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+        return normalized
 
     def _build_index(self):
         """Build BM25 index from documents."""

@@ -56,6 +56,20 @@ class DocumentRegistry:
         ).fetchone()
         return dict(row) if row else None
 
+    def find_by_filename(self, filename: str) -> Optional[dict]:
+        """Find document by exact filename."""
+        row = self._conn.execute(
+            "SELECT * FROM documents WHERE filename = ? LIMIT 1", (filename,)
+        ).fetchone()
+        return dict(row) if row else None
+
+    def find_by_file_hash(self, file_hash: str) -> Optional[dict]:
+        """Find document by exact file hash."""
+        row = self._conn.execute(
+            "SELECT * FROM documents WHERE file_hash = ? LIMIT 1", (file_hash,)
+        ).fetchone()
+        return dict(row) if row else None
+
     def update_status(self, doc_id: str, status: str, chunks: int = 0) -> None:
         self._conn.execute(
             "UPDATE documents SET status = ?, chunks = ? WHERE id = ?",

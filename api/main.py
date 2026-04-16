@@ -12,12 +12,14 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
+import hashlib
 import time
 
 from utils.log_utils import log
 from api.routers import chat, documents, sessions, admin
 from api.middleware.tracing import TracingMiddleware
 from api.middleware.error_handler import ErrorHandlerMiddleware
+from core.prompts.aircraft_prompts import GENERATE_SYSTEM_PROMPT
 
 
 @asynccontextmanager
@@ -45,6 +47,8 @@ async def lifespan(app: FastAPI):
 
     log.info(f"LLM Circuit: {llm_circuit.state.value}")
     log.info(f"Retriever Circuit: {retriever_circuit.state.value}")
+    prompt_sig = hashlib.sha1(GENERATE_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
+    log.info(f"PHM Prompt Profile: phm_diagnosis_v1 (sig={prompt_sig})")
 
     log.info("Startup complete!")
 

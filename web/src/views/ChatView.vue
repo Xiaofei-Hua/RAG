@@ -70,6 +70,32 @@
               <span class="message-time" v-if="msg.timestamp">{{ formatTime(msg.timestamp) }}</span>
             </div>
             <div class="message-content markdown-content" v-html="renderMarkdown(msg.content)"></div>
+            <div
+              v-if="msg.role === 'assistant' && shouldShowModeCard(msg)"
+              class="mode-card"
+            >
+              <p v-if="getIntentLabel(msg.intent)"><strong>对话类型：</strong>{{ getIntentLabel(msg.intent) }}</p>
+              <p v-if="getProfileLabel(msg.metadata?.prompt_profile)"><strong>回答模式：</strong>{{ getProfileLabel(msg.metadata?.prompt_profile) }}</p>
+              <p v-if="msg.metadata?.force_rag" class="mode-note">
+                检测到 PHM 技术问题，已自动切换到知识库诊断模式。
+              </p>
+              <button
+                v-if="msg.sources && msg.sources.length > 0"
+                class="source-toggle-btn"
+                @click="openSources(msg.sources)"
+              >
+                查看依据来源 ({{ msg.sources.length }})
+              </button>
+            </div>
+            <div
+              v-if="msg.role === 'assistant' && hasDiagnosis(msg)"
+              class="diagnosis-card"
+            >
+              <h4>PHM 诊断结构</h4>
+              <p v-if="msg.diagnosis?.conclusion"><strong>诊断结论：</strong>{{ msg.diagnosis?.conclusion }}</p>
+              <p v-if="msg.diagnosis?.safety_risks"><strong>风险提示：</strong>{{ msg.diagnosis?.safety_risks }}</p>
+              <p v-if="msg.diagnosis?.info_gaps"><strong>信息缺口：</strong>{{ msg.diagnosis?.info_gaps }}</p>
+            </div>
             <div class="message-footer" v-if="msg.role === 'assistant' && msg.processingTime">
               <span class="processing-time">{{ msg.processingTime.toFixed(0) }}ms</span>
             </div>
@@ -167,7 +193,7 @@
 
 <script setup lang="ts">
 import { ref, nextTick, watch, onMounted } from 'vue'
-import { useChatStore, type SourceDocument } from '@/stores/chat'
+import { useChatStore, type SourceDocument, type ChatMessage } from '@/stores/chat'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 
@@ -256,6 +282,7 @@ async function handleSend() {
   try {
     if (useStream.value) {
       await chatStore.sendMessageStream(text)
+      syncSourcesFromLatestAssistant()
     } else {
       const response = await chatStore.sendMessage(text)
       if (response?.sources?.length) {
@@ -274,6 +301,59 @@ async function handleSend() {
 function askQuestion(question: string) {
   inputText.value = question
   handleSend()
+}
+
+function hasDiagnosis(msg: ChatMessage): boolean {
+  return Boolean(
+    msg.diagnosis &&
+    (
+      msg.diagnosis.conclusion ||
+      msg.diagnosis.possible_causes?.length ||
+      msg.diagnosis.troubleshooting_steps?.length ||
+      msg.diagnosis.safety_risks ||
+      msg.diagnosis.evidence_sources?.length ||
+      msg.diagnosis.info_gaps
+    )
+  )
+}
+
+function getIntentLabel(intent?: string): string {
+  if (!intent) return ''
+  if (intent === 'general_chat') return '普通咨询'
+  if (intent === 'rag_query') return '知识库问答'
+  if (intent === 'degraded') return '降级服务'
+  return ''
+}
+
+function getProfileLabel(profile?: string): string {
+  if (!profile) return ''
+  if (profile === 'phm_identity_v1') return 'PHM 平台身份介绍'
+  if (profile === 'phm_general_v1') return 'PHM 通用咨询'
+  if (profile === 'phm_diagnosis_v1') return 'PHM 故障诊断'
+  return ''
+}
+
+function shouldShowModeCard(msg: ChatMessage): boolean {
+  return Boolean(
+    getIntentLabel(msg.intent) ||
+    getProfileLabel(msg.metadata?.prompt_profile) ||
+    msg.metadata?.force_rag ||
+    (msg.sources && msg.sources.length > 0)
+  )
+}
+
+function openSources(list: SourceDocument[]) {
+  sources.value = list
+  showSources.value = true
+}
+
+function syncSourcesFromLatestAssistant() {
+  const reversed = [...chatStore.messages].reverse()
+  const lastAssistant = reversed.find((m) => m.role === 'assistant')
+  if (lastAssistant?.sources?.length) {
+    sources.value = lastAssistant.sources
+    showSources.value = true
+  }
 }
 
 function handleNewSession() {
@@ -571,6 +651,59 @@ watch(
 .message-footer {
   margin-top: var(--spacing-xs);
   text-align: right;
+}
+
+.mode-card {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid #e5e7eb;
+  background: #f9fafb;
+}
+
+.mode-card p {
+  margin: 4px 0;
+  font-size: 12px;
+  color: #374151;
+}
+
+.mode-note {
+  color: #92400e !important;
+}
+
+.source-toggle-btn {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: var(--primary-50);
+  color: var(--primary-700);
+  border: 1px solid var(--primary-200);
+}
+
+.source-toggle-btn:hover {
+  background: var(--primary-100);
+}
+
+.diagnosis-card {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  border: 1px solid #bfdbfe;
+  background: #eff6ff;
+}
+
+.diagnosis-card h4 {
+  margin: 0 0 6px;
+  font-size: 12px;
+  color: #1e40af;
+}
+
+.diagnosis-card p {
+  margin: 4px 0;
+  font-size: 12px;
+  color: #1f2937;
 }
 
 .processing-time {

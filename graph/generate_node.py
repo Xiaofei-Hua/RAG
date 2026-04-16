@@ -19,7 +19,7 @@ from typing import Any, Dict, List, Optional
 from langchain_core.messages import BaseMessage, AIMessage
 from langchain_core.language_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
-from langchain_core.prompts import ChatPromptTemplate, PromptTemplate
+from langchain_core.prompts import ChatPromptTemplate
 
 from graph.graph_state import AgentState
 from graph.get_human_message import get_last_human_message
@@ -192,9 +192,21 @@ class GenerateNode:
         # If content is a list (tool result format), extract text
         if isinstance(content, list):
             text_parts = []
-            for item in content:
+            for idx, item in enumerate(content, 1):
                 if isinstance(item, dict) and "text" in item:
-                    text_parts.append(item["text"])
+                    text = str(item.get("text", "")).strip()
+                    if not text:
+                        continue
+                    metadata = item.get("metadata", {})
+                    if not isinstance(metadata, dict):
+                        metadata = {}
+                    source = item.get("source") or metadata.get("source", "未知来源")
+                    title = item.get("title") or metadata.get("title", "未知标题")
+                    score = item.get("score") or metadata.get("score")
+                    score_text = f"{float(score):.4f}" if isinstance(score, (int, float)) else "N/A"
+                    text_parts.append(
+                        f"[证据{idx}] 来源={source} | 标题={title} | 相关度={score_text}\n{text}"
+                    )
                 elif isinstance(item, str):
                     text_parts.append(item)
             return "\n\n".join(text_parts)

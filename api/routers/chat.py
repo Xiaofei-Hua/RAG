@@ -6,17 +6,24 @@ Handles conversation/chat endpoints.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 import time
 import uuid
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
+from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
 from pydantic import BaseModel, Field
 
 from utils.log_utils import log
+from core.prompts.aircraft_prompts import (
+    GENERATE_SYSTEM_PROMPT,
+    GENERAL_CHAT_SYSTEM_PROMPT,
+    PHM_IDENTITY_RESPONSE,
+)
 
 router = APIRouter()
 
@@ -57,6 +64,16 @@ class ChatResponse(BaseModel):
     metadata: dict = Field(default_factory=dict, description="Additional metadata")
 
 
+class PHMDiagnosis(BaseModel):
+    """Structured PHM diagnosis extracted from model response."""
+    conclusion: str = ""
+    possible_causes: List[str] = Field(default_factory=list)
+    troubleshooting_steps: List[str] = Field(default_factory=list)
+    safety_risks: str = ""
+    evidence_sources: List[str] = Field(default_factory=list)
+    info_gaps: str = ""
+
+
 class ChatHistoryResponse(BaseModel):
     """Chat history response."""
     session_id: str
@@ -90,6 +107,16 @@ def _extract_sources(messages: list) -> List[SourceDocument]:
                     score = meta.get("score", 0.0)
                 else:
                     source, title, score = None, None, 0.0
+                if not source:
+                    source = _extract_line_value(content, "Source")
+                if not title:
+                    title = _extract_line_value(content, "Title")
+                parsed_score = _extract_line_value(content, "Score")
+                if parsed_score:
+                    try:
+                        score = float(parsed_score)
+                    except ValueError:
+                        pass
                 sources.append(SourceDocument(
                     content=content[:500],
                     source=source,
@@ -97,6 +124,107 @@ def _extract_sources(messages: list) -> List[SourceDocument]:
                     score=score,
                 ))
     return sources
+
+
+def _extract_line_value(text: str, key: str) -> Optional[str]:
+    """Extract a value from a line like `Key: value`."""
+    pattern = rf"(?im)^\s*{re.escape(key)}\s*:\s*(.+?)\s*$"
+    match = re.search(pattern, text)
+    if match:
+        value = match.group(1).strip()
+        return value if value else None
+    return None
+
+
+def _extract_section(text: str, title: str, next_titles: List[str]) -> str:
+    """Extract section content from PHM structured answer."""
+    marker = f"【{title}】"
+    start = text.find(marker)
+    if start < 0:
+        return ""
+    start += len(marker)
+    end = len(text)
+    for next_title in next_titles:
+        next_marker = f"【{next_title}】"
+        idx = text.find(next_marker, start)
+        if idx >= 0:
+            end = min(end, idx)
+    return text[start:end].strip()
+
+
+def _extract_numbered_items(text: str) -> List[str]:
+    """Parse numbered items from a section."""
+    if not text:
+        return []
+    items = re.findall(r"(?:^|\n)\s*\d+[.)、]\s*(.+)", text)
+    if items:
+        return [item.strip() for item in items if item.strip()]
+    # Fallback: split by lines when numbering is absent
+    return [line.strip("- ").strip() for line in text.splitlines() if line.strip()]
+
+
+def _extract_phm_diagnosis(answer: str) -> Optional[PHMDiagnosis]:
+    """Extract PHM diagnosis blocks from generated answer."""
+    section_order = [
+        "诊断结论",
+        "可能原因",
+        "排查步骤",
+        "风险与安全提示",
+        "依据来源",
+        "信息缺口",
+    ]
+    extracted: Dict[str, str] = {}
+    for idx, section in enumerate(section_order):
+        extracted[section] = _extract_section(answer, section, section_order[idx + 1 :])
+
+    if not any(extracted.values()):
+        return None
+
+    return PHMDiagnosis(
+        conclusion=extracted["诊断结论"],
+        possible_causes=_extract_numbered_items(extracted["可能原因"]),
+        troubleshooting_steps=_extract_numbered_items(extracted["排查步骤"]),
+        safety_risks=extracted["风险与安全提示"],
+        evidence_sources=_extract_numbered_items(extracted["依据来源"]),
+        info_gaps=extracted["信息缺口"],
+    )
+
+
+def _looks_like_phm_query(message: str) -> bool:
+    """Heuristic PHM query detection to prevent misrouting."""
+    text = (message or "").lower()
+    if not text:
+        return False
+
+    keywords = [
+        "故障", "排故", "诊断", "维修", "机务", "航材", "工卡", "手册", "状态监测",
+        "预测性维护", "健康管理", "振动", "液压", "发动机", "航电", "告警", "故障码",
+        "troubleshoot", "fault", "ata", "fws", "ecam", "eicas", "maintenance",
+    ]
+    if any(k in text for k in keywords):
+        return True
+
+    # ATA chapter pattern
+    return bool(re.search(r"\bata[\s\-_:]*\d{2}\b", text, flags=re.IGNORECASE))
+
+
+def _is_identity_capability_query(message: str) -> bool:
+    """Detect 'who are you / what can you do' style questions."""
+    text = (message or "").strip().lower()
+    if not text:
+        return False
+    patterns = [
+        r"你是谁",
+        r"你是干什么的",
+        r"你有什么功能",
+        r"你能做什么",
+        r"你的功能",
+        r"介绍一下你",
+        r"你会什么",
+        r"who are you",
+        r"what can you do",
+    ]
+    return any(re.search(p, text, flags=re.IGNORECASE) for p in patterns)
 
 
 def _sse(event: dict) -> str:
@@ -126,6 +254,18 @@ async def get_rag_graph():
     return get_rag_graph()
 
 
+@router.get("/prompt-status")
+async def get_prompt_status():
+    """Return current prompt profile and signature for runtime verification."""
+    signature = hashlib.sha1(GENERATE_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
+    return {
+        "loaded": True,
+        "prompt_profile": "phm_diagnosis_v1",
+        "generate_prompt_signature": signature,
+        "generate_prompt_preview": GENERATE_SYSTEM_PROMPT[:120],
+    }
+
+
 # =============================================================================
 # Endpoints
 # =============================================================================
@@ -135,7 +275,6 @@ async def chat(
     request: ChatRequest,
     background_tasks: BackgroundTasks,
     session_memory = Depends(get_session_memory),
-    intent_classifier = Depends(get_intent_classifier),
 ):
     """
     Send a message and get a response.
@@ -149,23 +288,69 @@ async def chat(
 
     # Generate or use existing session ID
     session_id = request.session_id or str(uuid.uuid4())
+    route = "general_chat"
+    prompt_profile = "base"
+    force_rag = False
 
     log.info(f"Chat request: session={session_id[:8]}... message={request.message[:50]}...")
 
     try:
+        if _is_identity_capability_query(request.message):
+            answer = PHM_IDENTITY_RESPONSE
+            processing_time = (time.perf_counter() - start_time) * 1000
+            background_tasks.add_task(
+                session_memory.save_message,
+                session_id,
+                HumanMessage(content=request.message)
+            )
+            background_tasks.add_task(
+                session_memory.save_message,
+                session_id,
+                AIMessage(content=answer)
+            )
+            return ChatResponse(
+                response=answer,
+                session_id=session_id,
+                intent="general_chat",
+                sources=[],
+                processing_time_ms=processing_time,
+                metadata={
+                    "intent_confidence": 1.0,
+                    "intent_reasoning": "Identity/capability shortcut",
+                    "source_count": 0,
+                    "diagnosis": None,
+                    "route": "general_chat",
+                    "prompt_profile": "phm_identity_v1",
+                    "force_rag": False,
+                }
+            )
+
         # Step 1: Intent classification
+        from core.intent.classifier import get_intent_classifier
+        intent_classifier = get_intent_classifier()
         intent_result = await intent_classifier.aclassify(request.message)
 
         log.info(f"Intent classified: {intent_result.intent.value}")
 
-        # Step 2: Route based on intent
-        if intent_result.intent.value == "general_chat":
+        # Step 2: Route based on intent + PHM heuristic safeguard
+        use_rag = intent_result.intent.value != "general_chat"
+        if not use_rag and _looks_like_phm_query(request.message):
+            use_rag = True
+            force_rag = True
+            log.info("Intent override: forcing RAG route for PHM-like query")
+
+        if not use_rag:
             # Direct LLM response without retrieval
             from models.llm_models import get_llm
             llm = get_llm()
-            response = await llm.ainvoke(request.message)
+            response = await llm.ainvoke([
+                SystemMessage(content=GENERAL_CHAT_SYSTEM_PROMPT),
+                HumanMessage(content=request.message),
+            ])
             answer = response.content
             sources = []
+            route = "general_chat"
+            prompt_profile = "phm_general_v1"
 
         else:
             # RAG pipeline with retrieval
@@ -183,6 +368,8 @@ async def chat(
                 answer = "抱歉，无法生成回答。"
 
             sources = _extract_sources(messages)
+            route = "rag"
+            prompt_profile = "phm_diagnosis_v1"
 
         # Calculate processing time
         processing_time = (time.perf_counter() - start_time) * 1000
@@ -199,6 +386,8 @@ async def chat(
             AIMessage(content=answer)
         )
 
+        diagnosis = _extract_phm_diagnosis(answer)
+
         return ChatResponse(
             response=answer,
             session_id=session_id,
@@ -208,6 +397,11 @@ async def chat(
             metadata={
                 "intent_confidence": intent_result.confidence,
                 "intent_reasoning": intent_result.reasoning,
+                "source_count": len(sources),
+                "diagnosis": diagnosis.model_dump() if diagnosis else None,
+                "route": route,
+                "prompt_profile": prompt_profile,
+                "force_rag": force_rag,
             }
         )
 
@@ -296,9 +490,34 @@ async def chat_stream(
     session_id = request.session_id or str(uuid.uuid4())
 
     async def generate():
+        start_time = time.perf_counter()
         try:
             # Send session info
             yield _sse({"type": "session", "session_id": session_id})
+
+            if _is_identity_capability_query(request.message):
+                answer = PHM_IDENTITY_RESPONSE
+                yield _sse({"type": "intent", "intent": "general_chat", "confidence": 1.0, "route": "general_chat", "force_rag": False})
+                yield _sse({"type": "status", "message": "正在返回平台能力说明..."})
+                yield _sse({"type": "token", "content": answer})
+                await session_memory.save_message(session_id, HumanMessage(content=request.message))
+                await session_memory.save_message(session_id, AIMessage(content=answer))
+                yield _sse({
+                    "type": "done",
+                    "full_response": answer,
+                    "sources": [],
+                    "processing_time_ms": (time.perf_counter() - start_time) * 1000,
+                    "metadata": {
+                        "intent_confidence": 1.0,
+                        "intent_reasoning": "Identity/capability shortcut",
+                        "source_count": 0,
+                        "diagnosis": None,
+                        "route": "general_chat",
+                        "prompt_profile": "phm_identity_v1",
+                        "force_rag": False,
+                    },
+                })
+                return
 
             # Step 1: Intent classification
             yield _sse({"type": "status", "message": "正在分析意图..."})
@@ -306,15 +525,23 @@ async def chat_stream(
             from core.intent.classifier import get_intent_classifier
             intent_classifier = get_intent_classifier()
             intent_result = await intent_classifier.aclassify(request.message)
+            use_rag = intent_result.intent.value != "general_chat"
+            force_rag = False
+            if not use_rag and _looks_like_phm_query(request.message):
+                use_rag = True
+                force_rag = True
+                yield _sse({"type": "status", "message": "检测为PHM技术问题，已切换知识库诊断模式..."})
 
             yield _sse({
                 "type": "intent",
                 "intent": intent_result.intent.value,
                 "confidence": intent_result.confidence,
+                "route": "rag" if use_rag else "general_chat",
+                "force_rag": force_rag,
             })
 
             # Step 2: Route based on intent
-            if intent_result.intent.value == "general_chat":
+            if not use_rag:
                 # Direct LLM streaming (no RAG)
                 yield _sse({"type": "status", "message": "正在生成回答..."})
 
@@ -322,7 +549,10 @@ async def chat_stream(
                 llm = get_llm()
 
                 full_response = ""
-                async for chunk in llm.astream(request.message):
+                async for chunk in llm.astream([
+                    SystemMessage(content=GENERAL_CHAT_SYSTEM_PROMPT),
+                    HumanMessage(content=request.message),
+                ]):
                     if hasattr(chunk, 'content') and chunk.content:
                         full_response += chunk.content
                         yield _sse({"type": "token", "content": chunk.content})
@@ -330,6 +560,23 @@ async def chat_stream(
                 # Save to session
                 await session_memory.save_message(session_id, HumanMessage(content=request.message))
                 await session_memory.save_message(session_id, AIMessage(content=full_response))
+
+                diagnosis = _extract_phm_diagnosis(full_response)
+                done_payload = {
+                    "type": "done",
+                    "full_response": full_response,
+                    "sources": [],
+                    "processing_time_ms": (time.perf_counter() - start_time) * 1000,
+                    "metadata": {
+                        "intent_confidence": intent_result.confidence,
+                        "intent_reasoning": intent_result.reasoning,
+                        "source_count": 0,
+                        "diagnosis": diagnosis.model_dump() if diagnosis else None,
+                        "route": "general_chat",
+                        "prompt_profile": "phm_general_v1",
+                        "force_rag": force_rag,
+                    },
+                }
 
             else:
                 # RAG pipeline via graph streaming
@@ -339,6 +586,7 @@ async def chat_stream(
                 yield _sse({"type": "node", "name": "agent"})
 
                 full_response = ""
+                collected_messages = []
                 for event in rag.graph.stream(
                     {
                         "messages": [HumanMessage(content=request.message)],
@@ -362,6 +610,7 @@ async def chat_stream(
 
                         elif node_name == "retrieve":
                             # Retrieval complete — results are in ToolMessages
+                            collected_messages.extend(node_output.get("messages", []))
                             yield _sse({"type": "node", "name": "grade"})
                             yield _sse({"type": "status", "message": "正在评估文档相关性..."})
 
@@ -385,8 +634,26 @@ async def chat_stream(
                 await session_memory.save_message(session_id, HumanMessage(content=request.message))
                 await session_memory.save_message(session_id, AIMessage(content=full_response))
 
+                sources = _extract_sources(collected_messages)
+                diagnosis = _extract_phm_diagnosis(full_response)
+                done_payload = {
+                    "type": "done",
+                    "full_response": full_response,
+                    "sources": [s.model_dump() for s in sources],
+                    "processing_time_ms": (time.perf_counter() - start_time) * 1000,
+                    "metadata": {
+                        "intent_confidence": intent_result.confidence,
+                        "intent_reasoning": intent_result.reasoning,
+                        "source_count": len(sources),
+                        "diagnosis": diagnosis.model_dump() if diagnosis else None,
+                        "route": "rag",
+                        "prompt_profile": "phm_diagnosis_v1",
+                        "force_rag": force_rag,
+                    },
+                }
+
             # Send completion signal
-            yield _sse({"type": "done"})
+            yield _sse(done_payload)
 
         except Exception as e:
             log.error(f"Stream error: {e}")

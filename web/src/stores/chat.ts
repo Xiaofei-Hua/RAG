@@ -9,6 +9,8 @@ export interface ChatMessage {
   sources?: SourceDocument[]
   intent?: string
   processingTime?: number
+  metadata?: Record<string, any>
+  diagnosis?: PHMDiagnosis | null
 }
 
 export interface SourceDocument {
@@ -27,15 +29,29 @@ export interface ChatResponse {
   metadata: Record<string, any>
 }
 
+export interface PHMDiagnosis {
+  conclusion: string
+  possible_causes: string[]
+  troubleshooting_steps: string[]
+  safety_risks: string
+  evidence_sources: string[]
+  info_gaps: string
+}
+
 export interface StreamEvent {
   type: 'session' | 'status' | 'intent' | 'node' | 'token' | 'done' | 'error'
   session_id?: string
   message?: string
   intent?: string
   confidence?: number
+  route?: string
+  force_rag?: boolean
   name?: string
   content?: string
   full_response?: string
+  sources?: SourceDocument[]
+  processing_time_ms?: number
+  metadata?: Record<string, any>
 }
 
 export const useChatStore = defineStore('chat', () => {
@@ -100,6 +116,8 @@ export const useChatStore = defineStore('chat', () => {
         sources: data.sources,
         intent: data.intent,
         processingTime: data.processing_time_ms,
+        metadata: data.metadata,
+        diagnosis: data.metadata?.diagnosis || null,
       }
       messages.value.push(assistantMessage)
 
@@ -231,6 +249,14 @@ export const useChatStore = defineStore('chat', () => {
 
       case 'intent':
         currentIntent.value = event.intent || ''
+        if (messages.value[messageIndex]) {
+          messages.value[messageIndex].intent = event.intent || ''
+          messages.value[messageIndex].metadata = {
+            ...(messages.value[messageIndex].metadata || {}),
+            route: event.route || '',
+            force_rag: event.force_rag || false,
+          }
+        }
         break
 
       case 'node':
@@ -248,6 +274,16 @@ export const useChatStore = defineStore('chat', () => {
           messages.value[messageIndex].isStreaming = false
           if (event.full_response) {
             messages.value[messageIndex].content = event.full_response
+          }
+          if (event.sources) {
+            messages.value[messageIndex].sources = event.sources
+          }
+          if (event.processing_time_ms !== undefined) {
+            messages.value[messageIndex].processingTime = event.processing_time_ms
+          }
+          if (event.metadata) {
+            messages.value[messageIndex].metadata = event.metadata
+            messages.value[messageIndex].diagnosis = event.metadata?.diagnosis || null
           }
         }
         break

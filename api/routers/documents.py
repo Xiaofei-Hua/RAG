@@ -69,12 +69,13 @@ def _check_duplicate(filename: str, file_hash: str) -> Optional[str]:
     """
     # Check registry first (fast, always available)
     registry = get_document_registry()
-    all_docs = registry.list_all(skip=0, limit=1000)
-    for doc in all_docs:
-        if doc.get("filename") == filename:
-            return f"文件 '{filename}' 已上传过，请勿重复上传"
-        if doc.get("file_hash") == file_hash:
-            return f"相同内容的文件已存在（来源: {doc.get('filename', '未知')}），请勿重复上传"
+    existing_by_name = registry.find_by_filename(filename)
+    if existing_by_name:
+        return f"文件 '{filename}' 已上传过，请勿重复上传"
+
+    existing_by_hash = registry.find_by_file_hash(file_hash)
+    if existing_by_hash:
+        return f"相同内容的文件已存在（来源: {existing_by_hash.get('filename', '未知')}），请勿重复上传"
 
     # Also check Milvus (for data from previous sessions)
     try:

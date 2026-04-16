@@ -25,6 +25,7 @@ from langchain_core.retrievers import BaseRetriever
 from pydantic import ConfigDict
 
 from documents.milvus_db import MilvusManager, MilvusConfig
+from core.prompts.aircraft_prompts import RETRIEVER_TOOL_DESCRIPTION, RETRIEVER_TOOL_NAME
 from utils.env_utils import COLLECTION_NAME, MILVUS_URI
 from utils.log_utils import log
 
@@ -63,12 +64,8 @@ class RetrieverConfig:
     use_hybrid: bool = True  # Enable hybrid (dense + BM25) retrieval
 
     # Tool metadata
-    tool_name: str = "rag_retriever"
-    tool_description: str = (
-        "搜索并返回关于飞机故障分析、排故程序、维修手册、故障代码的信息, "
-        "内容涵盖：飞机各系统（发动机、液压、航电、结构等）的故障诊断、"
-        "排故流程、维修方案和技术通报"
-    )
+    tool_name: str = RETRIEVER_TOOL_NAME
+    tool_description: str = RETRIEVER_TOOL_DESCRIPTION
 
 
 class RetrieverManager:
@@ -318,8 +315,8 @@ def get_retriever_tool(
         retriever = get_retriever(config)
         _retriever_tool = create_retriever_tool(
             retriever,
-            config.tool_name if config else "rag_retriever",
-            config.tool_description if config else RetrieverConfig.tool_description,
+            config.tool_name if config else RETRIEVER_TOOL_NAME,
+            config.tool_description if config else RETRIEVER_TOOL_DESCRIPTION,
         )
         log.debug("Created new retriever tool")
 
