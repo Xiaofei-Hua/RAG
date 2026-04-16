@@ -78,11 +78,11 @@ class RedisSessionMemory:
                 self._connected = True
                 log.info(f"Redis connected: {self.config.redis_url}")
             except ImportError:
-                log.warning("redis package not installed, using in-memory fallback")
-                self._redis = _InMemoryStore()
+                log.warning("redis package not installed, using SQLite fallback")
+                self._redis = _SQLiteStore()
             except Exception as e:
-                log.error(f"Redis connection failed: {e}, using in-memory fallback")
-                self._redis = _InMemoryStore()
+                log.error(f"Redis connection failed: {e}, using SQLite fallback")
+                self._redis = _SQLiteStore()
         return self._redis
 
     def _session_key(self, session_id: str) -> str:
@@ -118,9 +118,9 @@ class RedisSessionMemory:
                 await self.redis.expire(key, self.config.session_ttl)
             except Exception as conn_err:
                 # Connection failed, switch to in-memory fallback
-                if not isinstance(self._redis, _InMemoryStore):
-                    log.warning(f"Redis operation failed, switching to in-memory: {conn_err}")
-                    self._redis = _InMemoryStore()
+                if not isinstance(self._redis, _SQLiteStore):
+                    log.warning(f"Redis operation failed, switching to SQLite: {conn_err}")
+                    self._redis = _SQLiteStore()
                     self._connected = False
                     # Retry with in-memory store
                     await self.redis.lpush(key, msg_json)
@@ -253,51 +253,129 @@ class RedisSessionMemory:
             log.debug("Redis connection closed")
 
 
-class _InMemoryStore:
+class _SQLiteStore:
     """
-    In-memory fallback when Redis is unavailable.
-    Used for development/testing or when Redis is not installed.
+    SQLite-based persistent fallback when Redis is unavailable.
+
+    Data survives restarts, unlike the old in-memory store.
+    Implements the same async interface that RedisSessionMemory expects.
     """
 
-    def __init__(self):
-        self._store: Dict[str, List[str]] = {}
-        self._ttls: Dict[str, float] = {}
+    def __init__(self, db_path: str = "./data/sessions.db"):
+        import sqlite3
+        import os
+
+        os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else ".", exist_ok=True)
+        self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS sessions ("
+            "  key TEXT NOT NULL,"
+            "  idx INTEGER NOT NULL,"
+            "  value TEXT NOT NULL,"
+            "  PRIMARY KEY (key, idx)"
+            ")"
+        )
+        self._conn.execute(
+            "CREATE TABLE IF NOT EXISTS ttls ("
+            "  key TEXT PRIMARY KEY,"
+            "  expires_at REAL NOT NULL"
+            ")"
+        )
+        self._conn.commit()
+        log.info(f"SQLite session store initialized: {db_path}")
+
+    def _cleanup_expired(self, key: str) -> bool:
+        """Remove key if expired. Returns True if key was expired."""
+        row = self._conn.execute(
+            "SELECT expires_at FROM ttls WHERE key = ?", (key,)
+        ).fetchone()
+        if row and row[0] < time.time():
+            self._conn.execute("DELETE FROM sessions WHERE key = ?", (key,))
+            self._conn.execute("DELETE FROM ttls WHERE key = ?", (key,))
+            self._conn.commit()
+            return True
+        return False
 
     async def lpush(self, key: str, value: str):
-        if key not in self._store:
-            self._store[key] = []
-        self._store[key].insert(0, value)
+        self._cleanup_expired(key)
+        # Shift existing indices up by 1
+        self._conn.execute(
+            "UPDATE sessions SET idx = idx + 1 WHERE key = ?", (key,)
+        )
+        self._conn.execute(
+            "INSERT INTO sessions (key, idx, value) VALUES (?, 0, ?)",
+            (key, value),
+        )
+        self._conn.commit()
 
     async def lrange(self, key: str, start: int, end: int) -> List[str]:
-        if key not in self._store:
+        if self._cleanup_expired(key):
             return []
-        return self._store[key][start:end + 1]
+        rows = self._conn.execute(
+            "SELECT value FROM sessions WHERE key = ? ORDER BY idx LIMIT ? OFFSET ?",
+            (key, end - start + 1, start),
+        ).fetchall()
+        return [r[0] for r in rows]
 
     async def ltrim(self, key: str, start: int, end: int):
-        if key in self._store:
-            self._store[key] = self._store[key][start:end + 1]
+        # Delete items outside [start, end]
+        self._conn.execute(
+            "DELETE FROM sessions WHERE key = ? AND idx NOT IN "
+            "(SELECT idx FROM sessions WHERE key = ? ORDER BY idx LIMIT ? OFFSET ?)",
+            (key, key, end - start + 1, start),
+        )
+        # Re-index remaining rows
+        rows = self._conn.execute(
+            "SELECT rowid FROM sessions WHERE key = ? ORDER BY idx",
+            (key,),
+        ).fetchall()
+        for new_idx, (rowid,) in enumerate(rows):
+            self._conn.execute(
+                "UPDATE sessions SET idx = ? WHERE rowid = ?",
+                (new_idx, rowid),
+            )
+        self._conn.commit()
 
     async def llen(self, key: str) -> int:
-        return len(self._store.get(key, []))
+        if self._cleanup_expired(key):
+            return 0
+        row = self._conn.execute(
+            "SELECT COUNT(*) FROM sessions WHERE key = ?", (key,)
+        ).fetchone()
+        return row[0] if row else 0
 
     async def delete(self, key: str):
-        self._store.pop(key, None)
-        self._ttls.pop(key, None)
+        self._conn.execute("DELETE FROM sessions WHERE key = ?", (key,))
+        self._conn.execute("DELETE FROM ttls WHERE key = ?", (key,))
+        self._conn.commit()
 
     async def exists(self, key: str) -> int:
-        return 1 if key in self._store else 0
+        if self._cleanup_expired(key):
+            return 0
+        row = self._conn.execute(
+            "SELECT 1 FROM sessions WHERE key = ? LIMIT 1", (key,)
+        ).fetchone()
+        return 1 if row else 0
 
     async def expire(self, key: str, seconds: int):
-        self._ttls[key] = time.time() + seconds
+        self._conn.execute(
+            "INSERT OR REPLACE INTO ttls (key, expires_at) VALUES (?, ?)",
+            (key, time.time() + seconds),
+        )
+        self._conn.commit()
 
     async def ttl(self, key: str) -> int:
-        if key not in self._ttls:
+        row = self._conn.execute(
+            "SELECT expires_at FROM ttls WHERE key = ?", (key,)
+        ).fetchone()
+        if row is None:
             return -1
-        remaining = self._ttls[key] - time.time()
+        remaining = row[0] - time.time()
         return max(0, int(remaining))
 
     async def close(self):
-        pass
+        if self._conn:
+            self._conn.close()
 
 
 # Module-level instance (lazy loaded)

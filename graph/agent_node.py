@@ -234,7 +234,7 @@ def agent_node(state: AgentState) -> Dict[str, List[BaseMessage]]:
 
     Example:
         >>> from graph.graph_state import AgentState
-        >>> state: AgentState = {"messages": [HumanMessage(content="什么是芯片?")]}
+        >>> state: AgentState = {"messages": [HumanMessage(content="发动机振动异常如何排查?")]}
         >>> result = agent_node(state)
         >>> # result["messages"] contains the AI response
     """

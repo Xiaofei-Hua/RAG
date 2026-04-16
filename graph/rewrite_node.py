@@ -36,20 +36,7 @@ __all__ = [
 # Default Prompts
 # =============================================================================
 
-DEFAULT_REWRITE_PROMPT = """你是一个查询优化专家，专门帮助改进用户的问题以便更好地检索相关信息。
-
-请分析用户的原始问题，理解其深层意图，然后提出一个更清晰、更具体的改进问题。
-
-改进问题的原则：
-1. 保留原始问题的核心意图
-2. 使用更精确的术语和表述
-3. 补充必要的上下文信息
-4. 如果问题涉及半导体/芯片领域，可以使用相关技术术语
-
-原始问题：
-{original_question}
-
-请直接输出改进后的问题，不需要解释。"""
+from core.prompts.aircraft_prompts import REWRITE_PROMPT as DEFAULT_REWRITE_PROMPT
 
 
 @dataclass

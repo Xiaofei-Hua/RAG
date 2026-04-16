@@ -59,11 +59,15 @@ class RetrieverConfig:
     max_retries: int = 2
     retry_delay: float = 1.0
 
+    # Hybrid retrieval
+    use_hybrid: bool = True  # Enable hybrid (dense + BM25) retrieval
+
     # Tool metadata
     tool_name: str = "rag_retriever"
     tool_description: str = (
-        "搜索并返回关于 '半导体和芯片' 的信息, "
-        "内容涵盖：半导体和芯片的封装、测试、光刻胶等"
+        "搜索并返回关于飞机故障分析、排故程序、维修手册、故障代码的信息, "
+        "内容涵盖：飞机各系统（发动机、液压、航电、结构等）的故障诊断、"
+        "排故流程、维修方案和技术通报"
     )
 
 
@@ -167,10 +171,10 @@ class RetrieverManager:
 
 class MilvusRetriever(BaseRetriever):
     """
-    LangChain-compatible retriever using MilvusManager.
+    LangChain-compatible retriever.
 
-    This class bridges the optimized MilvusManager with LangChain's
-    retriever interface, enabling use with create_retriever_tool.
+    Supports both dense-only (Milvus) and hybrid (dense + BM25) retrieval
+    based on configuration.
     """
 
     # Pydantic V2 config
@@ -179,11 +183,13 @@ class MilvusRetriever(BaseRetriever):
     # Configuration fields that shouldn't be included in serialization
     config: RetrieverConfig = field(default_factory=RetrieverConfig)
     _manager: Optional[RetrieverManager] = None
+    _hybrid_retriever = None
 
     def __init__(self, config: Optional[RetrieverConfig] = None, **kwargs):
         super().__init__(**kwargs)
         self.config = config or RetrieverConfig()
         self._manager = None
+        self._hybrid_retriever = None
 
     @property
     def manager(self) -> RetrieverManager:
@@ -192,13 +198,32 @@ class MilvusRetriever(BaseRetriever):
             self._manager = RetrieverManager(self.config)
         return self._manager
 
+    @property
+    def hybrid_retriever(self):
+        """Get HybridRetriever instance (lazy initialization)."""
+        if self._hybrid_retriever is None:
+            from core.retrieval.hybrid_retriever import HybridRetriever, HybridRetrieverConfig
+            hybrid_config = HybridRetrieverConfig(
+                final_top_k=self.config.top_k,
+            )
+            self._hybrid_retriever = HybridRetriever(
+                dense_manager=self.manager.manager,
+                config=hybrid_config,
+            )
+        return self._hybrid_retriever
+
     def _get_relevant_documents(
         self,
         query: str,
         *,
         run_manager=None,
     ) -> List[Document]:
-        """Get relevant documents for a query."""
+        """Get relevant documents for a query using hybrid or dense retrieval."""
+        if self.config.use_hybrid:
+            try:
+                return self.hybrid_retriever.retrieve(query, top_k=self.config.top_k)
+            except Exception as e:
+                log.warning(f"Hybrid retrieval failed, falling back to dense: {e}")
         return self.manager.search(query)
 
     def close(self) -> None:
@@ -323,53 +348,6 @@ def cleanup_retriever_resources() -> None:
     gc.collect()
     log.info("Retriever resources cleaned up")
 
-
-# =============================================================================
-# Backward compatibility - Module-level retriever_tool
-# =============================================================================
-
-# Lazy property for backward compatibility
-class _LazyRetrieverTool:
-    """
-    Lazy loader for retriever_tool attribute.
-
-    This allows backward compatibility with code that imports
-    `retriever_tool` directly from this module, while still
-    benefiting from lazy initialization.
-    """
-
-    def __init__(self):
-        self._tool = None
-
-    def __call__(self, *args, **kwargs):
-        return self._get_tool()(*args, **kwargs)
-
-    def _get_tool(self):
-        if self._tool is None:
-            self._tool = get_retriever_tool()
-        return self._tool
-
-    # Proxy common tool attributes
-    @property
-    def name(self):
-        return self._get_tool().name
-
-    @property
-    def description(self):
-        return self._get_tool().description
-
-    def invoke(self, *args, **kwargs):
-        return self._get_tool().invoke(*args, **kwargs)
-
-    def ainvoke(self, *args, **kwargs):
-        return self._get_tool().ainvoke(*args, **kwargs)
-
-
-# Export for backward compatibility
-# This won't actually load resources until accessed
-retriever_tool = _LazyRetrieverTool()
-
-
 # =============================================================================
 # CLI for testing
 # =============================================================================
@@ -381,7 +359,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--query",
         type=str,
-        default="什么是半导体封装？",
+        default="发动机振动异常如何排查？",
         help="Test query",
     )
     parser.add_argument(

@@ -36,22 +36,10 @@ __all__ = [
 # Default Prompts
 # =============================================================================
 
-DEFAULT_SYSTEM_PROMPT = """你是一个专业的问答助手，专门回答关于半导体和芯片的问题。
-
-请根据提供的上下文内容回答用户的问题。要求：
-1. 回答准确、简洁、专业
-2. 如果上下文中没有相关信息，请明确说明
-3. 引用上下文中的具体内容时，可以指出来源
-4. 避免添加未经证实的信息"""
-
-DEFAULT_HUMAN_PROMPT = """基于以下上下文回答问题：
-
-上下文：
-{context}
-
-问题：{question}
-
-请提供准确、简洁的回答："""
+from core.prompts.aircraft_prompts import (
+    GENERATE_SYSTEM_PROMPT as DEFAULT_SYSTEM_PROMPT,
+    GENERATE_HUMAN_PROMPT as DEFAULT_HUMAN_PROMPT,
+)
 
 
 @dataclass
@@ -136,6 +124,15 @@ class GenerateNode:
         # Extract question and context
         question = self._extract_question(messages)
         context = self._extract_context(messages)
+
+        # If no context available, return a helpful message
+        if not context or not context.strip():
+            log.info("No context available — knowledge base may be empty")
+            empty_msg = AIMessage(
+                content="当前知识库中暂无相关文档。请先通过文档管理页面上传排故手册、维修手册等资料，"
+                "然后再进行提问。"
+            )
+            return {"messages": [empty_msg]}
 
         # Truncate context if needed
         if len(context) > self.config.max_context_length:
@@ -243,7 +240,7 @@ def generate(state: AgentState) -> Dict[str, List[BaseMessage]]:
         >>> from graph.graph_state import AgentState
         >>> state: AgentState = {
         ...     "messages": [
-        ...         HumanMessage(content="什么是芯片?"),
+        ...         HumanMessage(content="发动机振动异常如何排查?"),
         ...         ToolMessage(content="检索到的文档内容...")
         ...     ]
         ... }

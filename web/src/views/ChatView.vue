@@ -36,12 +36,12 @@
               <path d="M2 12L12 17L22 12"/>
             </svg>
           </div>
-          <h3>欢迎使用 RAG 智能问答系统</h3>
-          <p>基于企业知识库的智能检索与问答，支持多种文档格式。</p>
+          <h3>欢迎使用航空排故智能问答系统</h3>
+          <p>基于航空知识库的智能检索与故障诊断问答，支持多种文档格式。</p>
           <div class="quick-actions">
-            <button class="quick-btn" @click="askQuestion('什么是芯片封装技术？')">芯片封装技术</button>
-            <button class="quick-btn" @click="askQuestion('如何提高检索准确性？')">检索优化</button>
-            <button class="quick-btn" @click="askQuestion('RAG系统的工作原理是什么？')">RAG原理</button>
+            <button class="quick-btn" @click="askQuestion('发动机振动异常如何排查？')">发动机振动排查</button>
+            <button class="quick-btn" @click="askQuestion('液压系统压力低的排故流程是什么？')">液压系统排故</button>
+            <button class="quick-btn" @click="askQuestion('航电系统故障代码如何查询？')">故障代码查询</button>
           </div>
         </div>
 

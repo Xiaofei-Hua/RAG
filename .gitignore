@@ -44,6 +44,10 @@ logs/
 
 # Milvus data
 volumes/
+milvus_data.db
+
+# Local data (SQLite databases)
+data/
 
 # PID files
 .pids/

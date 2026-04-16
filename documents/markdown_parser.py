@@ -11,6 +11,7 @@ A production-grade markdown parser that:
 from __future__ import annotations
 
 import hashlib
+import os
 import time
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
@@ -797,7 +798,7 @@ class MarkdownParser:
 # Main Entry Point
 
 if __name__ == "__main__":
-    file_path = "/home/ubuntu/Project/RAG_Project/datas/md/tech_report_0tfhhamx.md"
+    file_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "md", "tech_report_0tfhhamx.md")
 
     parser = MarkdownParser(
         config=MarkdownParserConfig(

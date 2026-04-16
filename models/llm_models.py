@@ -17,21 +17,20 @@ Usage:
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
-from utils.env_utils import OPENAI_API_KEY, OPENAI_BASE_URL, TAVILY_API_KEY
+from utils.env_utils import OPENAI_API_KEY, OPENAI_BASE_URL
 from utils.log_utils import log
 
 __all__ = [
     "LLMConfig",
     "get_llm",
     "get_web_search_tool",
-    "llm",
-    "web_search_tool",
 ]
 
 
@@ -73,7 +72,7 @@ class WebSearchConfig:
 
     def __post_init__(self):
         if self.api_key is None:
-            self.api_key = TAVILY_API_KEY
+            self.api_key = os.environ.get("TAVILY_API_KEY")
 
 
 # =============================================================================
@@ -172,68 +171,6 @@ def reset_web_search():
 
 
 # =============================================================================
-# Module-level exports (lazy evaluation)
-# =============================================================================
-
-class _LLMProxy:
-    """
-    Proxy class for lazy LLM access.
-
-    This allows `from models.llm_models import llm` to work
-    without immediately creating the LLM instance.
-    """
-
-    _instance: Optional[BaseChatModel] = None
-
-    def _get_instance(self) -> BaseChatModel:
-        """Get the underlying LLM instance."""
-        if self._instance is None:
-            self._instance = get_llm()
-        return self._instance
-
-    def __getattr__(self, name):
-        return getattr(self._get_instance(), name)
-
-    def __call__(self, *args, **kwargs):
-        return self._get_instance()(*args, **kwargs)
-
-    def __or__(self, other):
-        """Support LangChain pipe operator for chain composition."""
-        return self._get_instance() | other
-
-    def __ror__(self, other):
-        """Support LangChain pipe operator for chain composition (right side)."""
-        return other | self._get_instance()
-
-
-class _WebSearchProxy:
-    """
-    Proxy class for lazy web search tool access.
-    """
-
-    _instance = None
-
-    def __getattr__(self, name):
-        if self._instance is None:
-            self._instance = get_web_search_tool()
-        if self._instance is None:
-            raise RuntimeError("Web search tool not available")
-        return getattr(self._instance, name)
-
-    def __call__(self, *args, **kwargs):
-        if self._instance is None:
-            self._instance = get_web_search_tool()
-        if self._instance is None:
-            raise RuntimeError("Web search tool not available")
-        return self._instance(*args, **kwargs)
-
-
-# Export proxy instances for backward compatibility
-llm = _LLMProxy()
-web_search_tool = _WebSearchProxy()
-
-
-# =============================================================================
 # Convenience functions
 # =============================================================================
 
@@ -281,7 +218,7 @@ if __name__ == "__main__":
 
     try:
         # Test basic invocation
-        response = llm.invoke("Say 'Hello' in one word.")
+        response = get_llm().invoke("Say 'Hello' in one word.")
         print(f"Response: {response.content}")
         print("\nLLM connection successful!")
 

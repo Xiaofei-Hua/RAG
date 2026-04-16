@@ -54,24 +54,7 @@ class IntentResult(BaseModel):
 
 
 # Classification prompt
-INTENT_CLASSIFICATION_PROMPT = """你是一个意图分类专家，负责分析用户输入并判断其意图类型。
-
-## 意图类型说明：
-1. **rag_query**: 用户需要查询知识库中的专业信息，涉及半导体、芯片、封装、测试等技术问题
-2. **general_chat**: 普通对话，如问候、闲聊、一般性问题
-3. **doc_upload**: 用户想要上传文档，如"帮我上传文件"、"添加新文档"
-4. **system_cmd**: 系统管理命令，如"清除缓存"、"查看状态"、"帮助"
-
-## 分类规则：
-- 如果问题涉及专业术语、技术细节、具体知识 → rag_query
-- 如果是问候、闲聊、非专业问题 → general_chat
-- 如果明确提到上传/添加文档 → doc_upload
-- 如果是系统操作或帮助请求 → system_cmd
-
-## 用户输入：
-{query}
-
-请分析用户意图并返回分类结果。"""
+from core.prompts.aircraft_prompts import INTENT_CLASSIFICATION_PROMPT
 
 
 @dataclass

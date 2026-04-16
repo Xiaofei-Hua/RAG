@@ -40,6 +40,7 @@ from graph.agent_node import agent_node
 from graph.generate_node import generate
 from graph.get_human_message import get_last_human_message
 from graph.rewrite_node import rewrite
+from core.prompts.aircraft_prompts import GRADE_SYSTEM_PROMPT, GRADE_HUMAN_PROMPT
 from utils.log_utils import log
 
 __all__ = [
@@ -66,21 +67,9 @@ class RAGGraphConfig:
     thread_id: Optional[str] = None
 
     # Grading settings
-    grade_system_prompt: str = """你是一个评估检索文档与用户问题相关性的评分器。
+    grade_system_prompt: str = GRADE_SYSTEM_PROMPT
 
-请判断检索到的文档是否与用户问题相关。判断标准：
-- 文档包含与问题相关的关键词或语义含义 → 相关
-- 文档与问题主题不匹配或信息不足 → 不相关
-
-请给出二元评分 'yes' 或 'no'。"""
-
-    grade_human_prompt: str = """检索到的文档：
-{context}
-
-用户的问题：
-{question}
-
-请判断文档是否与问题相关，回答 'yes' 或 'no'。"""
+    grade_human_prompt: str = GRADE_HUMAN_PROMPT
 
     # Retry settings
     max_retries: int = 2
@@ -279,9 +268,22 @@ class RAGGraph:
         # Generate ends the flow
         workflow.add_edge("generate", END)
 
-        # Set up memory checkpointing
+        # Set up memory checkpointing (SQLite for persistence across restarts)
         if self._config.use_memory:
-            self._memory = MemorySaver()
+            try:
+                import sqlite3
+                from langgraph.checkpoint.sqlite import SqliteSaver
+                import os
+                os.makedirs("./data", exist_ok=True)
+                conn = sqlite3.connect(
+                    "./data/checkpoints.db",
+                    check_same_thread=False,
+                )
+                self._memory = SqliteSaver(conn)
+                log.info("Using SQLite checkpoint for graph persistence")
+            except ImportError:
+                log.warning("langgraph-checkpoint-sqlite not installed, using MemorySaver")
+                self._memory = MemorySaver()
             self._graph = workflow.compile(checkpointer=self._memory)
         else:
             self._graph = workflow.compile()
@@ -425,7 +427,7 @@ def create_rag_graph(
 
     Example:
         >>> graph = create_rag_graph()
-        >>> result = graph.invoke({"messages": [HumanMessage(content="什么是芯片?")]})
+        >>> result = graph.invoke({"messages": [HumanMessage(content="发动机振动异常如何排查?")]})
     """
     rag = RAGGraph(llm=llm, tools=tools, config=config)
     return rag.build()
@@ -498,47 +500,6 @@ def run_interactive_session(
         except Exception as e:
             log.error(f"Session error: {e}")
             print(f"\n发生错误: {e}\n")
-
-
-# =============================================================================
-# Backward compatibility - module level variables
-# =============================================================================
-
-# These are created lazily when accessed
-def _get_workflow():
-    """Get workflow (backward compatibility)."""
-    rag = get_rag_graph()
-    return rag.graph
-
-
-def _get_memory():
-    """Get memory (backward compatibility)."""
-    rag = get_rag_graph()
-    return rag._memory
-
-
-# Property-like access for backward compatibility
-class _GraphProxy:
-    """Proxy for backward compatible graph access."""
-
-    _instance = None
-
-    def __getattr__(self, name):
-        if self._instance is None:
-            rag = get_rag_graph()
-            self._instance = rag.graph
-        return getattr(self._instance, name)
-
-
-# Export for backward compatibility
-graph = _GraphProxy()
-memory = None  # Will be created with graph
-config = {
-    "configurable": {
-        "thread_id": str(uuid.uuid4()),
-    }
-}
-_printed = set()
 
 
 # =============================================================================

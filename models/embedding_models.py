@@ -1,13 +1,17 @@
 from langchain_openai import OpenAIEmbeddings
 from utils.env_utils import OPENAI_BASE_URL, OPENAI_API_KEY
-from langchain_huggingface import HuggingFaceEmbeddings  
+from langchain_huggingface import HuggingFaceEmbeddings
+import os
 
 openai_embeddings = OpenAIEmbeddings(
     openai_api_key=OPENAI_API_KEY,
     openai_api_base=OPENAI_BASE_URL,
 )
 
-local_model_path = "/home/ubuntu/LocalModels/bge-small-zh-v1.5"
+local_model_path = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)),
+    "local_models", "bge-small-zh-v1.5",
+)
 model_kwargs = {
     "device": "cpu",
 }

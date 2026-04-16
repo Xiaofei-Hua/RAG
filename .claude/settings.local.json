@@ -1,7 +1,14 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -m graph.graph --query \"什么是半导体封装？\")"
+      "Bash(python -m graph.graph --query \"什么是半导体封装？\")",
+      "Bash(find /Users/xiaofei_hua/Projects/M1_Spring26/RAG -name \"*.py\" -exec grep -l \"write_milvus\\\\|add_documents\\\\|source_dir\" {} \\\\;)",
+      "Bash(ls /Users/xiaofei_hua/Projects/M1_Spring26/RAG/run* /Users/xiaofei_hua/Projects/M1_Spring26/RAG/stop* /Users/xiaofei_hua/Projects/M1_Spring26/RAG/start* /Users/xiaofei_hua/Projects/M1_Spring26/RAG/*.sh)",
+      "Bash(npm --version)",
+      "Bash(chmod +x /Users/xiaofei_hua/Projects/M1_Spring26/RAG/run.sh /Users/xiaofei_hua/Projects/M1_Spring26/RAG/stop.sh)",
+      "Bash(ls .venv/lib/python3.13/site-packages/markdown*)",
+      "Bash(ls .venv/lib/python3.13/site-packages/Markdown*)",
+      "Bash(pip3 --version)"
     ]
   }
 }

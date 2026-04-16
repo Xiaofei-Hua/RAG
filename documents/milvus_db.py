@@ -132,20 +132,25 @@ def retry_on_failure(
 
 def _get_embedding_function():
     """
-    Lazy-load embedding function to save memory.
-    
-    Only loads the model when actually needed.
+    Lazy-load embedding function from local model directory.
+
+    Loads bge-small-zh-v1.5 from models/local_models/ to avoid
+    downloading at runtime.
     """
     from langchain_huggingface import HuggingFaceEmbeddings
-    
-    local_model_path = "/home/ubuntu/LocalModels/bge-small-zh-v1.5"
-    
+    import os
+
+    local_model_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        "models", "local_models", "bge-small-zh-v1.5",
+    )
+
     return HuggingFaceEmbeddings(
         model_name=local_model_path,
         model_kwargs={"device": "cpu"},
         encode_kwargs={
             "normalize_embeddings": True,
-            "batch_size": 4,  # Small batch for low memory
+            "batch_size": 4,
         },
     )
 
@@ -508,7 +513,7 @@ class MilvusManager:
             return {"error": str(e)}
 
     def health_check(self) -> Dict[str, Any]:
-        """Check connection health."""
+        """Check connection health. Works with both Milvus server and Milvus Lite."""
         result = {
             "connected": False,
             "server_info": None,
@@ -516,10 +521,24 @@ class MilvusManager:
         }
 
         try:
-            version = self.client.get_server_version()
-            result["server_info"] = {"version": version}
-            result["collections"] = self.client.list_collections()
+            # Milvus Lite (local .db) doesn't support get_server_version,
+            # so we use list_collections as the connectivity check instead.
+            collections = self.client.list_collections()
+            result["collections"] = collections
             result["connected"] = True
+
+            # Try to get version (works for remote server, ignored for Lite)
+            try:
+                version = self.client.get_server_version()
+                result["server_info"] = {"version": version, "mode": "server"}
+            except Exception:
+                # Milvus Lite — detect from URI
+                uri = self.config.uri
+                if uri and (uri.endswith(".db") or uri.startswith("./")):
+                    result["server_info"] = {"version": "lite", "mode": "local"}
+                else:
+                    result["server_info"] = {"version": "unknown", "mode": "unknown"}
+
         except Exception as e:
             result["error"] = str(e)
 

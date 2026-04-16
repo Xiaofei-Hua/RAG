@@ -105,10 +105,39 @@ class HybridRetriever:
 
     @property
     def sparse_retriever(self) -> BM25Retriever:
-        """Get sparse retriever (lazy initialization)."""
+        """Get sparse retriever (lazy initialization, auto-synced from Milvus)."""
         if self._sparse_retriever is None:
             self._sparse_retriever = BM25Retriever()
+        self._ensure_sparse_indexed()
         return self._sparse_retriever
+
+    def _ensure_sparse_indexed(self) -> None:
+        """Load documents from Milvus into BM25 if the index is empty."""
+        if self._sparse_retriever._index_built and self._sparse_retriever._documents:
+            return  # Already indexed
+        try:
+            results = self.dense_manager.query(
+                filter_expr="id > 0",
+                output_fields=["text", "source", "title"],
+                limit=10000,
+            )
+            if results:
+                docs = [
+                    Document(
+                        page_content=r.get("text", ""),
+                        metadata={
+                            "source": r.get("source", ""),
+                            "title": r.get("title", ""),
+                        },
+                    )
+                    for r in results
+                    if r.get("text")
+                ]
+                if docs:
+                    self._sparse_retriever.add_documents(docs)
+                    log.info(f"BM25 index loaded from Milvus: {len(docs)} docs")
+        except Exception as e:
+            log.debug(f"BM25 Milvus sync skipped (collection may not exist): {e}")
 
     def retrieve(self, query: str, top_k: Optional[int] = None) -> List[Document]:
         """
