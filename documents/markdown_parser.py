@@ -22,8 +22,17 @@ from langchain_community.document_loaders import UnstructuredMarkdownLoader
 from langchain_core.documents import Document
 from langchain_experimental.text_splitter import SemanticChunker
 
-from models.embedding_models import openai_embeddings
 from utils.log_utils import log
+
+
+def _get_local_embeddings():
+    """
+    Reuse the global singleton from models/embedding_models.py.
+
+    Ensures only one embedding model instance is loaded in the process.
+    """
+    from models.embedding_models import get_local_embeddings
+    return get_local_embeddings()
 
 # version-safe import
 try:
@@ -289,33 +298,47 @@ class MarkdownParser:
         self,
         *,
         config: MarkdownParserConfig = MarkdownParserConfig(),
-        embeddings: Any = openai_embeddings,
+        embeddings: Any = None,
         loader_cls: Type[UnstructuredMarkdownLoader] = UnstructuredMarkdownLoader,
         splitter_cls: Type[SemanticChunker] = SemanticChunker,
         logger: Any = log,
     ) -> None:
         self.cfg = config
         self.log = logger
-        self._embeddings = embeddings
+        # Use local BGE embeddings by default (no remote API dependency)
+        self._embeddings = embeddings or _get_local_embeddings()
         self._loader_cls = loader_cls
+        self._splitter_cls = splitter_cls
 
         self._token_counter = TokenCounter(
-            embeddings=embeddings,
+            embeddings=self._embeddings,
             model_hint=self.cfg.tokenizer_model_name,
             use_tiktoken=self.cfg.use_tiktoken,
             timeout_s=self.cfg.tiktoken_http_timeout_s,
             logger=logger,
         )
 
-        self._semantic_splitter = splitter_cls(
-            embeddings,
-            breakpoint_threshold_type=self.cfg.semantic_breakpoint_threshold_type,
-        )
+        # Lazy init: SemanticChunker construction can trigger spaCy downloads
+        self._semantic_splitter: Optional[Any] = None
 
         self._fallback_splitter: Optional[Any] = None  # lazy init
         self.last_stats: ParserStats = ParserStats()
 
     # Public API
+
+    @property
+    def semantic_splitter(self):
+        """Get semantic splitter (lazy initialization to defer spaCy download)."""
+        if self._semantic_splitter is None:
+            try:
+                self._semantic_splitter = self._splitter_cls(
+                    self._embeddings,
+                    breakpoint_threshold_type=self.cfg.semantic_breakpoint_threshold_type,
+                )
+            except Exception as e:
+                self.log.warning(f"SemanticChunker init failed: {e}, will use fallback splitter")
+                self._semantic_splitter = None
+        return self._semantic_splitter
 
     def parse_markdown_to_documents(
         self, md_file: str | Path, *, encoding: str = "utf-8"
@@ -396,26 +419,96 @@ class MarkdownParser:
     # Loader
 
     def _parse_markdown(self, md_path: Path, *, encoding: str) -> List[Document]:
-        """Load markdown file using UnstructuredMarkdownLoader."""
+        """Load markdown file. Uses simple regex parser by default for speed."""
         if not md_path.exists() or not md_path.is_file():
             raise FileNotFoundError(f"Markdown file not found: {md_path}")
 
-        try:
-            loader = self._loader_cls(
-                file_path=str(md_path),
-                mode=self.cfg.loader_mode,
-                strategy=self.cfg.loader_strategy,
-                encoding=encoding,
-            )
-        except TypeError:
-            # Fallback for older versions without encoding parameter
-            loader = self._loader_cls(
-                file_path=str(md_path),
-                mode=self.cfg.loader_mode,
-                strategy=self.cfg.loader_strategy,
-            )
+        # Prefer simple loader: fast, no external deps (no spaCy download)
+        return self._simple_markdown_load(md_path, encoding)
 
-        return list(loader.lazy_load())
+    def _simple_markdown_load(self, md_path: Path, encoding: str) -> List[Document]:
+        """
+        Simple markdown loader that doesn't depend on unstructured/spaCy.
+
+        Parses markdown by splitting on headings (# ) and creates
+        Title + NarrativeText elements similar to unstructured output.
+        """
+        import re
+
+        with open(md_path, "r", encoding=encoding) as f:
+            content = f.read()
+
+        if not content.strip():
+            return []
+
+        # Split into sections by headings
+        sections = re.split(r'(^#{1,6}\s+.+$)', content, flags=re.MULTILINE)
+
+        documents = []
+        idx = 0
+
+        # Handle content before first heading
+        if sections and not sections[0].startswith('#'):
+            pre_content = sections[0].strip()
+            if pre_content:
+                documents.append(Document(
+                    page_content=pre_content,
+                    metadata={
+                        "category": "NarrativeText",
+                        "element_id": f"pre_{idx}",
+                        "parent_id": None,
+                    }
+                ))
+                idx += 1
+            sections = sections[1:]
+
+        # Process heading + content pairs
+        current_parent_id = None
+        for i in range(0, len(sections) - 1, 2):
+            heading = sections[i].strip() if i < len(sections) else ""
+            body = sections[i + 1].strip() if i + 1 < len(sections) else ""
+
+            if not heading:
+                continue
+
+            title_text = re.sub(r'^#{1,6}\s+', '', heading)
+            title_id = f"title_{idx}"
+            level = len(heading) - len(heading.lstrip('#'))
+
+            # Add title element
+            documents.append(Document(
+                page_content=title_text,
+                metadata={
+                    "category": "Title",
+                    "element_id": title_id,
+                    "parent_id": current_parent_id if level > 1 else None,
+                }
+            ))
+            idx += 1
+
+            # Update parent for nested headings
+            if level == 1:
+                current_parent_id = title_id
+            elif level > 1:
+                current_parent_id = title_id
+
+            # Add body content
+            if body:
+                for para in body.split('\n\n'):
+                    para = para.strip()
+                    if para:
+                        documents.append(Document(
+                            page_content=para,
+                            metadata={
+                                "category": "NarrativeText",
+                                "element_id": f"text_{idx}",
+                                "parent_id": title_id,
+                            }
+                        ))
+                        idx += 1
+
+        self.log.info(f"Simple markdown loader: {len(documents)} elements from {md_path.name}")
+        return documents
 
     # Normalize
 
@@ -753,24 +846,31 @@ class MarkdownParser:
 
         for batch in self._batched(large, batch_size):
             # Try batch semantic split
-            try:
-                pieces = self._semantic_splitter.split_documents(list(batch))
-                result.extend(pieces)
-                semantic_out += len(pieces)
-                continue
-            except Exception as e:
-                self.log.exception(f"[MarkdownParser] batch semantic split failed: {e}")
-
-            # Fallback: process individually
-            for doc in batch:
+            splitter = self.semantic_splitter
+            if splitter is not None:
                 try:
-                    pieces = self._semantic_splitter.split_documents([doc])
+                    pieces = splitter.split_documents(list(batch))
                     result.extend(pieces)
                     semantic_out += len(pieces)
+                    continue
                 except Exception as e:
-                    semantic_fail += 1
-                    self.log.exception(f"[MarkdownParser] semantic split failed for doc: {e}")
+                    self.log.warning(f"[MarkdownParser] batch semantic split failed: {e}")
 
+            # Fallback: process individually or use fallback splitter
+            for doc in batch:
+                split_done = False
+                if splitter is not None:
+                    try:
+                        pieces = splitter.split_documents([doc])
+                        result.extend(pieces)
+                        semantic_out += len(pieces)
+                        split_done = True
+                        continue
+                    except Exception as e:
+                        semantic_fail += 1
+                        self.log.warning(f"[MarkdownParser] semantic split failed for doc: {e}")
+
+                if not split_done:
                     # Try fallback splitter
                     self._ensure_fallback_splitter()
                     if self._fallback_splitter is not None:
@@ -780,7 +880,7 @@ class MarkdownParser:
                             fallback_used += 1
                             continue
                         except Exception as e2:
-                            self.log.exception(f"[MarkdownParser] fallback split failed: {e2}")
+                            self.log.warning(f"[MarkdownParser] fallback split failed: {e2}")
 
                     # Last resort: keep original
                     if self.cfg.keep_original_on_split_error:

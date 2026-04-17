@@ -292,10 +292,92 @@ async def delete_document(doc_id: str):
 
 
 @router.post("/reindex")
-async def reindex_all_documents():
-    """Reindex all documents."""
-    # TODO: Implement full reindexing
+async def reindex_all_documents(background_tasks: BackgroundTasks):
+    """Reindex all markdown files from the md/ directory."""
+    background_tasks.add_task(_reindex_all)
     return {
         "status": "success",
-        "message": "Reindexing started",
+        "message": "Reindexing started in background",
     }
+
+
+def _reindex_all():
+    """Reindex all markdown files from md/ directory."""
+    import glob
+    from documents.markdown_parser import MarkdownParser
+    from documents.milvus_db import get_milvus_manager
+    from core.retrieval.bm25_retriever import get_bm25_retriever
+
+    md_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "md")
+    md_files = glob.glob(os.path.join(md_dir, "*.md"))
+
+    if not md_files:
+        log.warning(f"No markdown files found in {md_dir}")
+        return
+
+    log.info(f"Reindexing {len(md_files)} markdown files from {md_dir}")
+
+    registry = get_document_registry()
+    parser = MarkdownParser()
+    manager = get_milvus_manager()
+
+    total_inserted = 0
+    for md_path in md_files:
+        filename = os.path.basename(md_path)
+        try:
+            # Parse document
+            documents = parser.parse_markdown_to_documents(md_path)
+            if not documents:
+                log.warning(f"No documents parsed from {filename}")
+                continue
+
+            # Add file_hash metadata
+            with open(md_path, "rb") as f:
+                file_hash = hashlib.sha256(f.read()).hexdigest()
+            for doc in documents:
+                doc.metadata["file_hash"] = file_hash
+
+            # Insert into Milvus
+            result = manager.add_documents(documents)
+            inserted = result.get("inserted", 0)
+            total_inserted += inserted
+
+            # Update registry
+            doc_id = hashlib.md5(filename.encode()).hexdigest()[:8]
+            registry.put(
+                doc_id=doc_id,
+                filename=filename,
+                status="indexed",
+                chunks=inserted,
+                created_at=time.time(),
+                size_bytes=os.path.getsize(md_path),
+                file_hash=file_hash,
+            )
+
+            log.info(f"Reindexed: {filename}, {inserted} chunks")
+
+        except Exception as e:
+            log.error(f"Failed to reindex {filename}: {e}")
+
+    # Rebuild BM25 index from Milvus
+    try:
+        bm25 = get_bm25_retriever()
+        bm25.clear()
+        results = manager.query(filter_expr="id > 0", output_fields=["text", "source", "title"], limit=10000)
+        if results:
+            from langchain_core.documents import Document as LCDoc
+            docs = [
+                LCDoc(
+                    page_content=r.get("text", ""),
+                    metadata={"source": r.get("source", ""), "title": r.get("title", "")},
+                )
+                for r in results
+                if r.get("text")
+            ]
+            if docs:
+                bm25.add_documents(docs)
+                log.info(f"BM25 index rebuilt: {len(docs)} docs")
+    except Exception as e:
+        log.warning(f"BM25 rebuild failed: {e}")
+
+    log.info(f"Reindex complete: {total_inserted} chunks from {len(md_files)} files")

@@ -8,7 +8,14 @@
       "Bash(chmod +x /Users/xiaofei_hua/Projects/M1_Spring26/RAG/run.sh /Users/xiaofei_hua/Projects/M1_Spring26/RAG/stop.sh)",
       "Bash(ls .venv/lib/python3.13/site-packages/markdown*)",
       "Bash(ls .venv/lib/python3.13/site-packages/Markdown*)",
-      "Bash(pip3 --version)"
+      "Bash(pip3 --version)",
+      "Bash(ls *.txt *.toml *.cfg)",
+      "Bash(ls -la *.db)",
+      "Bash(ls -la milvus_data*)",
+      "Bash(ls -la .milvus_data*)",
+      "Bash(sqlite3 ./data/documents.db \"DELETE FROM documents; SELECT 'Registry cleared: ' || changes\\(\\) || ' rows deleted';\")",
+      "Bash(curl -s http://localhost:8000/api/documents)",
+      "Bash(python3 -m json.tool)"
     ]
   }
 }

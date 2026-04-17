@@ -43,8 +43,9 @@ class SearchMode(Enum):
 class MilvusConfig:
     """
     Configuration optimized for low-resource servers.
-    
+
     Default values are conservative for 4GB RAM servers.
+    Uses AUTOINDEX for Milvus Lite compatibility (HNSW not supported in local mode).
     """
     uri: str = MILVUS_URI
     collection_name: str = COLLECTION_NAME
@@ -58,10 +59,10 @@ class MilvusConfig:
     connection_timeout: float = 60.0  # Longer timeout
     consistency_level: str = "Bounded"  # Less strict than "Strong"
 
-    # Lightweight index parameters
-    hnsw_m: int = 8  # Reduced from 16
-    hnsw_ef_construction: int = 32  # Reduced from 64
-    hnsw_ef_search: int = 32
+    # Index type: AUTOINDEX for Milvus Lite compatibility
+    # Milvus Lite only supports FLAT, IVF_FLAT, AUTOINDEX
+    index_type: str = "AUTOINDEX"
+    search_params: Optional[Dict[str, Any]] = None  # AUTOINDEX auto-tunes
 
 
 @dataclass
@@ -132,27 +133,13 @@ def retry_on_failure(
 
 def _get_embedding_function():
     """
-    Lazy-load embedding function from local model directory.
+    Reuse the global singleton embedding model.
 
-    Loads bge-small-zh-v1.5 from models/local_models/ to avoid
-    downloading at runtime.
+    Delegates to models.embedding_models.get_local_embeddings() to ensure
+    only one model instance is loaded across the entire process.
     """
-    from langchain_huggingface import HuggingFaceEmbeddings
-    import os
-
-    local_model_path = os.path.join(
-        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
-        "models", "local_models", "bge-small-zh-v1.5",
-    )
-
-    return HuggingFaceEmbeddings(
-        model_name=local_model_path,
-        model_kwargs={"device": "cpu"},
-        encode_kwargs={
-            "normalize_embeddings": True,
-            "batch_size": 4,
-        },
-    )
+    from models.embedding_models import get_local_embeddings
+    return get_local_embeddings()
 
 
 class MilvusManager:
@@ -291,16 +278,13 @@ class MilvusManager:
             max_length=self.config.max_metadata_length
         )
 
-        # Create index params
+        # Create index params - use AUTOINDEX for Milvus Lite compatibility
+        # HNSW is NOT supported in Milvus Lite local mode
         index_params = self.client.prepare_index_params()
         index_params.add_index(
             field_name="dense",
-            index_type="HNSW",
+            index_type=self.config.index_type,
             metric_type=MetricType.IP,
-            params={
-                "M": self.config.hnsw_m,
-                "efConstruction": self.config.hnsw_ef_construction
-            }
         )
 
         # Create collection
@@ -327,8 +311,27 @@ class MilvusManager:
                 self._collection_loaded = True
                 log.debug(f"Collection '{self.config.collection_name}' loaded successfully")
             except Exception as e:
-                log.error(f"Failed to ensure collection loaded: {e}")
-                raise
+                log.warning(f"Collection load failed, reconnecting: {e}")
+                # Reset stale connection and retry once
+                self._reset_connection()
+                collections = self.client.list_collections()
+                if self.config.collection_name not in collections:
+                    self.create_collection(drop_if_exists=False)
+                self.client.load_collection(self.config.collection_name)
+                self._collection_loaded = True
+
+    def _reset_connection(self) -> None:
+        """Reset Milvus client connection to recover from stale gRPC channels."""
+        try:
+            if self._client is not None:
+                self._client.close()
+        except Exception:
+            pass
+        self._client = None
+        self._collection_loaded = False
+        # Force new connection on next access
+        _ = self.client
+        log.debug("Milvus connection reset")
 
     @retry_on_failure()
     def add_documents(
@@ -351,6 +354,10 @@ class MilvusManager:
         failed = 0
 
         log.info(f"Adding {total} documents (batch_size={batch_size})")
+
+        # Pre-load embedding model before Milvus operations to avoid
+        # gRPC connection timeout during slow model loading (~75s)
+        _ = self.embedding_function
 
         self._ensure_collection_loaded()
 
@@ -433,10 +440,9 @@ class MilvusManager:
             # Generate query embedding
             query_embedding = self.embedding_function.embed_query(query)
 
-            # Search
-            search_params = {
+            # Search - AUTOINDEX auto-tunes search parameters
+            search_params = self.config.search_params or {
                 "metric_type": "IP",
-                "params": {"ef": self.config.hnsw_ef_search}
             }
 
             results = self.client.search(
