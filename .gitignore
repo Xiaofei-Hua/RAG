@@ -85,3 +85,6 @@ htmlcov/
 # Sensitive config files
 embedEtcd.yaml
 user.yaml
+
+# markdown text
+md/
