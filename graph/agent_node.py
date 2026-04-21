@@ -180,9 +180,13 @@ class AgentNode:
         Returns:
             AI response message
         """
-        # Use only the last message for efficiency in tool-binding scenarios
-        # The model will have context from previous messages if needed
-        response = self.bound_model.invoke([messages[-1]])
+        # Pass recent messages (not just the last one) so the model has
+        # enough context to decide whether to call retrieval tools.
+        # Passing only messages[-1] caused the model to skip tool calls
+        # in multi-turn conversations due to insufficient context.
+        window = 10
+        recent = messages[-window:] if len(messages) > window else messages
+        response = self.bound_model.invoke(recent)
 
         log.debug(f"Agent response: {type(response).__name__}")
 

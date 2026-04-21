@@ -4,7 +4,7 @@ Chat Schemas for Enterprise RAG Platform
 Pydantic models for chat-related API requests and responses.
 """
 
-from typing import List, Optional, Dict, Any
+from typing import List, Literal, Optional, Dict, Any
 from pydantic import BaseModel, Field
 
 
@@ -20,6 +20,7 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = Field(None, description="Session ID for conversation continuity")
     stream: bool = Field(False, description="Enable streaming response")
     include_sources: bool = Field(True, description="Include source documents in response")
+    mode: Literal["thinking", "fast"] = Field("thinking", description="Response mode: 'thinking' uses full graph pipeline, 'fast' uses direct retrieval + generation")
 
 
 class SourceDocument(BaseModel):

@@ -11,6 +11,29 @@
           </span>
         </div>
         <div class="header-actions">
+          <div class="mode-toggle">
+            <button
+              :class="['mode-btn', { active: chatStore.mode === 'thinking' }]"
+              @click="chatStore.mode = 'thinking'"
+              title="深度思考模式：完整意图分析 + 文档评估 + 诊断回答"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 2a8 8 0 0 1 8 8c0 3.4-2.1 6.3-5 7.5V20h-6v-2.5C6.1 16.3 4 13.4 4 10a8 8 0 0 1 8-8z"/>
+                <path d="M10 22h4"/>
+              </svg>
+              <span>深度</span>
+            </button>
+            <button
+              :class="['mode-btn', { active: chatStore.mode === 'fast' }]"
+              @click="chatStore.mode = 'fast'"
+              title="快速模式：直接检索 + 生成回答"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
+              </svg>
+              <span>快速</span>
+            </button>
+          </div>
           <button class="btn-icon" @click="toggleStreamMode" :title="useStream ? '流式输出已开启' : '流式输出已关闭'">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
@@ -255,6 +278,7 @@ function getStatusText(): string {
   if (node === 'retrieve') return '正在检索知识库...'
   if (node === 'rewrite') return '正在优化查询...'
   if (node === 'generate') return '正在生成回答...'
+  if (node === 'fast_generate') return '快速生成回答中...'
   if (intent === 'general_chat') return '正在思考...'
   return '处理中...'
 }
@@ -330,6 +354,7 @@ function getProfileLabel(profile?: string): string {
   if (profile === 'phm_identity_v1') return 'PHM 平台身份介绍'
   if (profile === 'phm_general_v1') return 'PHM 通用咨询'
   if (profile === 'phm_diagnosis_v1') return 'PHM 故障诊断'
+  if (profile === 'phm_fast_v1') return '快速检索模式'
   return ''
 }
 
@@ -439,6 +464,49 @@ watch(
 .header-actions {
   display: flex;
   gap: var(--spacing-sm);
+  align-items: center;
+}
+
+/* Mode Toggle */
+.mode-toggle {
+  display: flex;
+  border: 1px solid var(--neutral-200);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  background: var(--neutral-100);
+}
+
+.mode-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 10px;
+  border: none;
+  background: transparent;
+  color: var(--neutral-500);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.mode-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.mode-btn:hover {
+  color: var(--neutral-700);
+  background: var(--neutral-200);
+}
+
+.mode-btn.active {
+  background: linear-gradient(135deg, var(--primary-500), var(--primary-600));
+  color: white;
+}
+
+.mode-btn.active:hover {
+  background: linear-gradient(135deg, var(--primary-600), var(--primary-700));
 }
 
 .btn-icon {

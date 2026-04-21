@@ -1,0 +1,82 @@
+INFO:     Started server process [87777]
+INFO:     Waiting for application startup.
+20260421 20:54:41 | MainProcess | MainThread | main.lifespan:33 | INFO: ==================================================
+20260421 20:54:41 | MainProcess | MainThread | main.lifespan:34 | INFO: Enterprise RAG Platform Starting...
+20260421 20:54:41 | MainProcess | MainThread | main.lifespan:35 | INFO: ==================================================
+20260421 20:54:41 | MainProcess | MainThread | redis_memory.__init__:65 | DEBUG: RedisSessionMemory created: ttl=3600s
+20260421 20:54:41 | MainProcess | MainThread | redis_memory.get_session_memory:391 | DEBUG: Created new RedisSessionMemory instance
+20260421 20:54:41 | MainProcess | MainThread | circuit_breaker.__init__:98 | DEBUG: CircuitBreaker 'llm_service' created
+20260421 20:54:41 | MainProcess | MainThread | circuit_breaker.__init__:98 | DEBUG: CircuitBreaker 'retriever_service' created
+20260421 20:54:41 | MainProcess | MainThread | main.lifespan:48 | INFO: LLM Circuit: closed
+20260421 20:54:41 | MainProcess | MainThread | main.lifespan:49 | INFO: Retriever Circuit: closed
+20260421 20:54:41 | MainProcess | MainThread | main.lifespan:51 | INFO: PHM Prompt Profile: phm_diagnosis_v1 (sig=0df94211b3ee)
+20260421 20:54:41 | MainProcess | MainThread | main.lifespan:53 | INFO: Startup complete!
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+20260421 20:54:42 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [cd02910b-6d8e-46] GET /health - 200 (0.3ms)
+INFO:     127.0.0.1:53979 - "GET /health HTTP/1.1" 200 OK
+20260421 20:54:42 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [2f615cc3-c402-4c] GET /health - 200 (0.2ms)
+INFO:     127.0.0.1:53981 - "GET /health HTTP/1.1" 200 OK
+20260421 20:54:50 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
+/Users/xiaofei_hua/Projects/M1_Spring26/RAG/.venv/lib/python3.13/site-packages/milvus_lite/__init__.py:15: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
+  from pkg_resources import DistributionNotFound, get_distribution
+20260421 20:54:51 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
+2026-04-21 20:54:51,627 [ERROR][handler]: grpc RpcError: [get_server_version], <_InactiveRpcError: StatusCode.UNIMPLEMENTED, >, <Time:{'RPC start': '2026-04-21 20:54:51.624969', 'gRPC error': '2026-04-21 20:54:51.627325'}> (decorators.py:151)
+20260421 20:54:51 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [dfc3295c-6809-4f] GET /api/admin/health - 200 (675.4ms)
+INFO:     127.0.0.1:54035 - "GET /api/admin/health HTTP/1.1" 200 OK
+20260421 20:54:51 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
+20260421 20:54:51 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
+2026-04-21 20:54:51,629 [ERROR][handler]: grpc RpcError: [get_server_version], <_InactiveRpcError: StatusCode.UNIMPLEMENTED, >, <Time:{'RPC start': '2026-04-21 20:54:51.629150', 'gRPC error': '2026-04-21 20:54:51.629269'}> (decorators.py:151)
+20260421 20:54:51 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
+20260421 20:54:51 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
+2026-04-21 20:54:51,630 [ERROR][handler]: grpc RpcError: [get_server_version], <_InactiveRpcError: StatusCode.UNIMPLEMENTED, >, <Time:{'RPC start': '2026-04-21 20:54:51.630230', 'gRPC error': '2026-04-21 20:54:51.630358'}> (decorators.py:151)
+20260421 20:54:51 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [14584921-e88b-46] GET /api/admin/health - 200 (2.7ms)
+20260421 20:54:51 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
+20260421 20:54:51 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
+2026-04-21 20:54:51,631 [ERROR][handler]: grpc RpcError: [get_server_version], <_InactiveRpcError: StatusCode.UNIMPLEMENTED, >, <Time:{'RPC start': '2026-04-21 20:54:51.631479', 'gRPC error': '2026-04-21 20:54:51.631585'}> (decorators.py:151)
+20260421 20:54:51 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [171a2c9d-cdf3-4e] GET /api/admin/health - 200 (2.3ms)
+INFO:     127.0.0.1:54037 - "GET /api/admin/health HTTP/1.1" 200 OK
+20260421 20:54:51 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [e82e3dd4-9a30-45] GET /api/admin/health - 200 (1.4ms)
+INFO:     127.0.0.1:54043 - "GET /api/admin/health HTTP/1.1" 200 OK
+INFO:     127.0.0.1:54047 - "GET /api/admin/health HTTP/1.1" 200 OK
+20260421 20:54:51 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
+20260421 20:54:51 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
+2026-04-21 20:54:51,912 [ERROR][handler]: grpc RpcError: [get_server_version], <_InactiveRpcError: StatusCode.UNIMPLEMENTED, >, <Time:{'RPC start': '2026-04-21 20:54:51.912710', 'gRPC error': '2026-04-21 20:54:51.912911'}> (decorators.py:151)
+20260421 20:54:51 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [fdb5ab6e-bb2f-41] GET /api/admin/health - 200 (3.1ms)
+INFO:     127.0.0.1:54057 - "GET /api/admin/health HTTP/1.1" 200 OK
+20260421 20:55:06 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [9255a6a8-18a4-46] POST /api/chat/stream - 200 (2.4ms)
+INFO:     127.0.0.1:54157 - "POST /api/chat/stream HTTP/1.1" 200 OK
+20260421 20:55:06 | MainProcess | MainThread | hybrid_retriever.__init__:92 | DEBUG: HybridRetriever created: dense_weight=0.5, sparse_weight=0.5
+20260421 20:55:06 | MainProcess | ThreadPoolExecutor-1_0 | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
+20260421 20:55:06 | MainProcess | ThreadPoolExecutor-1_0 | milvus_db.search:435 | DEBUG: Searching: '什么是发动机振动偏高...' (top_k=10)
+20260421 20:55:06 | MainProcess | ThreadPoolExecutor-1_1 | bm25_retriever.__init__:61 | DEBUG: BM25Retriever initialized
+20260421 20:55:06 | MainProcess | ThreadPoolExecutor-1_0 | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
+20260421 20:55:06 | MainProcess | ThreadPoolExecutor-1_1 | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
+20260421 20:55:06 | MainProcess | ThreadPoolExecutor-1_0 | milvus_db._ensure_collection_loaded:312 | DEBUG: Collection 't_collection01' loaded successfully
+20260421 20:55:06 | MainProcess | ThreadPoolExecutor-1_0 | milvus_db.embedding_function:177 | INFO: Loading embedding model...
+20260421 20:55:06 | MainProcess | ThreadPoolExecutor-1_1 | bm25_retriever._build_index:137 | DEBUG: BM25 index built: 34 docs, 288 terms
+20260421 20:55:06 | MainProcess | ThreadPoolExecutor-1_1 | bm25_retriever.add_documents:77 | INFO: Added 34 documents to BM25 index
+20260421 20:55:06 | MainProcess | ThreadPoolExecutor-1_1 | hybrid_retriever._ensure_sparse_indexed:138 | INFO: BM25 index loaded from Milvus: 34 docs
+20260421 20:55:06 | MainProcess | ThreadPoolExecutor-1_1 | bm25_retriever.retrieve:187 | DEBUG: BM25 retrieved 0 results for query
+Loading weights:   0%|          | 0/71 [00:00<?, ?it/s]Loading weights: 100%|██████████| 71/71 [00:00<00:00, 7186.88it/s]
+20260421 20:55:08 | MainProcess | ThreadPoolExecutor-1_0 | milvus_db.embedding_function:179 | INFO: Embedding model loaded
+20260421 20:55:08 | MainProcess | ThreadPoolExecutor-1_0 | milvus_db.search:476 | DEBUG: Found 10 results
+20260421 20:55:08 | MainProcess | MainThread | hybrid_retriever._rrf_fusion:355 | DEBUG: RRF fusion: 10 results
+20260421 20:55:08 | MainProcess | MainThread | hybrid_retriever.retrieve:173 | INFO: Hybrid retrieval completed: dense=10, sparse=0, final=5, elapsed=1756.9ms
+20260421 20:55:08 | MainProcess | MainThread | fast_mode.fast_generate_stream:156 | INFO: Fast mode retrieval: 5 docs, 1757ms
+20260421 20:55:08 | MainProcess | MainThread | llm_models.get_llm:108 | INFO: Creating LLM instance: model=gpt-4o
+20260421 20:55:09 | MainProcess | MainThread | llm_models.get_llm:120 | DEBUG: LLM instance created successfully
+20260421 20:55:35 | MainProcess | MainThread | fast_mode.fast_generate_stream:184 | INFO: Fast mode stream done: 1367 chars, 26412ms
+20260421 20:55:35 | MainProcess | MainThread | redis_memory.redis:81 | WARNING: redis package not installed, using SQLite fallback
+20260421 20:55:35 | MainProcess | MainThread | redis_memory.__init__:285 | INFO: SQLite session store initialized: ./data/sessions.db
+20260421 20:55:35 | MainProcess | MainThread | redis_memory.save_message:132 | DEBUG: Message saved to session session_...
+20260421 20:55:35 | MainProcess | MainThread | redis_memory.save_message:132 | DEBUG: Message saved to session session_...
+INFO:     Shutting down
+INFO:     Waiting for application shutdown.
+20260421 20:56:10 | MainProcess | MainThread | main.lifespan:58 | INFO: Shutting down...
+20260421 20:56:10 | MainProcess | MainThread | redis_memory.close:253 | DEBUG: Redis connection closed
+20260421 20:56:10 | MainProcess | MainThread | main.lifespan:65 | INFO: Shutdown complete
+INFO:     Application shutdown complete.
+INFO:     Finished server process [87777]
+/opt/homebrew/Caskroom/miniconda/base/lib/python3.13/multiprocessing/resource_tracker.py:400: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown: {'/loky-87777-wpo2j2nc'}
+  warnings.warn(

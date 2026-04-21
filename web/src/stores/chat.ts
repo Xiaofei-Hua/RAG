@@ -63,6 +63,7 @@ export const useChatStore = defineStore('chat', () => {
   const error = ref<string | null>(null)
   const currentIntent = ref<string>('')
   const currentNode = ref<string>('')
+  const mode = ref<'thinking' | 'fast'>('thinking')
 
   // Getters
   const messageCount = computed(() => messages.value.length)
@@ -99,6 +100,7 @@ export const useChatStore = defineStore('chat', () => {
           message: content.trim(),
           session_id: sessionId.value,
           stream: false,
+          mode: mode.value,
         }),
       })
 
@@ -179,6 +181,7 @@ export const useChatStore = defineStore('chat', () => {
           message: content.trim(),
           session_id: sessionId.value,
           stream: true,
+          mode: mode.value,
         }),
       })
 
@@ -334,6 +337,7 @@ export const useChatStore = defineStore('chat', () => {
     error,
     currentIntent,
     currentNode,
+    mode,
     // Getters
     messageCount,
     lastMessage,

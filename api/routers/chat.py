@@ -11,7 +11,7 @@ import json
 import re
 import time
 import uuid
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import StreamingResponse
@@ -44,6 +44,7 @@ class ChatRequest(BaseModel):
     session_id: Optional[str] = Field(None, description="Session ID for conversation continuity")
     stream: bool = Field(False, description="Enable streaming response")
     include_sources: bool = Field(True, description="Include source documents in response")
+    mode: Literal["thinking", "fast"] = Field("thinking", description="Response mode: 'thinking' uses full graph pipeline, 'fast' uses direct retrieval + generation")
 
 
 class SourceDocument(BaseModel):
@@ -325,6 +326,43 @@ async def chat(
                 }
             )
 
+        # Fast mode: skip intent classification / agent / grading, directly retrieve + generate
+        if request.mode == "fast":
+            from core.fast_mode import fast_generate
+
+            result = fast_generate(request.message)
+            processing_time = (time.perf_counter() - start_time) * 1000
+
+            background_tasks.add_task(
+                session_memory.save_message,
+                session_id,
+                HumanMessage(content=request.message)
+            )
+            background_tasks.add_task(
+                session_memory.save_message,
+                session_id,
+                AIMessage(content=result.answer)
+            )
+
+            return ChatResponse(
+                response=result.answer,
+                session_id=session_id,
+                intent="rag_query",
+                sources=[SourceDocument(**s) for s in result.sources],
+                processing_time_ms=processing_time,
+                metadata={
+                    "intent_confidence": 1.0,
+                    "intent_reasoning": "Fast mode (no classification)",
+                    "source_count": result.retrieval_count,
+                    "diagnosis": None,
+                    "route": "fast",
+                    "prompt_profile": "phm_fast_v1",
+                    "force_rag": False,
+                    "retrieval_time_ms": result.retrieval_time_ms,
+                    "generation_time_ms": result.generation_time_ms,
+                }
+            )
+
         # Step 1: Intent classification
         from core.intent.classifier import get_intent_classifier
         intent_classifier = get_intent_classifier()
@@ -519,6 +557,46 @@ async def chat_stream(
                 })
                 return
 
+            # Fast mode: direct retrieve + stream generate
+            if request.mode == "fast":
+                from core.fast_mode import fast_generate_stream
+
+                yield _sse({"type": "intent", "intent": "rag_query", "confidence": 1.0, "route": "fast", "force_rag": False})
+                yield _sse({"type": "status", "message": "正在检索知识库..."})
+
+                full_response = ""
+                sources_data = []
+                async for event in fast_generate_stream(request.message):
+                    if event["type"] == "token":
+                        if not full_response:
+                            yield _sse({"type": "node", "name": "fast_generate"})
+                            yield _sse({"type": "status", "message": "正在生成回答..."})
+                        full_response += event["content"]
+                        yield _sse({"type": "token", "content": event["content"]})
+                    elif event["type"] == "done":
+                        sources_data = event.get("sources", [])
+
+                await session_memory.save_message(session_id, HumanMessage(content=request.message))
+                await session_memory.save_message(session_id, AIMessage(content=full_response))
+
+                diagnosis = _extract_phm_diagnosis(full_response)
+                yield _sse({
+                    "type": "done",
+                    "full_response": full_response,
+                    "sources": sources_data,
+                    "processing_time_ms": (time.perf_counter() - start_time) * 1000,
+                    "metadata": {
+                        "intent_confidence": 1.0,
+                        "intent_reasoning": "Fast mode (no classification)",
+                        "source_count": len(sources_data),
+                        "diagnosis": diagnosis.model_dump() if diagnosis else None,
+                        "route": "fast",
+                        "prompt_profile": "phm_fast_v1",
+                        "force_rag": False,
+                    },
+                })
+                return
+
             # Step 1: Intent classification
             yield _sse({"type": "status", "message": "正在分析意图..."})
 
@@ -607,6 +685,11 @@ async def chat_stream(
                                 if hasattr(msg, 'tool_calls') and msg.tool_calls:
                                     yield _sse({"type": "node", "name": "retrieve"})
                                     yield _sse({"type": "status", "message": "正在检索知识库..."})
+                                elif hasattr(msg, 'content') and msg.content:
+                                    # Agent answered directly without calling tools
+                                    full_response = msg.content
+                                    yield _sse({"type": "status", "message": "正在生成回答..."})
+                                    yield _sse({"type": "token", "content": full_response})
 
                         elif node_name == "retrieve":
                             # Retrieval complete — results are in ToolMessages
