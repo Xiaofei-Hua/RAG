@@ -665,15 +665,23 @@ async def chat_stream(
 
                 full_response = ""
                 collected_messages = []
-                for event in rag.graph.stream(
-                    {
-                        "messages": [HumanMessage(content=request.message)],
-                        "rewrite_count": 0,
-                        "max_rewrites": 3,
-                    },
-                    config={"configurable": {"thread_id": session_id}},
-                    stream_mode="updates",
-                ):
+
+                import asyncio
+
+                def _run_graph_stream():
+                    return list(rag.graph.stream(
+                        {
+                            "messages": [HumanMessage(content=request.message)],
+                            "rewrite_count": 0,
+                            "max_rewrites": 3,
+                        },
+                        config={"configurable": {"thread_id": session_id}},
+                        stream_mode="updates",
+                    ))
+
+                stream_events = await asyncio.to_thread(_run_graph_stream)
+
+                for event in stream_events:
                     # Each event is a dict: {node_name: node_output}
                     for node_name, node_output in event.items():
                         if node_name == "agent":

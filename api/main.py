@@ -62,6 +62,9 @@ async def lifespan(app: FastAPI):
     memory = get_session_memory()
     await memory.close()
 
+    from graph.graph import get_rag_graph
+    get_rag_graph().close()
+
     log.info("Shutdown complete")
 
 

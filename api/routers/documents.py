@@ -61,6 +61,11 @@ def _compute_file_hash(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
+def _escape_filter_value(value: str) -> str:
+    """Escape special characters in Milvus filter expression values."""
+    return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
 def _check_duplicate(filename: str, file_hash: str) -> Optional[str]:
     """
     Check if a file already exists in the vector database or registry.
@@ -82,8 +87,11 @@ def _check_duplicate(filename: str, file_hash: str) -> Optional[str]:
         from documents.milvus_db import get_milvus_manager
         manager = get_milvus_manager()
 
+        safe_name = _escape_filter_value(filename)
+        safe_hash = _escape_filter_value(file_hash)
+
         results = manager.query(
-            filter_expr=f'source == "{filename}"',
+            filter_expr=f'source == "{safe_name}"',
             output_fields=["source"],
             limit=1,
         )
@@ -91,7 +99,7 @@ def _check_duplicate(filename: str, file_hash: str) -> Optional[str]:
             return f"文件 '{filename}' 已上传过，请勿重复上传"
 
         results = manager.query(
-            filter_expr=f'file_hash == "{file_hash}"',
+            filter_expr=f'file_hash == "{safe_hash}"',
             output_fields=["source"],
             limit=1,
         )
@@ -195,6 +203,21 @@ def _process_document(doc_id: str, file_path: str, filename: str, file_hash: str
             from documents.markdown_parser import MarkdownParser
             parser = MarkdownParser()
             documents = parser.parse_markdown_to_documents(file_path)
+        elif ext == ".pdf":
+            from pypdf import PdfReader
+            reader = PdfReader(file_path)
+            text_parts = []
+            for page in reader.pages:
+                page_text = page.extract_text()
+                if page_text and page_text.strip():
+                    text_parts.append(page_text.strip())
+            content = "\n\n".join(text_parts)
+            if not content.strip():
+                raise ValueError("PDF 文件内容为空或无法提取文本")
+            documents = [Document(
+                page_content=content,
+                metadata={"source": filename}
+            )]
         else:
             with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
@@ -271,19 +294,21 @@ async def delete_document(doc_id: str):
         manager = get_milvus_manager()
         file_hash = doc.get("file_hash", "")
         if file_hash:
-            manager.delete_by_filter(filter_expr=f'file_hash == "{file_hash}"')
+            safe_hash = _escape_filter_value(file_hash)
+            manager.delete_by_filter(filter_expr=f'file_hash == "{safe_hash}"')
             log.info(f"Deleted document from Milvus: {doc_id}")
         else:
-            manager.delete_by_filter(filter_expr=f'source == "{doc["filename"]}"')
+            safe_name = _escape_filter_value(doc["filename"])
+            manager.delete_by_filter(filter_expr=f'source == "{safe_name}"')
             log.info(f"Deleted document from Milvus by filename: {doc['filename']}")
     except Exception as e:
         log.error(f"Failed to delete from Milvus: {e}")
 
-    # Clear BM25 index (will be rebuilt on next query from Milvus)
+    # Remove from BM25 index (incremental)
     try:
         from core.retrieval.bm25_retriever import get_bm25_retriever
-        get_bm25_retriever().clear()
-        log.info("BM25 index cleared, will rebuild on next query")
+        get_bm25_retriever().remove_by_source(doc["filename"])
+        log.info(f"BM25 index updated: removed source={doc['filename']}")
     except Exception as e:
         log.warning(f"BM25 cleanup failed: {e}")
 
@@ -343,7 +368,7 @@ def _reindex_all():
             total_inserted += inserted
 
             # Update registry
-            doc_id = hashlib.md5(filename.encode()).hexdigest()[:8]
+            doc_id = str(uuid.uuid4())[:8]
             registry.put(
                 doc_id=doc_id,
                 filename=filename,

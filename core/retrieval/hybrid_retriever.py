@@ -7,6 +7,7 @@ Combines dense (vector) and sparse (BM25) retrieval with RRF fusion.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -271,29 +272,22 @@ class HybridRetriever:
 
     async def _adense_retrieve(self, query: str) -> List[RetrievalResult]:
         """Async dense retrieval."""
-        # Run sync in executor
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._dense_retrieve, query)
+        return await asyncio.get_running_loop().run_in_executor(None, self._dense_retrieve, query)
 
     async def _asparse_retrieve(self, query: str) -> List[RetrievalResult]:
         """Async sparse retrieval."""
-        loop = asyncio.get_event_loop()
-        return await loop.run_in_executor(None, self._sparse_retrieve, query)
+        return await asyncio.get_running_loop().run_in_executor(None, self._sparse_retrieve, query)
+
+    # Shared thread pool for parallel retrieval
+    _executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
     def _parallel_retrieve(
         self, query: str
     ) -> Tuple[List[RetrievalResult], List[RetrievalResult]]:
         """Perform parallel retrieval using threads."""
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-            dense_future = executor.submit(self._dense_retrieve, query)
-            sparse_future = executor.submit(self._sparse_retrieve, query)
-
-            dense_results = dense_future.result()
-            sparse_results = sparse_future.result()
-
-        return dense_results, sparse_results
+        dense_future = self._executor.submit(self._dense_retrieve, query)
+        sparse_future = self._executor.submit(self._sparse_retrieve, query)
+        return dense_future.result(), sparse_future.result()
 
     def _rrf_fusion(
         self,

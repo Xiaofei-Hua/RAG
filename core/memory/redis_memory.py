@@ -11,6 +11,7 @@ Provides persistent session storage with:
 from __future__ import annotations
 
 import json
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
@@ -267,6 +268,7 @@ class _SQLiteStore:
 
         os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else ".", exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
+        self._lock = threading.Lock()
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS sessions ("
             "  key TEXT NOT NULL,"
@@ -286,92 +288,98 @@ class _SQLiteStore:
 
     def _cleanup_expired(self, key: str) -> bool:
         """Remove key if expired. Returns True if key was expired."""
-        row = self._conn.execute(
-            "SELECT expires_at FROM ttls WHERE key = ?", (key,)
-        ).fetchone()
-        if row and row[0] < time.time():
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT expires_at FROM ttls WHERE key = ?", (key,)
+            ).fetchone()
+            if row and row[0] < time.time():
+                self._conn.execute("DELETE FROM sessions WHERE key = ?", (key,))
+                self._conn.execute("DELETE FROM ttls WHERE key = ?", (key,))
+                self._conn.commit()
+                return True
+            return False
+
+    async def lpush(self, key: str, value: str):
+        with self._lock:
+            self._cleanup_expired(key)
+            self._conn.execute(
+                "UPDATE sessions SET idx = idx + 1 WHERE key = ?", (key,)
+            )
+            self._conn.execute(
+                "INSERT INTO sessions (key, idx, value) VALUES (?, 0, ?)",
+                (key, value),
+            )
+            self._conn.commit()
+
+    async def lrange(self, key: str, start: int, end: int) -> List[str]:
+        with self._lock:
+            if self._cleanup_expired(key):
+                return []
+            rows = self._conn.execute(
+                "SELECT value FROM sessions WHERE key = ? ORDER BY idx LIMIT ? OFFSET ?",
+                (key, end - start + 1, start),
+            ).fetchall()
+            return [r[0] for r in rows]
+
+    async def ltrim(self, key: str, start: int, end: int):
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM sessions WHERE key = ? AND idx NOT IN "
+                "(SELECT idx FROM sessions WHERE key = ? ORDER BY idx LIMIT ? OFFSET ?)",
+                (key, key, end - start + 1, start),
+            )
+            rows = self._conn.execute(
+                "SELECT rowid FROM sessions WHERE key = ? ORDER BY idx",
+                (key,),
+            ).fetchall()
+            for new_idx, (rowid,) in enumerate(rows):
+                self._conn.execute(
+                    "UPDATE sessions SET idx = ? WHERE rowid = ?",
+                    (new_idx, rowid),
+                )
+            self._conn.commit()
+
+    async def llen(self, key: str) -> int:
+        with self._lock:
+            if self._cleanup_expired(key):
+                return 0
+            row = self._conn.execute(
+                "SELECT COUNT(*) FROM sessions WHERE key = ?", (key,)
+            ).fetchone()
+            return row[0] if row else 0
+
+    async def delete(self, key: str):
+        with self._lock:
             self._conn.execute("DELETE FROM sessions WHERE key = ?", (key,))
             self._conn.execute("DELETE FROM ttls WHERE key = ?", (key,))
             self._conn.commit()
-            return True
-        return False
-
-    async def lpush(self, key: str, value: str):
-        self._cleanup_expired(key)
-        # Shift existing indices up by 1
-        self._conn.execute(
-            "UPDATE sessions SET idx = idx + 1 WHERE key = ?", (key,)
-        )
-        self._conn.execute(
-            "INSERT INTO sessions (key, idx, value) VALUES (?, 0, ?)",
-            (key, value),
-        )
-        self._conn.commit()
-
-    async def lrange(self, key: str, start: int, end: int) -> List[str]:
-        if self._cleanup_expired(key):
-            return []
-        rows = self._conn.execute(
-            "SELECT value FROM sessions WHERE key = ? ORDER BY idx LIMIT ? OFFSET ?",
-            (key, end - start + 1, start),
-        ).fetchall()
-        return [r[0] for r in rows]
-
-    async def ltrim(self, key: str, start: int, end: int):
-        # Delete items outside [start, end]
-        self._conn.execute(
-            "DELETE FROM sessions WHERE key = ? AND idx NOT IN "
-            "(SELECT idx FROM sessions WHERE key = ? ORDER BY idx LIMIT ? OFFSET ?)",
-            (key, key, end - start + 1, start),
-        )
-        # Re-index remaining rows
-        rows = self._conn.execute(
-            "SELECT rowid FROM sessions WHERE key = ? ORDER BY idx",
-            (key,),
-        ).fetchall()
-        for new_idx, (rowid,) in enumerate(rows):
-            self._conn.execute(
-                "UPDATE sessions SET idx = ? WHERE rowid = ?",
-                (new_idx, rowid),
-            )
-        self._conn.commit()
-
-    async def llen(self, key: str) -> int:
-        if self._cleanup_expired(key):
-            return 0
-        row = self._conn.execute(
-            "SELECT COUNT(*) FROM sessions WHERE key = ?", (key,)
-        ).fetchone()
-        return row[0] if row else 0
-
-    async def delete(self, key: str):
-        self._conn.execute("DELETE FROM sessions WHERE key = ?", (key,))
-        self._conn.execute("DELETE FROM ttls WHERE key = ?", (key,))
-        self._conn.commit()
 
     async def exists(self, key: str) -> int:
-        if self._cleanup_expired(key):
-            return 0
-        row = self._conn.execute(
-            "SELECT 1 FROM sessions WHERE key = ? LIMIT 1", (key,)
-        ).fetchone()
-        return 1 if row else 0
+        with self._lock:
+            if self._cleanup_expired(key):
+                return 0
+            row = self._conn.execute(
+                "SELECT 1 FROM sessions WHERE key = ? LIMIT 1", (key,)
+            ).fetchone()
+            return 1 if row else 0
 
     async def expire(self, key: str, seconds: int):
-        self._conn.execute(
-            "INSERT OR REPLACE INTO ttls (key, expires_at) VALUES (?, ?)",
-            (key, time.time() + seconds),
-        )
-        self._conn.commit()
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO ttls (key, expires_at) VALUES (?, ?)",
+                (key, time.time() + seconds),
+            )
+            self._conn.commit()
 
     async def ttl(self, key: str) -> int:
-        row = self._conn.execute(
-            "SELECT expires_at FROM ttls WHERE key = ?", (key,)
-        ).fetchone()
-        if row is None:
-            return -1
-        remaining = row[0] - time.time()
-        return max(0, int(remaining))
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT expires_at FROM ttls WHERE key = ?", (key,)
+            ).fetchone()
+            if row is None:
+                return -1
+            remaining = row[0] - time.time()
+            return max(0, int(remaining))
 
     async def close(self):
         if self._conn:

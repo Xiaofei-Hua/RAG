@@ -204,6 +204,16 @@ class RAGGraph:
         self._graph = None
         self._memory = None
         self._grade_function = None
+        self._checkpoint_conn = None
+
+    def close(self):
+        """Close checkpoint DB connection."""
+        if self._checkpoint_conn is not None:
+            try:
+                self._checkpoint_conn.close()
+            except Exception:
+                pass
+            self._checkpoint_conn = None
 
     @property
     def llm(self) -> BaseChatModel:
@@ -275,11 +285,11 @@ class RAGGraph:
                 from langgraph.checkpoint.sqlite import SqliteSaver
                 import os
                 os.makedirs("./data", exist_ok=True)
-                conn = sqlite3.connect(
+                self._checkpoint_conn = sqlite3.connect(
                     "./data/checkpoints.db",
                     check_same_thread=False,
                 )
-                self._memory = SqliteSaver(conn)
+                self._memory = SqliteSaver(self._checkpoint_conn)
                 log.info("Using SQLite checkpoint for graph persistence")
             except ImportError:
                 log.warning("langgraph-checkpoint-sqlite not installed, using MemorySaver")

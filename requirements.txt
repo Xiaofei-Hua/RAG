@@ -90,6 +90,6 @@ redis>=5.0.0
 # python-docx>=1.0.0      # Word 文档
 # python-pptx>=0.6.0      # PPT 文档
 # openpyxl>=3.1.0         # Excel 文档
-# pypdf>=4.0.0            # PDF 文档
+pypdf>=4.0.0            # PDF 文档
 # pdfminer-six>=20231228  # PDF 解析
 # beautifulsoup4>=4.12.0  # HTML 解析

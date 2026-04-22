@@ -57,7 +57,7 @@
       <div class="progress-bar">
         <div class="progress-fill" :style="{ width: uploadProgress + '%' }"></div>
       </div>
-      <span class="progress-text">正在上传... {{ uploadProgress }}%</span>
+      <span class="progress-text">正在上传 ({{ uploadCurrent }}/{{ uploadTotal }})... {{ uploadProgress }}%</span>
     </div>
 
     <!-- Document List -->
@@ -96,12 +96,6 @@
               </svg>
             </div>
             <div class="doc-actions">
-              <button class="btn-icon-sm" @click="viewDocument(doc)" title="查看">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                  <circle cx="12" cy="12" r="3"/>
-                </svg>
-              </button>
               <button class="btn-icon-sm delete" @click="deleteDocument(doc.id)" title="删除">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polyline points="3 6 5 6 21 6"/>
@@ -144,12 +138,28 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useToast } from '@/stores/toast'
+import { useUploadStore } from '@/stores/upload'
 
-const documents = ref<any[]>([])
+interface DocumentInfo {
+  id: string
+  filename: string
+  status: string
+  chunks: number
+  created_at: number
+  size_bytes: number
+  file_hash: string
+}
+
+const toast = useToast()
+const uploadStore = useUploadStore()
+const documents = ref<DocumentInfo[]>([])
 const fileInput = ref<HTMLInputElement | null>(null)
 const isDragging = ref(false)
 const uploading = ref(false)
 const uploadProgress = ref(0)
+const uploadTotal = ref(0)
+const uploadCurrent = ref(0)
 const searchQuery = ref('')
 
 const totalChunks = computed(() => {
@@ -181,9 +191,7 @@ async function loadDocuments() {
 async function handleFileSelect(event: Event) {
   const input = event.target as HTMLInputElement
   if (input.files?.length) {
-    for (const file of Array.from(input.files)) {
-      await uploadFile(file)
-    }
+    await uploadFiles(Array.from(input.files))
   }
 }
 
@@ -191,16 +199,37 @@ async function handleDrop(event: DragEvent) {
   isDragging.value = false
   const files = event.dataTransfer?.files
   if (files) {
-    for (const file of Array.from(files)) {
-      await uploadFile(file)
-    }
+    await uploadFiles(Array.from(files))
   }
 }
 
-async function uploadFile(file: File) {
+async function uploadFiles(files: File[]) {
   uploading.value = true
+  uploadStore.setUploading(true)
+  uploadTotal.value = files.length
+  uploadCurrent.value = 0
   uploadProgress.value = 0
 
+  const failedFiles: string[] = []
+
+  for (const file of files) {
+    uploadCurrent.value++
+    const ok = await uploadSingleFile(file)
+    if (!ok) failedFiles.push(file.name)
+  }
+
+  uploading.value = false
+  uploadStore.setUploading(false)
+  uploadProgress.value = 0
+
+  if (failedFiles.length === 0) {
+    toast.show(`${files.length > 1 ? files.length + ' 个文件' : files[0].name} 上传成功，正在建立索引...`, 'success', 4000)
+  } else if (failedFiles.length < files.length) {
+    toast.show(`${files.length - failedFiles.length} 个上传成功，${failedFiles.length} 个失败`, 'info', 4000)
+  }
+}
+
+async function uploadSingleFile(file: File): Promise<boolean> {
   try {
     const formData = new FormData()
     formData.append('file', file)
@@ -208,7 +237,8 @@ async function uploadFile(file: File) {
     const xhr = new XMLHttpRequest()
     xhr.upload.addEventListener('progress', (e) => {
       if (e.lengthComputable) {
-        uploadProgress.value = Math.round((e.loaded / e.total) * 100)
+        const fileProgress = Math.round((e.loaded / e.total) * 100)
+        uploadProgress.value = Math.round(((uploadCurrent.value - 1) / uploadTotal.value) * 100 + fileProgress / uploadTotal.value)
       }
     })
 
@@ -217,7 +247,12 @@ async function uploadFile(file: File) {
         if (xhr.status >= 200 && xhr.status < 300) {
           resolve(xhr.response)
         } else {
-          reject(new Error('Upload failed'))
+          try {
+            const resp = JSON.parse(xhr.responseText)
+            reject(new Error(resp.detail || 'Upload failed'))
+          } catch {
+            reject(new Error('Upload failed'))
+          }
         }
       }
       xhr.onerror = () => reject(new Error('Upload failed'))
@@ -228,12 +263,11 @@ async function uploadFile(file: File) {
 
     await promise
     await loadDocuments()
-  } catch (e) {
+    return true
+  } catch (e: any) {
     console.error('Upload error:', e)
-    alert('上传失败')
-  } finally {
-    uploading.value = false
-    uploadProgress.value = 0
+    toast.show(e.message || `上传 ${file.name} 失败`, 'error')
+    return false
   }
 }
 
@@ -241,16 +275,17 @@ async function deleteDocument(docId: string) {
   if (!confirm('确定删除此文档？此操作不可撤销。')) return
 
   try {
-    await fetch(`/api/documents/${docId}`, { method: 'DELETE' })
+    const resp = await fetch(`/api/documents/${docId}`, { method: 'DELETE' })
+    if (resp.ok) {
+      toast.show('文档删除成功', 'success')
+    } else {
+      toast.show('删除失败', 'error')
+    }
     await loadDocuments()
   } catch (e) {
     console.error('Delete error:', e)
+    toast.show('删除失败', 'error')
   }
-}
-
-function viewDocument(doc: any) {
-  // TODO: Implement document viewer
-  alert(`查看文档: ${doc.filename}`)
 }
 
 function formatSize(bytes: number): string {
@@ -260,9 +295,10 @@ function formatSize(bytes: number): string {
   return (bytes / Math.pow(1024, i)).toFixed(1) + ' ' + units[i]
 }
 
-function formatDate(date: string): string {
+function formatDate(date: number | string): string {
   if (!date) return ''
-  return new Date(date).toLocaleDateString('zh-CN', {
+  const d = typeof date === 'number' ? new Date(date * 1000) : new Date(date)
+  return d.toLocaleDateString('zh-CN', {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
@@ -279,6 +315,9 @@ function getFileType(filename: string): string {
 
 function getStatusText(status: string): string {
   const statusMap: Record<string, string> = {
+    processing: '处理中',
+    indexed: '已索引',
+    failed: '处理失败',
     pending: '处理中',
     processed: '已处理',
     error: '处理失败',

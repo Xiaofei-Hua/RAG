@@ -229,6 +229,23 @@ class BM25Retriever:
         self._index_built = False
         log.debug("BM25 index cleared")
 
+    def remove_by_source(self, source: str):
+        """Remove documents matching a source filename and rebuild index."""
+        if not self._documents or not source:
+            return
+        indices_to_remove = [
+            i for i, doc in enumerate(self._documents)
+            if doc.metadata.get("source") == source
+        ]
+        if not indices_to_remove:
+            return
+        for idx in sorted(indices_to_remove, reverse=True):
+            del self._documents[idx]
+            del self._doc_tokens[idx]
+            del self._doc_lengths[idx]
+        self._build_index()
+        log.info(f"BM25 removed {len(indices_to_remove)} docs for source={source}")
+
     @property
     def stats(self) -> Dict[str, Any]:
         """Get index statistics."""

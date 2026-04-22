@@ -309,7 +309,12 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       const data = await response.json()
-      messages.value = data.messages || []
+      const rawMessages: Array<{ role: string; content: string }> = data.messages || []
+      messages.value = rawMessages.map((m) => ({
+        role: m.role as 'user' | 'assistant',
+        content: m.content,
+        timestamp: Date.now(),
+      }))
       sessionId.value = sid
     } catch (e) {
       console.error('Load history error:', e)

@@ -154,10 +154,11 @@
           <textarea
             v-model="inputText"
             @keydown.enter.exact.prevent="handleSend"
-            placeholder="输入您的问题，按 Enter 发送..."
+            :placeholder="uploadStore.isUploading ? '文档上传中，请稍候...' : '输入您的问题，按 Enter 发送...'"
             rows="1"
             ref="textareaRef"
-            :disabled="chatStore.isLoading || chatStore.isStreaming"
+            :disabled="chatStore.isLoading || chatStore.isStreaming || uploadStore.isUploading"
+            maxlength="2000"
           ></textarea>
           <div class="input-actions">
             <div class="left-actions">
@@ -167,7 +168,7 @@
               <button
                 class="btn-send"
                 @click="handleSend"
-                :disabled="!inputText.trim() || chatStore.isLoading || chatStore.isStreaming"
+                :disabled="!inputText.trim() || chatStore.isLoading || chatStore.isStreaming || uploadStore.isUploading"
               >
                 <span>发送</span>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -205,7 +206,7 @@
             </div>
             <div class="source-content">{{ truncateText(source.content, 150) }}</div>
             <div class="source-meta" v-if="source.score">
-              <span class="relevance-score">相关度: {{ (source.score * 100).toFixed(1) }}%</span>
+              <span class="relevance-score">相关度: {{ source.score.toFixed(4) }}</span>
             </div>
           </div>
         </div>
@@ -217,10 +218,12 @@
 <script setup lang="ts">
 import { ref, nextTick, watch, onMounted } from 'vue'
 import { useChatStore, type SourceDocument, type ChatMessage } from '@/stores/chat'
+import { useUploadStore } from '@/stores/upload'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 
 const chatStore = useChatStore()
+const uploadStore = useUploadStore()
 
 const inputText = ref('')
 const messagesRef = ref<HTMLElement | null>(null)
@@ -228,6 +231,9 @@ const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const showSources = ref(false)
 const sources = ref<SourceDocument[]>([])
 const useStream = ref(true)
+
+// Markdown render cache
+const mdCache = new Map<string, string>()
 
 // Configure marked
 marked.setOptions({
@@ -241,18 +247,25 @@ onMounted(() => {
 
 function renderMarkdown(text: string): string {
   if (!text) return ''
+  const cached = mdCache.get(text)
+  if (cached) return cached
   try {
-    // Parse markdown and sanitize HTML to prevent XSS attacks
     const rawHtml = marked.parse(text) as string
-    return DOMPurify.sanitize(rawHtml, {
+    const result = DOMPurify.sanitize(rawHtml, {
       ALLOWED_TAGS: [
         'p', 'br', 'strong', 'em', 'u', 's', 'code', 'pre',
         'ul', 'ol', 'li', 'a', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
-        'blockquote', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
-        'span', 'div', 'hr'
+        'blockquote', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'hr'
       ],
-      ALLOWED_ATTR: ['href', 'title', 'class', 'id', 'target', 'rel']
+      ALLOWED_ATTR: ['href', 'target', 'rel']
     })
+    mdCache.set(text, result)
+    // Prevent memory leak: limit cache size
+    if (mdCache.size > 200) {
+      const firstKey = mdCache.keys().next().value
+      if (firstKey) mdCache.delete(firstKey)
+    }
+    return result
   } catch {
     return text
   }
@@ -296,7 +309,7 @@ watch(inputText, () => {
 
 async function handleSend() {
   const text = inputText.value.trim()
-  if (!text || chatStore.isLoading || chatStore.isStreaming) return
+  if (!text || chatStore.isLoading || chatStore.isStreaming || uploadStore.isUploading) return
 
   inputText.value = ''
   autoResizeTextarea()
@@ -397,17 +410,12 @@ function scrollToBottom() {
   }
 }
 
-// Auto scroll when messages change
+// Auto scroll when messages change or content streams
 watch(
-  () => chatStore.messages.length,
-  () => {
-    nextTick(scrollToBottom)
-  }
-)
-
-// Auto scroll during streaming
-watch(
-  () => chatStore.messages[chatStore.messages.length - 1]?.content,
+  () => ({
+    len: chatStore.messages.length,
+    lastContent: chatStore.messages[chatStore.messages.length - 1]?.content,
+  }),
   () => {
     nextTick(scrollToBottom)
   }
