@@ -25,7 +25,7 @@ class BM25Config:
     """Configuration for BM25 retriever."""
     k1: float = 1.5      # Term frequency saturation
     b: float = 0.75      # Document length normalization
-    top_k: int = 10      # Number of results
+    top_k: int = 5       # Number of results
     min_token_length: int = 1
 
 

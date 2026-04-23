@@ -104,6 +104,43 @@ class IntentClassifier:
             self._chain = prompt | structured_llm
         return self._chain
 
+    # Keyword patterns for fast intent routing (skip LLM)
+    _RAG_KEYWORDS = frozenset([
+        "故障", "排故", "诊断", "维修", "机务", "航材", "工卡", "手册", "告警",
+        "故障码", "振动", "液压", "发动机", "航电", "超限", "温度", "压力",
+        "起落架", "飞控", "空调", "供电", "燃油", "润滑", "密封", "腐蚀",
+        "寿命", "磨损", "裂纹", "泄漏", "异常", "失效", "损伤", "磨损",
+        "检查", "更换", "测试", "排故", "ATA", "ATA章节", "MEL", "工卡",
+        "预测性维护", "健康管理", "状态监测", "趋势", "传感器", "阈值",
+        "排查", "原因", "处理", "如何", "怎么", "什么", "为什么", "哪些",
+        "标准", "参数", "规定", "要求", "程序", "步骤", "流程",
+        "troubleshoot", "fault", "maintenance", "inspection",
+    ])
+
+    _CHAT_KEYWORDS = frozenset([
+        "你好", "谢谢", "再见", "你是谁", "你能做什么", "帮我",
+        "hello", "hi", "thanks", "bye",
+    ])
+
+    def _keyword_classify(self, query: str) -> Optional[IntentResult]:
+        """Classify intent via keywords. Returns None if uncertain (fall through to LLM)."""
+        text = query.lower()
+        if any(kw in text for kw in self._RAG_KEYWORDS):
+            log.debug("Intent shortcut: rag_query (keyword match)")
+            return IntentResult(
+                intent=IntentType.RAG_QUERY,
+                confidence=0.9,
+                reasoning="Keyword-based classification",
+            )
+        if any(kw in text for kw in self._CHAT_KEYWORDS):
+            log.debug("Intent shortcut: general_chat (keyword match)")
+            return IntentResult(
+                intent=IntentType.GENERAL_CHAT,
+                confidence=0.9,
+                reasoning="Keyword-based classification",
+            )
+        return None
+
     def classify(self, query: str) -> IntentResult:
         """
         Classify user intent synchronously.
@@ -157,6 +194,11 @@ class IntentClassifier:
             IntentResult with classified intent and confidence
         """
         log.debug(f"Async classifying intent for: {query[:50]}...")
+
+        # Fast path: keyword-based classification to skip LLM call
+        result = self._keyword_classify(query)
+        if result is not None:
+            return result
 
         for attempt in range(self.config.max_retries + 1):
             try:

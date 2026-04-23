@@ -29,17 +29,17 @@ class HybridRetrieverConfig:
     """Configuration for hybrid retriever."""
     # Dense retrieval
     dense_weight: float = 0.5
-    dense_top_k: int = 10
+    dense_top_k: int = 5
 
     # Sparse retrieval (BM25)
     sparse_weight: float = 0.5
-    sparse_top_k: int = 10
+    sparse_top_k: int = 5
 
     # RRF parameters
     rrf_k: int = 60  # RRF constant
 
     # Final results
-    final_top_k: int = 5
+    final_top_k: int = 3
 
     # Performance
     enable_parallel: bool = True

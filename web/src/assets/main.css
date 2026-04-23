@@ -80,6 +80,15 @@
     --neutral-700: #e5e5e5;
     --neutral-800: #f5f5f5;
     --neutral-900: #fafafa;
+
+    /* Darkened primary palette for dark mode */
+    --primary-50: #1a1f3d;
+    --primary-100: #232a5a;
+    --primary-200: #3d4a8a;
+    --primary-300: #5b6cc4;
+    --primary-400: #818cf8;
+    --primary-500: #a5b4fc;
+    --primary-600: #c7d2fe;
   }
 }
 

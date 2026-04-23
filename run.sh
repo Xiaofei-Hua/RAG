@@ -101,6 +101,15 @@ fi
 
 # ─── Start Backend ──────────────────────────────────────────────────────────
 
+# Kill any existing process on port 8000
+EXISTING=$(lsof -ti:8000 2>/dev/null || true)
+if [ -n "$EXISTING" ]; then
+    warn "端口 8000 被占用，正在释放..."
+    kill $EXISTING 2>/dev/null; sleep 1
+    kill -9 $EXISTING 2>/dev/null; sleep 1
+    ok "端口 8000 已释放"
+fi
+
 info "启动后端服务..."
 
 cd "$PROJECT_DIR"

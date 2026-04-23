@@ -22,9 +22,13 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 from langchain_core.language_models import BaseChatModel
+from langchain_core.caches import InMemoryCache
 from langchain_openai import ChatOpenAI
 
 from utils.env_utils import OPENAI_API_KEY, OPENAI_BASE_URL
+
+# LLM response cache — avoids re-calling the API for identical prompts
+_llm_cache = InMemoryCache()
 from utils.log_utils import log
 
 __all__ = [
@@ -48,9 +52,9 @@ class LLMConfig:
     # Model settings
     model_name: str = "gpt-4o"
     temperature: float = 0.0
-    max_tokens: Optional[int] = None
-    timeout: float = 60.0
-    max_retries: int = 2
+    max_tokens: int = 2048
+    timeout: float = 30.0
+    max_retries: int = 1
 
     # API settings
     api_key: Optional[str] = None
@@ -115,6 +119,7 @@ def get_llm(config: Optional[LLMConfig] = None) -> BaseChatModel:
             max_retries=cfg.max_retries,
             api_key=cfg.api_key,
             base_url=cfg.base_url,
+            cache=_llm_cache,
         )
 
         log.debug("LLM instance created successfully")

@@ -27,6 +27,9 @@ __all__ = [
     "fast_generate_stream",
 ]
 
+# Module-level chain cache
+_chain = None
+
 
 @dataclass
 class FastModeResult:
@@ -71,15 +74,25 @@ def _docs_to_sources(documents) -> List[Dict[str, Any]]:
 
 
 def _get_chain(llm: BaseChatModel):
-    """Build the generate chain (lazy, cached per call)."""
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", GENERATE_SYSTEM_PROMPT),
-        ("human", GENERATE_HUMAN_PROMPT),
-    ])
-    return prompt | llm | StrOutputParser()
+    """Build the generate chain (cached across calls)."""
+    global _chain
+    if _chain is None:
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", GENERATE_SYSTEM_PROMPT),
+            ("human", GENERATE_HUMAN_PROMPT),
+        ])
+        _chain = prompt | llm | StrOutputParser()
+    return _chain
 
 
-def fast_generate(query: str, top_k: int = 5) -> FastModeResult:
+# Cache for the streaming prompt chain (no StrOutputParser — we iterate chunks directly)
+_stream_prompt = ChatPromptTemplate.from_messages([
+    ("system", GENERATE_SYSTEM_PROMPT),
+    ("human", GENERATE_HUMAN_PROMPT),
+])
+
+
+def fast_generate(query: str, top_k: int = 3) -> FastModeResult:
     """
     Fast mode: direct retrieve + generate (synchronous).
 
@@ -110,8 +123,8 @@ def fast_generate(query: str, top_k: int = 5) -> FastModeResult:
 
     # --- Generate ---
     context = _format_context(documents)
-    if len(context) > 4000:
-        context = context[:4000] + "\n...[内容已截断]"
+    if len(context) > 2500:
+        context = context[:2500] + "\n...[内容已截断]"
 
     from models.llm_models import get_llm
     llm = get_llm()
@@ -132,7 +145,7 @@ def fast_generate(query: str, top_k: int = 5) -> FastModeResult:
     )
 
 
-async def fast_generate_stream(query: str, top_k: int = 5) -> AsyncIterator[Dict[str, Any]]:
+async def fast_generate_stream(query: str, top_k: int = 3) -> AsyncIterator[Dict[str, Any]]:
     """
     Fast mode: direct retrieve + streaming generate.
 
@@ -161,17 +174,13 @@ async def fast_generate_stream(query: str, top_k: int = 5) -> AsyncIterator[Dict
         return
 
     context = _format_context(documents)
-    if len(context) > 4000:
-        context = context[:4000] + "\n...[内容已截断]"
+    if len(context) > 2500:
+        context = context[:2500] + "\n...[内容已截断]"
 
     # --- Stream generate ---
     from models.llm_models import get_llm
     llm = get_llm()
-    prompt = ChatPromptTemplate.from_messages([
-        ("system", GENERATE_SYSTEM_PROMPT),
-        ("human", GENERATE_HUMAN_PROMPT),
-    ])
-    chain = prompt | llm
+    chain = _stream_prompt | llm
 
     t1 = time.perf_counter()
     full_response = ""

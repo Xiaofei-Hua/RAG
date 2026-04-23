@@ -268,7 +268,7 @@ class _SQLiteStore:
 
         os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else ".", exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         self._conn.execute(
             "CREATE TABLE IF NOT EXISTS sessions ("
             "  key TEXT NOT NULL,"

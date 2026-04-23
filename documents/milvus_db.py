@@ -533,16 +533,19 @@ class MilvusManager:
             result["collections"] = collections
             result["connected"] = True
 
-            # Try to get version (works for remote server, ignored for Lite)
-            try:
-                version = self.client.get_server_version()
-                result["server_info"] = {"version": version, "mode": "server"}
-            except Exception:
-                # Milvus Lite — detect from URI
-                uri = self.config.uri
-                if uri and (uri.endswith(".db") or uri.startswith("./")):
-                    result["server_info"] = {"version": "lite", "mode": "local"}
-                else:
+            # Detect Milvus Lite from URI to avoid calling unsupported API
+            uri = self.config.uri
+            is_lite = uri and (
+                uri.endswith(".db") or uri.startswith("./") or ".db" in uri
+            )
+            if is_lite:
+                result["server_info"] = {"version": "lite", "mode": "local"}
+            else:
+                # Remote server — safe to call get_server_version
+                try:
+                    version = self.client.get_server_version()
+                    result["server_info"] = {"version": version, "mode": "server"}
+                except Exception:
                     result["server_info"] = {"version": "unknown", "mode": "unknown"}
 
         except Exception as e:

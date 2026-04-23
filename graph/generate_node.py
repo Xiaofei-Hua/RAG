@@ -54,7 +54,7 @@ class GenerateNodeConfig:
     timeout: float = 60.0
 
     # Context handling
-    max_context_length: int = 4000  # Characters
+    max_context_length: int = 2500  # Characters
 
     # Prompt customization
     system_prompt: str = DEFAULT_SYSTEM_PROMPT

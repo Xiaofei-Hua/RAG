@@ -661,58 +661,74 @@ async def chat_stream(
                 from graph.graph import get_rag_graph
                 rag = get_rag_graph()
 
-                yield _sse({"type": "node", "name": "agent"})
-
                 full_response = ""
                 collected_messages = []
 
                 import asyncio
+                import queue as _queue
+                import threading
+
+                # Use a dedicated thread (not the default ThreadPoolExecutor) to avoid
+                # starving LangGraph's internal thread pools.
+                event_queue: _queue.Queue = _queue.Queue()
 
                 def _run_graph_stream():
-                    return list(rag.graph.stream(
-                        {
-                            "messages": [HumanMessage(content=request.message)],
-                            "rewrite_count": 0,
-                            "max_rewrites": 3,
-                        },
-                        config={"configurable": {"thread_id": session_id}},
-                        stream_mode="updates",
-                    ))
+                    try:
+                        for event in rag.graph.stream(
+                            {
+                                "messages": [HumanMessage(content=request.message)],
+                                "rewrite_count": 0,
+                                "max_rewrites": 3,
+                            },
+                            config={"configurable": {"thread_id": session_id}},
+                            stream_mode="updates",
+                        ):
+                            event_queue.put(event)
+                    except Exception as exc:
+                        event_queue.put(exc)
+                    finally:
+                        event_queue.put(None)  # sentinel
 
-                stream_events = await asyncio.to_thread(_run_graph_stream)
+                t = threading.Thread(target=_run_graph_stream, daemon=True)
+                t.start()
 
-                for event in stream_events:
-                    # Each event is a dict: {node_name: node_output}
+                # Poll the thread-safe queue from the event loop
+                while True:
+                    try:
+                        event = event_queue.get_nowait()
+                    except _queue.Empty:
+                        await asyncio.sleep(0.15)
+                        continue
+
+                    if event is None:
+                        break
+                    if isinstance(event, Exception):
+                        raise event
+
                     for node_name, node_output in event.items():
                         if node_name == "agent":
-                            # Agent decided next action
                             messages = node_output.get("messages", [])
                             if messages:
                                 msg = messages[-1]
-                                # If agent made a tool call, it's going to retrieve
                                 if hasattr(msg, 'tool_calls') and msg.tool_calls:
                                     yield _sse({"type": "node", "name": "retrieve"})
                                     yield _sse({"type": "status", "message": "正在检索知识库..."})
                                 elif hasattr(msg, 'content') and msg.content:
-                                    # Agent answered directly without calling tools
                                     full_response = msg.content
                                     yield _sse({"type": "status", "message": "正在生成回答..."})
                                     yield _sse({"type": "token", "content": full_response})
 
                         elif node_name == "retrieve":
-                            # Retrieval complete — results are in ToolMessages
                             collected_messages.extend(node_output.get("messages", []))
                             yield _sse({"type": "node", "name": "grade"})
                             yield _sse({"type": "status", "message": "正在评估文档相关性..."})
 
                         elif node_name == "rewrite":
-                            # Query was rewritten
                             yield _sse({"type": "node", "name": "rewrite"})
                             yield _sse({"type": "status", "message": "正在优化查询..."})
                             yield _sse({"type": "node", "name": "agent"})
 
                         elif node_name == "generate":
-                            # Final answer generated
                             yield _sse({"type": "node", "name": "generate"})
                             yield _sse({"type": "status", "message": "正在生成回答..."})
                             messages = node_output.get("messages", [])
