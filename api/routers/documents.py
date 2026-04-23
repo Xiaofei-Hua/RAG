@@ -66,6 +66,83 @@ def _escape_filter_value(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
+def _split_documents(documents: List[Document]) -> List[Document]:
+    """Split documents using semantic chunking with fallback.
+
+    Mirrors MarkdownParser's two-stage strategy:
+    1. Small docs (< ~1200 tokens) are kept intact.
+    2. Large docs are split by SemanticChunker (embedding-based breakpoints).
+    3. On failure, fall back to RecursiveCharacterTextSplitter.
+    """
+    try:
+        from langchain_experimental.text_splitter import SemanticChunker
+    except ImportError:
+        SemanticChunker = None  # type: ignore
+
+    try:
+        from langchain_text_splitters import RecursiveCharacterTextSplitter
+    except ImportError:
+        try:
+            from langchain.text_splitter import RecursiveCharacterTextSplitter  # type: ignore[no-redef]
+        except ImportError:
+            RecursiveCharacterTextSplitter = None  # type: ignore
+
+    # Stage 1: separate small docs (keep intact) from large docs (need splitting)
+    small: List[Document] = []
+    large: List[Document] = []
+    for doc in documents:
+        text = doc.page_content or ""
+        if not text:
+            continue
+        # Threshold: ~1200 tokens. Mixed Chinese/English ≈ 3.2 chars/token.
+        if len(text) > 3840:
+            large.append(doc)
+        else:
+            small.append(doc)
+
+    if not large:
+        return small
+
+    result: List[Document] = list(small)
+
+    # Stage 2: semantic chunking for large docs
+    semantic_splitter = None
+    if SemanticChunker is not None:
+        try:
+            from models.embedding_models import get_local_embeddings
+            embeddings = get_local_embeddings()
+            semantic_splitter = SemanticChunker(
+                embeddings,
+                breakpoint_threshold_type="percentile",
+            )
+        except Exception as e:
+            log.debug(f"SemanticChunker init failed: {e}")
+
+    if semantic_splitter is not None:
+        try:
+            pieces = semantic_splitter.split_documents(large)
+            result.extend(pieces)
+            log.info(f"Semantic split: {len(large)} docs -> {len(pieces)} chunks")
+            return result
+        except Exception as e:
+            log.warning(f"Semantic split failed: {e}, falling back to recursive splitter")
+
+    # Stage 3: fallback to RecursiveCharacterTextSplitter
+    if RecursiveCharacterTextSplitter is not None:
+        splitter = RecursiveCharacterTextSplitter(
+            chunk_size=900,
+            chunk_overlap=120,
+            separators=["\n\n", "\n", "。", "！", "？", ".", "!", "?", "；", ";", "，", ",", " ", ""],
+        )
+        pieces = splitter.split_documents(large)
+        result.extend(pieces)
+        log.info(f"Fallback split: {len(large)} docs -> {len(pieces)} chunks")
+    else:
+        result.extend(large)
+
+    return result
+
+
 def _check_duplicate(filename: str, file_hash: str) -> Optional[str]:
     """
     Check if a file already exists in the vector database or registry.
@@ -206,25 +283,36 @@ def _process_document(doc_id: str, file_path: str, filename: str, file_hash: str
         elif ext == ".pdf":
             from pypdf import PdfReader
             reader = PdfReader(file_path)
-            text_parts = []
-            for page in reader.pages:
+            # Split by page first, then by paragraph to preserve document structure.
+            # Short paragraphs stay intact; only long ones are further split.
+            documents = []
+            for i, page in enumerate(reader.pages, 1):
                 page_text = page.extract_text()
-                if page_text and page_text.strip():
-                    text_parts.append(page_text.strip())
-            content = "\n\n".join(text_parts)
-            if not content.strip():
+                if not page_text or not page_text.strip():
+                    continue
+                for para in page_text.strip().split("\n\n"):
+                    para = para.strip()
+                    if para:
+                        documents.append(Document(
+                            page_content=para,
+                            metadata={"source": filename, "page": i}
+                        ))
+            if not documents:
                 raise ValueError("PDF 文件内容为空或无法提取文本")
-            documents = [Document(
-                page_content=content,
-                metadata={"source": filename}
-            )]
+            documents = _split_documents(documents)
         else:
             with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()
-            documents = [Document(
-                page_content=content,
-                metadata={"source": filename}
-            )]
+            # Split by paragraph first so the splitter can respect natural boundaries.
+            documents = []
+            for para in content.split("\n\n"):
+                para = para.strip()
+                if para:
+                    documents.append(Document(
+                        page_content=para,
+                        metadata={"source": filename}
+                    ))
+            documents = _split_documents(documents)
 
         # Attach file_hash to every chunk's metadata
         for doc in documents:
