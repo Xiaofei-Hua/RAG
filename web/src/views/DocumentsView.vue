@@ -235,6 +235,7 @@ async function uploadSingleFile(file: File): Promise<boolean> {
     formData.append('file', file)
 
     const xhr = new XMLHttpRequest()
+    xhr.timeout = 120000
     xhr.upload.addEventListener('progress', (e) => {
       if (e.lengthComputable) {
         const fileProgress = Math.round((e.loaded / e.total) * 100)
@@ -247,15 +248,19 @@ async function uploadSingleFile(file: File): Promise<boolean> {
         if (xhr.status >= 200 && xhr.status < 300) {
           resolve(xhr.response)
         } else {
+          let message = `上传失败 (${xhr.status || '网络错误'})`
           try {
             const resp = JSON.parse(xhr.responseText)
-            reject(new Error(resp.detail || 'Upload failed'))
+            message = resp.detail || resp.error?.message || message
           } catch {
-            reject(new Error('Upload failed'))
+            const text = xhr.responseText?.trim()
+            if (text) message = text.slice(0, 200)
           }
+          reject(new Error(message))
         }
       }
-      xhr.onerror = () => reject(new Error('Upload failed'))
+      xhr.onerror = () => reject(new Error('上传失败：无法连接到后端或代理'))
+      xhr.ontimeout = () => reject(new Error('上传超时：请检查后端是否仍在处理或代理超时配置'))
     })
 
     xhr.open('POST', '/api/documents/upload')

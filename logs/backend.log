@@ -1,133 +1,152 @@
-INFO:     Started server process [57408]
+INFO:     Started server process [28036]
 INFO:     Waiting for application startup.
-20260423 21:25:31 | MainProcess | MainThread | main.lifespan:33 | INFO: ==================================================
-20260423 21:25:31 | MainProcess | MainThread | main.lifespan:34 | INFO: Enterprise RAG Platform Starting...
-20260423 21:25:31 | MainProcess | MainThread | main.lifespan:35 | INFO: ==================================================
-20260423 21:25:31 | MainProcess | MainThread | redis_memory.__init__:66 | DEBUG: RedisSessionMemory created: ttl=3600s
-20260423 21:25:31 | MainProcess | MainThread | redis_memory.get_session_memory:399 | DEBUG: Created new RedisSessionMemory instance
-20260423 21:25:31 | MainProcess | MainThread | circuit_breaker.__init__:98 | DEBUG: CircuitBreaker 'llm_service' created
-20260423 21:25:31 | MainProcess | MainThread | circuit_breaker.__init__:98 | DEBUG: CircuitBreaker 'retriever_service' created
-20260423 21:25:31 | MainProcess | MainThread | main.lifespan:48 | INFO: LLM Circuit: closed
-20260423 21:25:31 | MainProcess | MainThread | main.lifespan:49 | INFO: Retriever Circuit: closed
-20260423 21:25:31 | MainProcess | MainThread | main.lifespan:51 | INFO: PHM Prompt Profile: phm_diagnosis_v1 (sig=a33f9d82079f)
-20260423 21:25:31 | MainProcess | MainThread | main.lifespan:53 | INFO: Startup complete!
+20260429 19:34:02 | MainProcess | MainThread | main.lifespan:33 | INFO: ==================================================
+20260429 19:34:02 | MainProcess | MainThread | main.lifespan:34 | INFO: Enterprise RAG Platform Starting...
+20260429 19:34:02 | MainProcess | MainThread | main.lifespan:35 | INFO: ==================================================
+20260429 19:34:02 | MainProcess | MainThread | redis_memory.__init__:66 | DEBUG: RedisSessionMemory created: ttl=3600s
+20260429 19:34:02 | MainProcess | MainThread | redis_memory.get_session_memory:399 | DEBUG: Created new RedisSessionMemory instance
+20260429 19:34:02 | MainProcess | MainThread | circuit_breaker.__init__:98 | DEBUG: CircuitBreaker 'llm_service' created
+20260429 19:34:02 | MainProcess | MainThread | circuit_breaker.__init__:98 | DEBUG: CircuitBreaker 'retriever_service' created
+20260429 19:34:02 | MainProcess | MainThread | main.lifespan:48 | INFO: LLM Circuit: closed
+20260429 19:34:02 | MainProcess | MainThread | main.lifespan:49 | INFO: Retriever Circuit: closed
+20260429 19:34:02 | MainProcess | MainThread | main.lifespan:51 | INFO: PHM Prompt Profile: phm_diagnosis_v1 (sig=a33f9d82079f)
+20260429 19:34:02 | MainProcess | MainThread | main.lifespan:53 | INFO: Startup complete!
 INFO:     Application startup complete.
 INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
-20260423 21:25:31 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [1c9a0e26-7864-40] GET /health - 200 (0.5ms)
-INFO:     127.0.0.1:59350 - "GET /health HTTP/1.1" 200 OK
-20260423 21:25:31 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [b735a597-cc5b-49] GET /health - 200 (0.2ms)
-INFO:     127.0.0.1:59352 - "GET /health HTTP/1.1" 200 OK
-20260423 21:25:32 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
+20260429 19:34:02 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [c86a79b3-ebb6-49] GET /health - 200 (0.4ms)
+INFO:     127.0.0.1:54212 - "GET /health HTTP/1.1" 200 OK
+20260429 19:34:02 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [bd6e1764-945a-4b] GET /health - 200 (0.2ms)
+INFO:     127.0.0.1:54214 - "GET /health HTTP/1.1" 200 OK
+20260429 19:34:13 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
 /Users/xiaofei_hua/Projects/M1_Spring26/RAG/.venv/lib/python3.13/site-packages/milvus_lite/__init__.py:15: UserWarning: pkg_resources is deprecated as an API. See https://setuptools.pypa.io/en/latest/pkg_resources.html. The pkg_resources package is slated for removal as early as 2025-11-30. Refrain from using this package or pin to Setuptools<81.
   from pkg_resources import DistributionNotFound, get_distribution
-20260423 21:25:32 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
-20260423 21:25:32 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [fc60e688-f3a2-4a] GET /api/admin/health - 200 (630.8ms)
-INFO:     127.0.0.1:59369 - "GET /api/admin/health HTTP/1.1" 200 OK
-20260423 21:25:32 | MainProcess | MainThread | document_registry.__init__:41 | INFO: Document registry initialized: ./data/documents.db
-20260423 21:25:32 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
-20260423 21:25:32 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
-20260423 21:25:32 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [1e7d9771-ee46-48] GET /api/documents - 200 (3.4ms)
-20260423 21:25:32 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [35f29f14-8b0c-4e] GET /api/admin/health - 200 (2.8ms)
-INFO:     127.0.0.1:59371 - "GET /api/documents HTTP/1.1" 200 OK
-20260423 21:25:32 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [b8206d4f-38e7-47] GET /api/documents - 200 (0.6ms)
-INFO:     127.0.0.1:59377 - "GET /api/admin/health HTTP/1.1" 200 OK
-INFO:     127.0.0.1:59379 - "GET /api/documents HTTP/1.1" 200 OK
-20260423 21:25:33 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
-20260423 21:25:33 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
-20260423 21:25:33 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [f8edc7cd-7a45-4a] GET /api/admin/health - 200 (2.5ms)
-INFO:     127.0.0.1:59387 - "GET /api/admin/health HTTP/1.1" 200 OK
-20260423 21:25:33 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [23f54678-8e01-47] GET /api/documents - 200 (0.5ms)
-INFO:     127.0.0.1:59389 - "GET /api/documents HTTP/1.1" 200 OK
-20260423 21:25:36 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
-20260423 21:25:36 | MainProcess | MainThread | milvus_db.delete_by_filter:503 | INFO: Deleting: file_hash == "6c44a8a5c7fc23da6250488dfdd685ec85f1019de6d8ae8d3d4a98438463d537"
-20260423 21:25:36 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
-20260423 21:25:36 | MainProcess | MainThread | documents.delete_document:387 | INFO: Deleted document from Milvus: 1d0ec85d
-20260423 21:25:36 | MainProcess | MainThread | bm25_retriever.__init__:61 | DEBUG: BM25Retriever initialized
-20260423 21:25:36 | MainProcess | MainThread | documents.delete_document:399 | INFO: BM25 index updated: removed source=PHM 测试知识库样例（航空地面健康管理）.pdf
-20260423 21:25:36 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [7aa875e2-aaec-45] DELETE /api/documents/1d0ec85d - 200 (16.9ms)
-INFO:     127.0.0.1:59393 - "DELETE /api/documents/1d0ec85d HTTP/1.1" 200 OK
-20260423 21:25:36 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [773bebc8-6f9c-44] GET /api/documents - 200 (0.7ms)
-INFO:     127.0.0.1:59395 - "GET /api/documents HTTP/1.1" 200 OK
-20260423 21:25:39 | MainProcess | MainThread | documents.upload_document:218 | INFO: Uploading document: PHM 测试知识库样例（航空地面健康管理）.pdf (id=c538ed3f)
-20260423 21:25:39 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
-20260423 21:25:39 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
-20260423 21:25:39 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [358d62bb-0672-49] POST /api/documents/upload - 200 (7.4ms)
-INFO:     127.0.0.1:59407 - "POST /api/documents/upload HTTP/1.1" 200 OK
-20260423 21:25:39 | MainProcess | AnyIO worker thread | documents._process_document:275 | INFO: Processing document: c538ed3f
-20260423 21:25:39 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [d9c2b3b5-ca72-47] GET /api/documents - 200 (0.7ms)
-INFO:     127.0.0.1:59411 - "GET /api/documents HTTP/1.1" 200 OK
-20260423 21:25:40 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
-20260423 21:25:40 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
-20260423 21:25:40 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [76f769f7-12aa-4d] GET /api/admin/health - 200 (2.1ms)
-INFO:     127.0.0.1:59425 - "GET /api/admin/health HTTP/1.1" 200 OK
-20260423 21:25:40 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [a7bcac1c-99cd-4c] GET /api/documents - 200 (0.6ms)
-INFO:     127.0.0.1:59427 - "GET /api/documents HTTP/1.1" 200 OK
-20260423 21:25:40 | MainProcess | AnyIO worker thread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
-20260423 21:25:40 | MainProcess | AnyIO worker thread | milvus_db.add_documents:356 | INFO: Adding 7 documents (batch_size=20)
-20260423 21:25:40 | MainProcess | AnyIO worker thread | milvus_db.embedding_function:177 | INFO: Loading embedding model...
-Loading weights:   0%|          | 0/71 [00:00<?, ?it/s]Loading weights: 100%|██████████| 71/71 [00:00<00:00, 17701.69it/s]
-20260423 21:25:40 | MainProcess | AnyIO worker thread | milvus_db.embedding_function:179 | INFO: Embedding model loaded
-20260423 21:25:40 | MainProcess | AnyIO worker thread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
-20260423 21:25:40 | MainProcess | AnyIO worker thread | milvus_db._ensure_collection_loaded:312 | DEBUG: Collection 't_collection01' loaded successfully
-20260423 21:25:41 | MainProcess | AnyIO worker thread | milvus_db.add_documents:398 | INFO: Batch 1/1: 7/7 docs
-20260423 21:25:41 | MainProcess | AnyIO worker thread | milvus_db.add_documents:420 | INFO: Insertion complete: inserted=7, failed=0
-20260423 21:25:41 | MainProcess | AnyIO worker thread | bm25_retriever._build_index:137 | DEBUG: BM25 index built: 7 docs, 432 terms
-20260423 21:25:41 | MainProcess | AnyIO worker thread | bm25_retriever.add_documents:77 | INFO: Added 7 documents to BM25 index
-20260423 21:25:41 | MainProcess | AnyIO worker thread | documents._process_document:331 | INFO: BM25 index updated: +7 docs
-20260423 21:25:41 | MainProcess | AnyIO worker thread | documents._process_document:337 | INFO: Document processed: c538ed3f, chunks=7
-20260423 21:25:41 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
-20260423 21:25:41 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
-20260423 21:25:41 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [5b4cf63e-7203-4f] GET /api/admin/health - 200 (1.8ms)
-INFO:     127.0.0.1:59435 - "GET /api/admin/health HTTP/1.1" 200 OK
-20260423 21:25:41 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [09b3e7c1-e081-4d] GET /api/documents - 200 (1.2ms)
-INFO:     127.0.0.1:59437 - "GET /api/documents HTTP/1.1" 200 OK
-20260423 21:25:41 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
-20260423 21:25:41 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
-20260423 21:25:41 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [516ddb2d-e67e-40] GET /api/admin/health - 200 (2.3ms)
-INFO:     127.0.0.1:59445 - "GET /api/admin/health HTTP/1.1" 200 OK
-20260423 21:25:41 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [9a4100bd-8613-4f] GET /api/documents - 200 (0.7ms)
-INFO:     127.0.0.1:59447 - "GET /api/documents HTTP/1.1" 200 OK
-20260423 21:25:42 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
-20260423 21:25:42 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
-20260423 21:25:42 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [c7d62e51-a70e-4d] GET /api/admin/health - 200 (3.2ms)
-INFO:     127.0.0.1:59455 - "GET /api/admin/health HTTP/1.1" 200 OK
-20260423 21:25:42 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [ed88ebc1-3711-47] GET /api/documents - 200 (0.6ms)
-INFO:     127.0.0.1:59457 - "GET /api/documents HTTP/1.1" 200 OK
-20260423 21:25:42 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
-20260423 21:25:42 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
-20260423 21:25:42 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [95c7d0a9-c563-4f] GET /api/admin/health - 200 (3.5ms)
-INFO:     127.0.0.1:59463 - "GET /api/admin/health HTTP/1.1" 200 OK
-20260423 21:25:42 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [127d663e-c01f-44] GET /api/documents - 200 (0.7ms)
-INFO:     127.0.0.1:59465 - "GET /api/documents HTTP/1.1" 200 OK
-20260423 21:25:43 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
-20260423 21:25:43 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
-20260423 21:25:43 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [90706172-b412-4c] GET /api/admin/health - 200 (7.2ms)
-INFO:     127.0.0.1:59475 - "GET /api/admin/health HTTP/1.1" 200 OK
-20260423 21:25:43 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [651292ad-e5f2-4d] GET /api/documents - 200 (0.6ms)
-INFO:     127.0.0.1:59477 - "GET /api/documents HTTP/1.1" 200 OK
-20260423 21:25:43 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
-20260423 21:25:43 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
-20260423 21:25:43 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [319e7429-b6f5-47] GET /api/admin/health - 200 (2.5ms)
-INFO:     127.0.0.1:59485 - "GET /api/admin/health HTTP/1.1" 200 OK
-20260423 21:25:43 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [5658301f-92fb-4b] GET /api/documents - 200 (1.2ms)
-INFO:     127.0.0.1:59487 - "GET /api/documents HTTP/1.1" 200 OK
-20260423 21:25:44 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
-20260423 21:25:44 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
-20260423 21:25:44 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [d5c9954d-6d2a-42] GET /api/admin/health - 200 (165.3ms)
-INFO:     127.0.0.1:59496 - "GET /api/admin/health HTTP/1.1" 200 OK
-20260423 21:25:44 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [0b5a48d1-ba90-4f] GET /api/documents - 200 (0.6ms)
-INFO:     127.0.0.1:59499 - "GET /api/documents HTTP/1.1" 200 OK
-20260423 21:25:46 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
-20260423 21:25:46 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
-20260423 21:25:46 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [84fcba84-16b4-41] GET /api/admin/health - 200 (2.7ms)
-INFO:     127.0.0.1:59505 - "GET /api/admin/health HTTP/1.1" 200 OK
-20260423 21:25:46 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [dc6b4376-2574-44] GET /api/documents - 200 (0.6ms)
-INFO:     127.0.0.1:59507 - "GET /api/documents HTTP/1.1" 200 OK
+20260429 19:34:15 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
+20260429 19:34:15 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [bb3f4072-de4c-42] GET /api/admin/health - 200 (1557.4ms)
+INFO:     127.0.0.1:54233 - "GET /api/admin/health HTTP/1.1" 200 OK
+20260429 19:34:25 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [577f18c9-4335-4c] GET /api/sessions - 200 (0.9ms)
+INFO:     127.0.0.1:54244 - "GET /api/sessions HTTP/1.1" 200 OK
+20260429 19:34:26 | MainProcess | MainThread | document_registry.__init__:41 | INFO: Document registry initialized: ./data/documents.db
+20260429 19:34:26 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [c1b4c636-bfaf-4c] GET /api/documents - 200 (5.5ms)
+INFO:     127.0.0.1:54248 - "GET /api/documents HTTP/1.1" 200 OK
+20260429 19:34:32 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
+20260429 19:34:32 | MainProcess | MainThread | milvus_db.delete_by_filter:503 | INFO: Deleting: file_hash == "6c44a8a5c7fc23da6250488dfdd685ec85f1019de6d8ae8d3d4a98438463d537"
+20260429 19:34:32 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
+20260429 19:34:32 | MainProcess | MainThread | documents.delete_document:387 | INFO: Deleted document from Milvus: c538ed3f
+20260429 19:34:32 | MainProcess | MainThread | bm25_retriever.__init__:61 | DEBUG: BM25Retriever initialized
+20260429 19:34:32 | MainProcess | MainThread | documents.delete_document:399 | INFO: BM25 index updated: removed source=PHM 测试知识库样例（航空地面健康管理）.pdf
+20260429 19:34:32 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [3751280b-6f16-45] DELETE /api/documents/c538ed3f - 200 (20.1ms)
+INFO:     127.0.0.1:54253 - "DELETE /api/documents/c538ed3f HTTP/1.1" 200 OK
+20260429 19:34:32 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [4c3e10ba-1ad4-48] GET /api/documents - 200 (0.3ms)
+INFO:     127.0.0.1:54257 - "GET /api/documents HTTP/1.1" 200 OK
+20260429 19:34:49 | MainProcess | MainThread | documents.upload_document:218 | INFO: Uploading document: phm_test_knowledge_base.md (id=7a5b79e3)
+20260429 19:34:49 | MainProcess | MainThread | documents.upload_document:228 | WARNING: Duplicate upload rejected: phm_test_knowledge_base.md (hash=6a06a695c5d26b41...)
+20260429 19:34:49 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [93ada446-4a3f-43] POST /api/documents/upload - 409 (2.7ms)
+INFO:     127.0.0.1:54268 - "POST /api/documents/upload HTTP/1.1" 409 Conflict
+20260429 19:35:07 | MainProcess | MainThread | documents.upload_document:218 | INFO: Uploading document: PHM 测试知识库样例（航空地面健康管理）.pdf (id=1db6bf68)
+20260429 19:35:07 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
+20260429 19:35:07 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
+20260429 19:35:07 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [a6c3e36c-e655-4b] POST /api/documents/upload - 200 (9.0ms)
+INFO:     127.0.0.1:54277 - "POST /api/documents/upload HTTP/1.1" 200 OK
+20260429 19:35:07 | MainProcess | AnyIO worker thread | documents._process_document:275 | INFO: Processing document: 1db6bf68
+20260429 19:35:07 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [3d81d9f7-cf8f-47] GET /api/documents - 200 (0.4ms)
+INFO:     127.0.0.1:54281 - "GET /api/documents HTTP/1.1" 200 OK
+20260429 19:35:11 | MainProcess | AnyIO worker thread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
+20260429 19:35:11 | MainProcess | AnyIO worker thread | milvus_db.add_documents:356 | INFO: Adding 7 documents (batch_size=20)
+20260429 19:35:11 | MainProcess | AnyIO worker thread | milvus_db.embedding_function:177 | INFO: Loading embedding model...
+Loading weights:   0%|          | 0/71 [00:00<?, ?it/s]Loading weights: 100%|██████████| 71/71 [00:00<00:00, 15183.58it/s]
+20260429 19:35:12 | MainProcess | AnyIO worker thread | milvus_db.embedding_function:179 | INFO: Embedding model loaded
+20260429 19:35:12 | MainProcess | AnyIO worker thread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
+20260429 19:35:12 | MainProcess | AnyIO worker thread | milvus_db._ensure_collection_loaded:312 | DEBUG: Collection 't_collection01' loaded successfully
+20260429 19:35:12 | MainProcess | AnyIO worker thread | milvus_db.add_documents:398 | INFO: Batch 1/1: 7/7 docs
+20260429 19:35:12 | MainProcess | AnyIO worker thread | milvus_db.add_documents:420 | INFO: Insertion complete: inserted=7, failed=0
+20260429 19:35:12 | MainProcess | AnyIO worker thread | bm25_retriever._build_index:137 | DEBUG: BM25 index built: 7 docs, 432 terms
+20260429 19:35:12 | MainProcess | AnyIO worker thread | bm25_retriever.add_documents:77 | INFO: Added 7 documents to BM25 index
+20260429 19:35:12 | MainProcess | AnyIO worker thread | documents._process_document:331 | INFO: BM25 index updated: +7 docs
+20260429 19:35:12 | MainProcess | AnyIO worker thread | documents._process_document:337 | INFO: Document processed: 1db6bf68, chunks=7
+20260429 19:35:13 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
+20260429 19:35:13 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
+20260429 19:35:13 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [90e6e497-d22e-45] GET /api/admin/health - 200 (3.4ms)
+INFO:     127.0.0.1:54296 - "GET /api/admin/health HTTP/1.1" 200 OK
+20260429 19:35:13 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [71144683-359b-4f] GET /api/documents - 200 (1.6ms)
+INFO:     127.0.0.1:54298 - "GET /api/documents HTTP/1.1" 200 OK
+20260429 19:35:42 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [05f34ca0-27cd-48] GET /api/sessions - 200 (0.6ms)
+INFO:     127.0.0.1:54310 - "GET /api/sessions HTTP/1.1" 200 OK
+20260429 19:35:58 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [b81f7af7-0ccd-4e] POST /api/chat/stream - 200 (3.6ms)
+INFO:     127.0.0.1:54327 - "POST /api/chat/stream HTTP/1.1" 200 OK
+20260429 19:35:59 | MainProcess | MainThread | llm_models.get_llm:112 | INFO: Creating LLM instance: model=gpt-4o
+20260429 19:35:59 | MainProcess | MainThread | llm_models.get_llm:125 | DEBUG: LLM instance created successfully
+20260429 19:35:59 | MainProcess | MainThread | classifier.__init__:96 | DEBUG: IntentClassifier initialized
+20260429 19:35:59 | MainProcess | MainThread | classifier.get_intent_classifier:246 | DEBUG: Created new IntentClassifier instance
+20260429 19:35:59 | MainProcess | MainThread | classifier.aclassify:196 | DEBUG: Async classifying intent for: 航电数据总线间歇中断是什么...
+20260429 19:35:59 | MainProcess | MainThread | classifier._keyword_classify:129 | DEBUG: Intent shortcut: rag_query (keyword match)
+20260429 19:35:59 | MainProcess | Thread-28 (_run_graph_stream) | graph.build:248 | INFO: Building RAG graph...
+20260429 19:35:59 | MainProcess | Thread-28 (_run_graph_stream) | retriever_tools.get_retriever:285 | DEBUG: Created new MilvusRetriever instance
+20260429 19:35:59 | MainProcess | Thread-28 (_run_graph_stream) | retriever_tools.get_retriever_tool:321 | DEBUG: Created new retriever tool
+20260429 19:35:59 | MainProcess | Thread-28 (_run_graph_stream) | graph.build:293 | INFO: Using SQLite checkpoint for graph persistence
+20260429 19:35:59 | MainProcess | Thread-28 (_run_graph_stream) | graph.build:301 | INFO: RAG graph built successfully
+20260429 19:35:59 | MainProcess | Thread-28 (_run_graph_stream) | agent_node.__init__:82 | DEBUG: AgentNode initialized with 1 tools
+20260429 19:35:59 | MainProcess | Thread-28 (_run_graph_stream) | agent_node._get_agent_node:221 | DEBUG: Created new AgentNode instance
+20260429 19:35:59 | MainProcess | Thread-28 (_run_graph_stream) | agent_node.invoke:126 | INFO: ---进入Agent节点, 消息数: 1, 重写次数: 0/3---
+20260429 19:36:04 | MainProcess | Thread-28 (_run_graph_stream) | agent_node._invoke_model:191 | DEBUG: Agent response: AIMessage
+20260429 19:36:04 | MainProcess | ThreadPoolExecutor-4_0 | retriever_tools.__init__:87 | DEBUG: RetrieverManager created: collection=t_collection01
+20260429 19:36:04 | MainProcess | ThreadPoolExecutor-4_0 | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
+20260429 19:36:04 | MainProcess | ThreadPoolExecutor-4_0 | hybrid_retriever.__init__:93 | DEBUG: HybridRetriever created: dense_weight=0.5, sparse_weight=0.5
+20260429 19:36:04 | MainProcess | ThreadPoolExecutor-1_0 | milvus_db.search:435 | DEBUG: Searching: '航电数据总线间歇中断...' (top_k=5)
+20260429 19:36:04 | MainProcess | ThreadPoolExecutor-1_1 | bm25_retriever.__init__:61 | DEBUG: BM25Retriever initialized
+20260429 19:36:04 | MainProcess | ThreadPoolExecutor-1_0 | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
+20260429 19:36:04 | MainProcess | ThreadPoolExecutor-1_1 | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
+20260429 19:36:04 | MainProcess | ThreadPoolExecutor-1_0 | milvus_db._ensure_collection_loaded:312 | DEBUG: Collection 't_collection01' loaded successfully
+20260429 19:36:04 | MainProcess | ThreadPoolExecutor-1_0 | milvus_db.embedding_function:177 | INFO: Loading embedding model...
+20260429 19:36:04 | MainProcess | ThreadPoolExecutor-1_0 | milvus_db.embedding_function:179 | INFO: Embedding model loaded
+20260429 19:36:04 | MainProcess | ThreadPoolExecutor-1_1 | bm25_retriever._build_index:137 | DEBUG: BM25 index built: 41 docs, 583 terms
+20260429 19:36:04 | MainProcess | ThreadPoolExecutor-1_1 | bm25_retriever.add_documents:77 | INFO: Added 41 documents to BM25 index
+20260429 19:36:04 | MainProcess | ThreadPoolExecutor-1_1 | hybrid_retriever._ensure_sparse_indexed:139 | INFO: BM25 index loaded from Milvus: 41 docs
+20260429 19:36:04 | MainProcess | ThreadPoolExecutor-1_1 | bm25_retriever.retrieve:187 | DEBUG: BM25 retrieved 5 results for query
+20260429 19:36:04 | MainProcess | ThreadPoolExecutor-1_0 | milvus_db.search:476 | DEBUG: Found 5 results
+20260429 19:36:04 | MainProcess | ThreadPoolExecutor-4_0 | hybrid_retriever._rrf_fusion:349 | DEBUG: RRF fusion: 9 results
+20260429 19:36:04 | MainProcess | ThreadPoolExecutor-4_0 | hybrid_retriever.retrieve:174 | INFO: Hybrid retrieval completed: dense=5, sparse=5, final=4, elapsed=27.1ms
+20260429 19:36:04 | MainProcess | Thread-28 (_run_graph_stream) | graph.grade_documents:129 | INFO: ---检查文档相关性---
+20260429 19:36:07 | MainProcess | Thread-28 (_run_graph_stream) | graph.grade_documents:152 | INFO: ---文档相关, 进入生成节点---
+20260429 19:36:07 | MainProcess | Thread-28 (_run_graph_stream) | generate_node.__init__:93 | DEBUG: GenerateNode initialized
+20260429 19:36:07 | MainProcess | Thread-28 (_run_graph_stream) | generate_node._get_generate_node:233 | DEBUG: Created new GenerateNode instance
+20260429 19:36:07 | MainProcess | Thread-28 (_run_graph_stream) | generate_node.invoke:122 | INFO: ---进入Generate节点, 生成最终答案---
+20260429 19:36:15 | MainProcess | MainThread | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
+20260429 19:36:15 | MainProcess | MainThread | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
+20260429 19:36:15 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [56182240-f2ab-43] GET /api/admin/health - 200 (3.0ms)
+INFO:     127.0.0.1:54346 - "GET /api/admin/health HTTP/1.1" 200 OK
+20260429 19:36:20 | MainProcess | Thread-28 (_run_graph_stream) | generate_node.invoke:151 | INFO: 生成完成, 回答长度: 813 字符
+20260429 19:36:20 | MainProcess | MainThread | redis_memory.redis:82 | WARNING: redis package not installed, using SQLite fallback
+20260429 19:36:20 | MainProcess | MainThread | redis_memory.__init__:287 | INFO: SQLite session store initialized: ./data/sessions.db
+20260429 19:36:20 | MainProcess | MainThread | redis_memory.save_message:133 | DEBUG: Message saved to session session_...
+20260429 19:36:20 | MainProcess | MainThread | redis_memory.save_message:133 | DEBUG: Message saved to session session_...
+20260429 19:36:42 | MainProcess | MainThread | tracing.dispatch:47 | INFO: [ba0fd6a6-e984-48] POST /api/chat/stream - 200 (0.8ms)
+INFO:     127.0.0.1:54363 - "POST /api/chat/stream HTTP/1.1" 200 OK
+20260429 19:36:42 | MainProcess | MainThread | hybrid_retriever.__init__:93 | DEBUG: HybridRetriever created: dense_weight=0.5, sparse_weight=0.5
+20260429 19:36:42 | MainProcess | ThreadPoolExecutor-1_1 | milvus_db.__init__:164 | DEBUG: MilvusManager created: t_collection01
+20260429 19:36:42 | MainProcess | ThreadPoolExecutor-1_1 | milvus_db.search:435 | DEBUG: Searching: '航电数据总线间歇中断是什么...' (top_k=5)
+20260429 19:36:42 | MainProcess | ThreadPoolExecutor-1_0 | bm25_retriever.__init__:61 | DEBUG: BM25Retriever initialized
+20260429 19:36:42 | MainProcess | ThreadPoolExecutor-1_1 | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
+20260429 19:36:42 | MainProcess | ThreadPoolExecutor-1_0 | milvus_db._connect:192 | INFO: Connected to Milvus: ./milvus_data.db
+20260429 19:36:42 | MainProcess | ThreadPoolExecutor-1_1 | milvus_db._ensure_collection_loaded:312 | DEBUG: Collection 't_collection01' loaded successfully
+20260429 19:36:42 | MainProcess | ThreadPoolExecutor-1_1 | milvus_db.embedding_function:177 | INFO: Loading embedding model...
+20260429 19:36:42 | MainProcess | ThreadPoolExecutor-1_1 | milvus_db.embedding_function:179 | INFO: Embedding model loaded
+20260429 19:36:42 | MainProcess | ThreadPoolExecutor-1_0 | bm25_retriever._build_index:137 | DEBUG: BM25 index built: 41 docs, 583 terms
+20260429 19:36:42 | MainProcess | ThreadPoolExecutor-1_0 | bm25_retriever.add_documents:77 | INFO: Added 41 documents to BM25 index
+20260429 19:36:42 | MainProcess | ThreadPoolExecutor-1_0 | hybrid_retriever._ensure_sparse_indexed:139 | INFO: BM25 index loaded from Milvus: 41 docs
+20260429 19:36:42 | MainProcess | ThreadPoolExecutor-1_0 | bm25_retriever.retrieve:187 | DEBUG: BM25 retrieved 0 results for query
+20260429 19:36:42 | MainProcess | ThreadPoolExecutor-1_1 | milvus_db.search:476 | DEBUG: Found 5 results
+20260429 19:36:42 | MainProcess | MainThread | hybrid_retriever._rrf_fusion:349 | DEBUG: RRF fusion: 5 results
+20260429 19:36:42 | MainProcess | MainThread | hybrid_retriever.retrieve:174 | INFO: Hybrid retrieval completed: dense=5, sparse=0, final=3, elapsed=29.5ms
+20260429 19:36:42 | MainProcess | MainThread | fast_mode.fast_generate_stream:169 | INFO: Fast mode retrieval: 3 docs, 30ms
+20260429 19:36:53 | MainProcess | MainThread | fast_mode.fast_generate_stream:193 | INFO: Fast mode stream done: 805 chars, 10676ms
+20260429 19:36:53 | MainProcess | MainThread | redis_memory.save_message:133 | DEBUG: Message saved to session session_...
+20260429 19:36:53 | MainProcess | MainThread | redis_memory.save_message:133 | DEBUG: Message saved to session session_...
 INFO:     Shutting down
 INFO:     Waiting for application shutdown.
-20260423 21:25:52 | MainProcess | MainThread | main.lifespan:58 | INFO: Shutting down...
-20260423 21:25:52 | MainProcess | MainThread | main.lifespan:68 | INFO: Shutdown complete
+20260429 19:45:58 | MainProcess | MainThread | main.lifespan:58 | INFO: Shutting down...
+20260429 19:45:58 | MainProcess | MainThread | redis_memory.close:254 | DEBUG: Redis connection closed
+20260429 19:45:58 | MainProcess | MainThread | main.lifespan:68 | INFO: Shutdown complete
 INFO:     Application shutdown complete.
-INFO:     Finished server process [57408]
-/opt/homebrew/Caskroom/miniconda/base/lib/python3.13/multiprocessing/resource_tracker.py:400: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown: {'/loky-57408-gi35sqnb'}
+INFO:     Finished server process [28036]
+/opt/homebrew/Caskroom/miniconda/base/lib/python3.13/multiprocessing/resource_tracker.py:400: UserWarning: resource_tracker: There appear to be 1 leaked semaphore objects to clean up at shutdown: {'/loky-28036-agqeh_d1'}
   warnings.warn(
