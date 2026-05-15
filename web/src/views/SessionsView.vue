@@ -7,6 +7,12 @@
         <p>查看和管理历史对话记录</p>
       </div>
       <div class="header-actions">
+        <button class="btn-primary" @click="startNewSession">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 5v14M5 12h14"/>
+          </svg>
+          新建对话
+        </button>
         <button class="btn-secondary" @click="loadSessions">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M23 4v6h-6"/>
@@ -28,12 +34,12 @@
       </div>
       <h3>暂无历史会话</h3>
       <p>开始新对话后，会话记录将显示在这里</p>
-      <router-link to="/" class="btn-primary">
+      <button class="btn-primary" @click="startNewSession">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M12 5v14M5 12h14"/>
         </svg>
         开始对话
-      </router-link>
+      </button>
     </div>
 
     <div v-else class="sessions-grid">
@@ -49,10 +55,10 @@
               <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
             </svg>
           </div>
-          <div class="session-id">
-            {{ session.session_id?.substring(0, 12) }}...
+          <div class="session-title-area">
+            <div class="session-title">{{ session.title || session.session_id?.substring(0, 12) + '...' }}</div>
           </div>
-          <button class="btn-delete" @click.stop="deleteSession(session.session_id)">
+          <button class="btn-delete" @click.stop="deleteSession(session.session_id)" title="删除会话">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="3 6 5 6 21 6"/>
               <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
@@ -65,10 +71,6 @@
             <div class="stat">
               <span class="stat-value">{{ session.message_count || 0 }}</span>
               <span class="stat-label">消息数</span>
-            </div>
-            <div class="stat">
-              <span class="stat-value">{{ formatTTL(session.ttl_seconds) }}</span>
-              <span class="stat-label">剩余时间</span>
             </div>
           </div>
         </div>
@@ -132,22 +134,14 @@ async function deleteSession(sessionId: string) {
   }
 }
 
-function formatTTL(seconds: number): string {
-  if (!seconds || seconds < 0) return '已过期'
-  const hours = Math.floor(seconds / 3600)
-  if (hours > 24) {
-    const days = Math.floor(hours / 24)
-    return `${days}天`
-  }
-  if (hours > 0) return `${hours}小时`
-  const minutes = Math.floor(seconds / 60)
-  if (minutes > 0) return `${minutes}分钟`
-  return '即将过期'
+function startNewSession() {
+  chatStore.newSession()
+  router.push('/')
 }
 
-function formatDate(date: string): string {
-  if (!date) return ''
-  return new Date(date).toLocaleDateString('zh-CN', {
+function formatDate(timestamp: any): string {
+  if (!timestamp) return ''
+  return new Date(timestamp * 1000).toLocaleDateString('zh-CN', {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',
@@ -162,6 +156,7 @@ function formatDate(date: string): string {
   max-width: 1200px;
   margin: 0 auto;
   overflow-y: auto;
+  background: var(--neutral-50);
 }
 
 /* Page Header */
@@ -176,6 +171,7 @@ function formatDate(date: string): string {
   font-size: 28px;
   font-weight: 700;
   margin: 0 0 var(--spacing-xs) 0;
+  color: var(--neutral-800);
 }
 
 .header-content p {
@@ -183,43 +179,74 @@ function formatDate(date: string): string {
   margin: 0;
 }
 
+.header-actions {
+  display: flex;
+  gap: var(--spacing-sm);
+  align-items: center;
+}
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  padding: var(--spacing-sm) var(--spacing-lg);
+  background: linear-gradient(135deg, var(--primary-500), var(--primary-600));
+  color: white;
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  font-size: 14px;
+  transition: all var(--transition-fast);
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+.btn-primary svg {
+  width: 16px;
+  height: 16px;
+}
+
 .btn-secondary {
   display: flex;
   align-items: center;
   gap: var(--spacing-sm);
   padding: var(--spacing-sm) var(--spacing-md);
-  background: white;
+  background: var(--neutral-100);
   border: 1px solid var(--neutral-200);
   border-radius: var(--radius-md);
   color: var(--neutral-700);
   font-weight: 500;
+  font-size: 14px;
   transition: all var(--transition-fast);
 }
 
 .btn-secondary:hover {
-  background: var(--neutral-50);
+  background: var(--neutral-200);
   border-color: var(--neutral-300);
 }
 
 .btn-secondary svg {
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
 }
 
 /* Empty State */
 .empty-state {
   text-align: center;
   padding: var(--spacing-2xl);
-  background: white;
+  background: var(--neutral-100);
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-sm);
+  border: 1px solid var(--neutral-200);
 }
 
 .empty-icon {
   width: 80px;
   height: 80px;
   margin: 0 auto var(--spacing-md);
-  background: var(--neutral-100);
+  background: var(--neutral-200);
   border-radius: var(--radius-lg);
   display: flex;
   align-items: center;
@@ -236,34 +263,12 @@ function formatDate(date: string): string {
   font-size: 18px;
   font-weight: 600;
   margin: 0 0 var(--spacing-xs) 0;
+  color: var(--neutral-800);
 }
 
 .empty-state p {
   color: var(--neutral-500);
   margin: 0 0 var(--spacing-lg) 0;
-}
-
-.btn-primary {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--spacing-sm);
-  padding: var(--spacing-sm) var(--spacing-lg);
-  background: linear-gradient(135deg, var(--primary-500), var(--primary-600));
-  color: white;
-  border-radius: var(--radius-md);
-  font-weight: 500;
-  text-decoration: none;
-  transition: all var(--transition-fast);
-}
-
-.btn-primary:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--shadow-md);
-}
-
-.btn-primary svg {
-  width: 18px;
-  height: 18px;
 }
 
 /* Sessions Grid */
@@ -274,7 +279,7 @@ function formatDate(date: string): string {
 }
 
 .session-card {
-  background: white;
+  background: var(--neutral-100);
   border-radius: var(--radius-lg);
   padding: var(--spacing-md);
   border: 1px solid var(--neutral-200);
@@ -283,7 +288,7 @@ function formatDate(date: string): string {
 }
 
 .session-card:hover {
-  border-color: var(--primary-200);
+  border-color: var(--primary-300);
   box-shadow: var(--shadow-md);
   transform: translateY(-2px);
 }
@@ -304,6 +309,7 @@ function formatDate(date: string): string {
   align-items: center;
   justify-content: center;
   color: var(--primary-500);
+  flex-shrink: 0;
 }
 
 .session-icon svg {
@@ -311,25 +317,31 @@ function formatDate(date: string): string {
   height: 18px;
 }
 
-.session-id {
+.session-title-area {
   flex: 1;
-  font-family: var(--font-mono);
-  font-size: 13px;
-  color: var(--neutral-600);
-  background: var(--neutral-100);
-  padding: var(--spacing-xs) var(--spacing-sm);
-  border-radius: var(--radius-sm);
+  min-width: 0;
+}
+
+.session-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--neutral-800);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .btn-delete {
-  width: 32px;
-  height: 32px;
-  border-radius: var(--radius-sm);
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
   display: flex;
   align-items: center;
   justify-content: center;
   color: var(--neutral-400);
+  background: transparent;
   transition: all var(--transition-fast);
+  flex-shrink: 0;
 }
 
 .btn-delete:hover {

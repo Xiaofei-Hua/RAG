@@ -50,7 +50,7 @@ class LLMConfig:
     Optimized for low-resource servers with conservative defaults.
     """
     # Model settings
-    model_name: str = "gpt-4o"
+    model_name: str = "deepseek-v4-flash"
     temperature: float = 0.0
     max_tokens: int = 2048
     timeout: float = 30.0
@@ -180,7 +180,7 @@ def reset_web_search():
 # =============================================================================
 
 def create_custom_llm(
-    model_name: str = "gpt-4o",
+    model_name: str = "deepseek-v4-flash",
     temperature: float = 0.0,
     **kwargs
 ) -> BaseChatModel:

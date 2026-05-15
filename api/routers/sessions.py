@@ -24,7 +24,7 @@ class SessionInfo(BaseModel):
     """Session information model."""
     session_id: str
     message_count: int
-    ttl_seconds: int
+    title: str = ""
     created_at: Optional[float] = None
     last_active: Optional[float] = None
 
@@ -71,18 +71,27 @@ async def create_session():
 async def list_sessions(
     skip: int = 0,
     limit: int = 20,
+    session_memory = Depends(get_session_memory),
 ):
-    """
-    List all active sessions.
-
-    Note: This is a placeholder. In production, use Redis SCAN
-    or maintain a session registry.
-    """
-    # TODO: Implement actual session listing with Redis
-    return SessionListResponse(
-        sessions=[],
-        total=0,
-    )
+    """List all active sessions."""
+    try:
+        sessions, total = await session_memory.list_sessions(skip, limit)
+        return SessionListResponse(
+            sessions=[
+                SessionInfo(
+                    session_id=s["session_id"],
+                    message_count=s.get("message_count", 0),
+                    title=s.get("title", ""),
+                    created_at=s.get("created_at"),
+                    last_active=s.get("last_active"),
+                )
+                for s in sessions
+            ],
+            total=total,
+        )
+    except Exception as e:
+        log.error(f"Failed to list sessions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.get("/{session_id}", response_model=SessionInfo)
@@ -100,7 +109,6 @@ async def get_session(
         return SessionInfo(
             session_id=session_id,
             message_count=info.get("message_count", 0),
-            ttl_seconds=info.get("ttl_seconds", 0),
         )
 
     except HTTPException:
@@ -122,19 +130,4 @@ async def delete_session(
 
     except Exception as e:
         log.error(f"Failed to delete session: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.post("/{session_id}/extend")
-async def extend_session(
-    session_id: str,
-    session_memory = Depends(get_session_memory),
-):
-    """Extend session TTL."""
-    try:
-        await session_memory.extend_session(session_id)
-        return {"status": "success", "message": f"Session {session_id} extended"}
-
-    except Exception as e:
-        log.error(f"Failed to extend session: {e}")
         raise HTTPException(status_code=500, detail=str(e))

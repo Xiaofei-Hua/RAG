@@ -6,9 +6,6 @@
       <div class="chat-header">
         <div class="header-left">
           <h2>智能问答</h2>
-          <span class="session-badge" v-if="chatStore.sessionId">
-            {{ chatStore.sessionId.substring(0, 8) }}
-          </span>
         </div>
         <div class="header-actions">
           <div class="mode-toggle">
@@ -40,10 +37,11 @@
             </svg>
             <span class="stream-indicator" :class="{ active: useStream }"></span>
           </button>
-          <button class="btn-icon" @click="handleNewSession" title="新建会话">
+          <button class="btn-new-session" @click="handleNewSession" title="新建会话">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 5v14M5 12h14"/>
             </svg>
+            <span>新对话</span>
           </button>
         </div>
       </div>
@@ -465,15 +463,6 @@ watch(
   margin: 0;
 }
 
-.session-badge {
-  font-size: 12px;
-  padding: 2px 8px;
-  background: var(--neutral-100);
-  border-radius: var(--radius-full);
-  color: var(--neutral-500);
-  font-family: var(--font-mono);
-}
-
 .header-actions {
   display: flex;
   gap: var(--spacing-sm);
@@ -561,6 +550,31 @@ watch(
   box-shadow: 0 0 6px var(--success-500);
 }
 
+.btn-new-session {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border-radius: var(--radius-md);
+  background: var(--neutral-100);
+  color: var(--neutral-600);
+  font-size: 12px;
+  font-weight: 500;
+  border: 1px solid var(--neutral-200);
+  transition: all var(--transition-fast);
+}
+
+.btn-new-session:hover {
+  background: var(--primary-50);
+  border-color: var(--primary-300);
+  color: var(--primary-600);
+}
+
+.btn-new-session svg {
+  width: 16px;
+  height: 16px;
+}
+
 /* Messages Area */
 .messages-area {
   flex: 1;
@@ -582,7 +596,7 @@ watch(
 .welcome-icon {
   width: 72px;
   height: 72px;
-  background: linear-gradient(135deg, #e0e7ff, #c7d2fe);
+  background: linear-gradient(135deg, var(--primary-100), var(--primary-200));
   border-radius: 20px;
   display: flex;
   align-items: center;
@@ -594,7 +608,7 @@ watch(
 .welcome-icon svg {
   width: 36px;
   height: 36px;
-  color: #4f46e5;
+  color: var(--primary-500);
 }
 
 .welcome-message h3 {
@@ -679,8 +693,8 @@ watch(
 }
 
 .avatar-icon.assistant {
-  background: linear-gradient(135deg, #e0e7ff, #c7d2fe);
-  color: #4f46e5;
+  background: linear-gradient(135deg, var(--primary-100), var(--primary-200));
+  color: var(--primary-500);
 }
 
 .avatar-icon svg {
@@ -778,7 +792,7 @@ watch(
   line-height: 1;
   padding: 4px 10px;
   border-radius: 999px;
-  background: white;
+  background: var(--neutral-50);
   color: var(--primary-600);
   border: 1px solid var(--primary-200);
   transition: all var(--transition-fast);
@@ -800,7 +814,7 @@ watch(
 .diagnosis-card h4 {
   margin: 0 0 6px;
   font-size: 12px;
-  color: #1e40af;
+  color: var(--primary-500);
   font-weight: 600;
 }
 
@@ -826,7 +840,7 @@ watch(
 .typing-indicator span {
   width: 7px;
   height: 7px;
-  background: #a5b4fc;
+  background: var(--primary-400);
   border-radius: 50%;
   animation: bounce 1.4s infinite ease-in-out;
 }
@@ -851,17 +865,17 @@ watch(
   align-items: center;
   gap: 8px;
   padding: 6px 14px;
-  background: #eef2ff;
+  background: var(--primary-50);
   border-radius: 10px;
   font-size: 13px;
-  color: #4f46e5;
-  border: 1px solid #e0e7ff;
+  color: var(--primary-500);
+  border: 1px solid var(--primary-200);
 }
 
 .status-dot {
   width: 7px;
   height: 7px;
-  background: #6366f1;
+  background: var(--primary-500);
   border-radius: 50%;
   animation: pulse 1.5s infinite;
 }

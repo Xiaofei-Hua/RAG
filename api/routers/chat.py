@@ -36,6 +36,7 @@ class ChatMessage(BaseModel):
     """Single chat message."""
     role: str = Field(..., description="Message role: user, assistant, or system")
     content: str = Field(..., description="Message content")
+    timestamp: Optional[float] = Field(None, description="Unix timestamp when message was saved")
 
 
 class ChatRequest(BaseModel):
@@ -381,10 +382,17 @@ async def chat(
             # Direct LLM response without retrieval
             from models.llm_models import get_llm
             llm = get_llm()
-            response = await llm.ainvoke([
-                SystemMessage(content=GENERAL_CHAT_SYSTEM_PROMPT),
-                HumanMessage(content=request.message),
-            ])
+
+            # Load conversation history for multi-turn context
+            history = await session_memory.get_messages(session_id)
+            history = list(reversed(history))  # oldest-first
+
+            history_msgs = [SystemMessage(content=GENERAL_CHAT_SYSTEM_PROMPT)]
+            for hm in history:
+                history_msgs.append(hm)
+            history_msgs.append(HumanMessage(content=request.message))
+
+            response = await llm.ainvoke(history_msgs)
             answer = response.content
             sources = []
             route = "general_chat"
@@ -475,12 +483,17 @@ async def get_chat_history(
     try:
         messages = await session_memory.get_messages(session_id, limit=limit)
 
+        # Messages are stored newest-first via lpush; reverse to chronological order
+        messages = list(reversed(messages))
+
         chat_messages = []
         for msg in messages:
             role = "user" if msg.type == "human" else "assistant"
+            ts = (msg.additional_kwargs or {}).pop("_timestamp", None)
             chat_messages.append(ChatMessage(
                 role=role,
                 content=msg.content,
+                timestamp=ts,
             ))
 
         return ChatHistoryResponse(
@@ -626,11 +639,17 @@ async def chat_stream(
                 from models.llm_models import get_llm
                 llm = get_llm()
 
+                # Load conversation history for multi-turn context
+                history = await session_memory.get_messages(session_id)
+                history = list(reversed(history))  # oldest-first
+
+                history_msgs = [SystemMessage(content=GENERAL_CHAT_SYSTEM_PROMPT)]
+                for hm in history:
+                    history_msgs.append(hm)
+                history_msgs.append(HumanMessage(content=request.message))
+
                 full_response = ""
-                async for chunk in llm.astream([
-                    SystemMessage(content=GENERAL_CHAT_SYSTEM_PROMPT),
-                    HumanMessage(content=request.message),
-                ]):
+                async for chunk in llm.astream(history_msgs):
                     if hasattr(chunk, 'content') and chunk.content:
                         full_response += chunk.content
                         yield _sse({"type": "token", "content": chunk.content})

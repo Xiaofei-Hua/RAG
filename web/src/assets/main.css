@@ -221,10 +221,11 @@ input:focus, textarea:focus, select:focus {
 
 /* Card styles */
 .card {
-  background: white;
+  background: var(--neutral-100);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
   padding: var(--spacing-lg);
+  border: 1px solid var(--neutral-200);
 }
 
 .card-header {
