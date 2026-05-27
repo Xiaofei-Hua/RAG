@@ -100,7 +100,7 @@ class IntentClassifier:
         """Get the classification chain (lazy initialization)."""
         if self._chain is None:
             prompt = ChatPromptTemplate.from_template(INTENT_CLASSIFICATION_PROMPT)
-            structured_llm = self.llm.with_structured_output(IntentResult)
+            structured_llm = self.llm.with_structured_output(IntentResult, method="json_mode")
             self._chain = prompt | structured_llm
         return self._chain
 

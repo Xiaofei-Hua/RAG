@@ -19,6 +19,7 @@ from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, System
 from pydantic import BaseModel, Field
 
 from utils.log_utils import log
+from utils.think_tag_utils import strip_think_tags
 from core.prompts.aircraft_prompts import (
     GENERATE_SYSTEM_PROMPT,
     GENERAL_CHAT_SYSTEM_PROMPT,
@@ -393,7 +394,7 @@ async def chat(
             history_msgs.append(HumanMessage(content=request.message))
 
             response = await llm.ainvoke(history_msgs)
-            answer = response.content
+            answer = strip_think_tags(response.content)
             sources = []
             route = "general_chat"
             prompt_profile = "phm_general_v1"
@@ -409,7 +410,8 @@ async def chat(
             messages = result.get("messages", [])
             if messages:
                 last_message = messages[-1]
-                answer = last_message.content if hasattr(last_message, 'content') else str(last_message)
+                raw = last_message.content if hasattr(last_message, 'content') else str(last_message)
+                answer = strip_think_tags(raw)
             else:
                 answer = "抱歉，无法生成回答。"
 
@@ -654,6 +656,8 @@ async def chat_stream(
                         full_response += chunk.content
                         yield _sse({"type": "token", "content": chunk.content})
 
+                full_response = strip_think_tags(full_response)
+
                 # Save to session
                 await session_memory.save_message(session_id, HumanMessage(content=request.message))
                 await session_memory.save_message(session_id, AIMessage(content=full_response))
@@ -752,7 +756,7 @@ async def chat_stream(
                             yield _sse({"type": "status", "message": "正在生成回答..."})
                             messages = node_output.get("messages", [])
                             if messages:
-                                answer = messages[-1].content
+                                answer = strip_think_tags(messages[-1].content)
                                 full_response = answer
                                 yield _sse({"type": "token", "content": answer})
 

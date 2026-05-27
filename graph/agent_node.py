@@ -39,7 +39,7 @@ class AgentNodeConfig:
     """
     max_retries: int = 2
     retry_delay: float = 1.0
-    timeout: float = 30.0
+    timeout: float = 60.0
 
     # Prompt customization
     system_prompt: Optional[str] = None

@@ -106,7 +106,7 @@ def create_grade_function(
     config = config or RAGGraphConfig()
 
     # Create structured output LLM
-    llm_with_structured = llm.with_structured_output(Grade)
+    llm_with_structured = llm.with_structured_output(Grade, method="json_mode")
 
     # Create prompt
     prompt = ChatPromptTemplate.from_messages([

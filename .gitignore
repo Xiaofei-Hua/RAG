@@ -41,3 +41,6 @@ node_modules/
 
 # Embedding model cache
 models/sentence-transformers_*/
+
+# Local downloaded models
+models/local_models/

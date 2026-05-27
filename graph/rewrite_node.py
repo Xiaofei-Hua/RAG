@@ -24,6 +24,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from graph.graph_state import AgentState
 from graph.get_human_message import get_last_human_message
 from utils.log_utils import log
+from utils.think_tag_utils import strip_think_tags
 
 __all__ = [
     "RewriteNodeConfig",
@@ -137,6 +138,8 @@ class RewriteNode:
                 rewritten = self.chain.invoke({
                     "original_question": original_question
                 })
+
+                rewritten = strip_think_tags(rewritten)
 
                 log.info(f"查询重写完成: '{original_question[:50]}...' -> '{rewritten[:50]}...'")
 

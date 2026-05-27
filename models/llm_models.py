@@ -50,10 +50,10 @@ class LLMConfig:
     Optimized for low-resource servers with conservative defaults.
     """
     # Model settings
-    model_name: str = "deepseek-v4-flash"
+    model_name: str = "qwen3:8b"
     temperature: float = 0.0
-    max_tokens: int = 2048
-    timeout: float = 30.0
+    max_tokens: int = 4096
+    timeout: float = 60.0
     max_retries: int = 1
 
     # API settings
@@ -61,11 +61,10 @@ class LLMConfig:
     base_url: Optional[str] = None
 
     def __post_init__(self):
-        # Use environment variables as defaults
         if self.api_key is None:
-            self.api_key = OPENAI_API_KEY
+            self.api_key = OPENAI_API_KEY or "ollama"
         if self.base_url is None:
-            self.base_url = OPENAI_BASE_URL
+            self.base_url = OPENAI_BASE_URL or "http://localhost:11434/v1"
 
 
 @dataclass
@@ -180,7 +179,7 @@ def reset_web_search():
 # =============================================================================
 
 def create_custom_llm(
-    model_name: str = "deepseek-v4-flash",
+    model_name: str = "qwen3:8b",
     temperature: float = 0.0,
     **kwargs
 ) -> BaseChatModel:

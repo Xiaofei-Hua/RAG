@@ -24,6 +24,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from graph.graph_state import AgentState
 from graph.get_human_message import get_last_human_message
 from utils.log_utils import log
+from utils.think_tag_utils import strip_think_tags
 
 __all__ = [
     "GenerateNodeConfig",
@@ -51,7 +52,7 @@ class GenerateNodeConfig:
     """
     max_retries: int = 2
     retry_delay: float = 1.0
-    timeout: float = 60.0
+    timeout: float = 120.0
 
     # Context handling
     max_context_length: int = 2500  # Characters
@@ -146,6 +147,8 @@ class GenerateNode:
                     "question": question,
                     "context": context
                 })
+
+                response = strip_think_tags(response)
 
                 ai_message = AIMessage(content=response)
                 log.info(f"生成完成, 回答长度: {len(response)} 字符")

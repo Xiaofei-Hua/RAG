@@ -20,6 +20,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from core.prompts.aircraft_prompts import GENERATE_SYSTEM_PROMPT, GENERATE_HUMAN_PROMPT
 from utils.log_utils import log
+from utils.think_tag_utils import strip_think_tags
 
 __all__ = [
     "FastModeResult",
@@ -132,6 +133,7 @@ def fast_generate(query: str, top_k: int = 3) -> FastModeResult:
 
     t1 = time.perf_counter()
     answer = chain.invoke({"question": query, "context": context})
+    answer = strip_think_tags(answer)
     gen_ms = (time.perf_counter() - t1) * 1000
 
     log.info(f"Fast mode generation: {len(answer)} chars, {gen_ms:.0f}ms")
@@ -189,6 +191,8 @@ async def fast_generate_stream(query: str, top_k: int = 3) -> AsyncIterator[Dict
             full_response += chunk.content
             yield {"type": "token", "content": chunk.content}
     gen_ms = (time.perf_counter() - t1) * 1000
+
+    full_response = strip_think_tags(full_response)
 
     log.info(f"Fast mode stream done: {len(full_response)} chars, {gen_ms:.0f}ms")
 
