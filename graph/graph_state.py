@@ -79,18 +79,24 @@ class Grade(BaseModel):
     are relevant to the user's question.
     """
     model_config = ConfigDict(
-        extra="forbid",
+        extra="ignore",
         validate_assignment=True,
     )
 
     binary_score: str = Field(
+        default="yes",
         description="相关性评分: 'yes' 表示文档与问题相关，'no' 表示不相关"
+    )
+    answer: Optional[str] = Field(
+        default=None,
+        description="备选字段，部分模型（如Qwen3）可能使用此字段返回yes/no"
     )
 
     @property
     def is_relevant(self) -> bool:
         """Check if the document is relevant."""
-        return self.binary_score.lower() == "yes"
+        score = self.binary_score or self.answer or ""
+        return score.lower() in ("yes", "true", "relevant")
 
 
 class RewrittenQuery(BaseModel):

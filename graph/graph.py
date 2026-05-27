@@ -148,7 +148,18 @@ def create_grade_function(
                 "context": docs
             })
 
-            if result.is_relevant:
+            # Handle Qwen3 returning non-standard JSON fields
+            if isinstance(result, Grade):
+                is_relevant = result.is_relevant
+            elif isinstance(result, dict):
+                raw = str(result).lower()
+                is_relevant = any(
+                    k in raw for k in ("yes", "true", "relevant")
+                )
+            else:
+                is_relevant = "yes" in str(result).lower()
+
+            if is_relevant:
                 log.info("---文档相关, 进入生成节点---")
                 return "generate"
             else:

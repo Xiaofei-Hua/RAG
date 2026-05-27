@@ -21,6 +21,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
 from graph.graph_state import AgentState
+from core.prompts.aircraft_prompts import AGENT_SYSTEM_PROMPT
 from utils.log_utils import log
 
 __all__ = [
@@ -180,13 +181,16 @@ class AgentNode:
         Returns:
             AI response message
         """
-        # Pass recent messages (not just the last one) so the model has
-        # enough context to decide whether to call retrieval tools.
-        # Passing only messages[-1] caused the model to skip tool calls
-        # in multi-turn conversations due to insufficient context.
+        from langchain_core.messages import SystemMessage
+
         window = 10
         recent = messages[-window:] if len(messages) > window else messages
-        response = self.bound_model.invoke(recent)
+
+        # Inject system prompt to force tool usage
+        system_msg = SystemMessage(content=self.config.system_prompt or AGENT_SYSTEM_PROMPT)
+        recent_with_system = [system_msg] + recent
+
+        response = self.bound_model.invoke(recent_with_system)
 
         log.debug(f"Agent response: {type(response).__name__}")
 

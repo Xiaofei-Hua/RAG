@@ -143,15 +143,19 @@ class GenerateNode:
         # Generate with retry
         for attempt in range(self.config.max_retries + 1):
             try:
-                response = self.chain.invoke({
-                    "question": question,
-                    "context": context
-                })
+                # Use the underlying OpenAI client directly to capture
+                # Qwen3's `reasoning` field which LangChain discards.
+                answer, reasoning = self._invoke_with_reasoning(question, context)
+                answer = strip_think_tags(answer)
 
-                response = strip_think_tags(response)
-
-                ai_message = AIMessage(content=response)
-                log.info(f"生成完成, 回答长度: {len(response)} 字符")
+                ai_message = AIMessage(
+                    content=answer,
+                    additional_kwargs={"reasoning": reasoning} if reasoning else {},
+                )
+                log.info(
+                    f"生成完成, 回答长度: {len(answer)} 字符"
+                    f"{', 推理过程: ' + str(len(reasoning)) + ' 字符' if reasoning else ''}"
+                )
 
                 return {"messages": [ai_message]}
 
@@ -178,6 +182,43 @@ class GenerateNode:
             log.warning(f"Failed to extract question: {e}")
             # Fallback to last message content
             return messages[-1].content if messages else ""
+
+    def _invoke_with_reasoning(self, question: str, context: str) -> tuple:
+        """Invoke LLM via OpenAI client to capture Qwen3 reasoning field."""
+        try:
+            from openai import OpenAI
+            from utils.env_utils import OPENAI_BASE_URL, OPENAI_API_KEY
+
+            client = OpenAI(
+                base_url=OPENAI_BASE_URL or "http://localhost:11434/v1",
+                api_key=OPENAI_API_KEY or "ollama",
+            )
+            system_msg = self.config.system_prompt
+            human_msg = self.config.human_prompt.format(question=question, context=context)
+
+            resp = client.chat.completions.create(
+                model="qwen3:14b",
+                messages=[
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": human_msg},
+                ],
+                temperature=0.0,
+                max_tokens=4096,
+                timeout=60.0,
+            )
+            msg = resp.choices[0].message
+            content = msg.content or ""
+            reasoning = getattr(msg, 'reasoning', '') or ''
+            return content, reasoning
+        except Exception as e:
+            log.warning(f"Direct OpenAI call failed, falling back to LangChain: {e}")
+            prompt = ChatPromptTemplate.from_messages([
+                ("system", self.config.system_prompt),
+                ("human", self.config.human_prompt),
+            ])
+            chain = prompt | self.llm | StrOutputParser()
+            answer = chain.invoke({"question": question, "context": context})
+            return answer, ""
 
     def _extract_context(self, messages: List[BaseMessage]) -> str:
         """

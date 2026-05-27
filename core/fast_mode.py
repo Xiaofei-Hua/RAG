@@ -20,7 +20,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from core.prompts.aircraft_prompts import GENERATE_SYSTEM_PROMPT, GENERATE_HUMAN_PROMPT
 from utils.log_utils import log
-from utils.think_tag_utils import strip_think_tags
+from utils.think_tag_utils import strip_think_tags, build_fast_mode_prompt
 
 __all__ = [
     "FastModeResult",
@@ -74,13 +74,17 @@ def _docs_to_sources(documents) -> List[Dict[str, Any]]:
     return sources
 
 
+# Fast mode prompt — appends /no_think to suppress Qwen3 reasoning
+_FAST_HUMAN_PROMPT = GENERATE_HUMAN_PROMPT.rstrip() + "\n\n/no_think"
+
+
 def _get_chain(llm: BaseChatModel):
     """Build the generate chain (cached across calls)."""
     global _chain
     if _chain is None:
         prompt = ChatPromptTemplate.from_messages([
             ("system", GENERATE_SYSTEM_PROMPT),
-            ("human", GENERATE_HUMAN_PROMPT),
+            ("human", _FAST_HUMAN_PROMPT),
         ])
         _chain = prompt | llm | StrOutputParser()
     return _chain
@@ -89,13 +93,14 @@ def _get_chain(llm: BaseChatModel):
 # Cache for the streaming prompt chain (no StrOutputParser — we iterate chunks directly)
 _stream_prompt = ChatPromptTemplate.from_messages([
     ("system", GENERATE_SYSTEM_PROMPT),
-    ("human", GENERATE_HUMAN_PROMPT),
+    ("human", _FAST_HUMAN_PROMPT),
 ])
 
 
 def fast_generate(query: str, top_k: int = 3) -> FastModeResult:
     """
     Fast mode: direct retrieve + generate (synchronous).
+    Uses /no_think to suppress Qwen3 reasoning for lower latency.
 
     Args:
         query: User question

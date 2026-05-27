@@ -408,10 +408,14 @@ async def chat(
 
             # Extract response and sources
             messages = result.get("messages", [])
+            reasoning_text = ""
             if messages:
                 last_message = messages[-1]
                 raw = last_message.content if hasattr(last_message, 'content') else str(last_message)
                 answer = strip_think_tags(raw)
+                # Extract Qwen3 reasoning from generate node
+                if hasattr(last_message, 'additional_kwargs'):
+                    reasoning_text = last_message.additional_kwargs.get('reasoning', '') or ''
             else:
                 answer = "抱歉，无法生成回答。"
 
@@ -450,6 +454,7 @@ async def chat(
                 "route": route,
                 "prompt_profile": prompt_profile,
                 "force_rag": force_rag,
+                "reasoning": reasoning_text,
             }
         )
 

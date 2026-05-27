@@ -50,7 +50,7 @@ class LLMConfig:
     Optimized for low-resource servers with conservative defaults.
     """
     # Model settings
-    model_name: str = "qwen3:8b"
+    model_name: str = "qwen3:14b"
     temperature: float = 0.0
     max_tokens: int = 4096
     timeout: float = 60.0
@@ -179,7 +179,7 @@ def reset_web_search():
 # =============================================================================
 
 def create_custom_llm(
-    model_name: str = "qwen3:8b",
+    model_name: str = "qwen3:14b",
     temperature: float = 0.0,
     **kwargs
 ) -> BaseChatModel:
