@@ -5,6 +5,8 @@
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
+*.pyo
 *.egg-info/
 *.egg
 dist/
@@ -44,3 +46,12 @@ models/sentence-transformers_*/
 
 # Local downloaded models
 models/local_models/
+
+# CUDA installer
+cuda_*.run
+
+# Ollama deployment
+deploy_ollama.sh
+
+# Claude Code
+.claude/

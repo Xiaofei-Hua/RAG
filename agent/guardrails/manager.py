@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+from typing import Callable, List, Optional
+
+from agent.guardrails.input_guardrails import InputGuardrail
+from agent.guardrails.output_guardrails import OutputGuardrail
+from agent.guardrails.types import GuardrailAction, GuardrailConfig, GuardrailResult
+from utils.log_utils import log
+
+
+class GuardrailBlockError(Exception):
+    """Raised when an input guardrail blocks a message."""
+
+
+class GuardrailManager:
+    """
+    Central facade for the guardrail subsystem.
+
+    Provides:
+    - ``check_input`` / ``check_output`` for explicit guardrail calls.
+    - ``create_before_hook`` / ``create_after_hook`` for integration with the
+      agent harness lifecycle.
+    """
+
+    def __init__(self, config: Optional[GuardrailConfig] = None):
+        self._config = config or GuardrailConfig()
+        self._input = InputGuardrail(self._config)
+        self._output = OutputGuardrail(self._config)
+
+    # ------------------------------------------------------------------
+    # Direct API
+    # ------------------------------------------------------------------
+
+    def check_input(self, message: str) -> GuardrailResult:
+        """Validate a user message.  Returns the check result."""
+        return self._input.validate(message)
+
+    def check_output(
+        self, answer: str, sources: Optional[List[str]] = None
+    ) -> GuardrailResult:
+        """Validate an agent response.  Returns the check result."""
+        return self._output.validate(answer, sources)
+
+    # ------------------------------------------------------------------
+    # Harness hook factories
+    # ------------------------------------------------------------------
+
+    def create_before_hook(self) -> Callable:
+        """
+        Return a ``before`` hook compatible with the harness lifecycle.
+
+        Signature: ``(skill_name: str, context: SkillContext) -> None``
+
+        Raises ``GuardrailBlockError`` when the input is blocked.
+        """
+
+        def _before_hook(skill_name: str, context) -> None:  # type: ignore[annots]
+            # Extract last human message
+            last_human = None
+            for msg in reversed(context.messages):
+                if hasattr(msg, "type") and msg.type == "human":
+                    last_human = msg
+                    break
+                # LangChain HumanMessage
+                if msg.__class__.__name__ == "HumanMessage":
+                    last_human = msg
+                    break
+
+            if last_human is None:
+                return
+
+            content = last_human.content if hasattr(last_human, "content") else str(last_human)
+            result = self.check_input(content)
+
+            if result.action == GuardrailAction.BLOCK:
+                log.warning(
+                    f"GuardrailManager: blocked input for skill '{skill_name}' - {result.reason}"
+                )
+                raise GuardrailBlockError(result.reason)
+
+        return _before_hook
+
+    def create_after_hook(self) -> Callable:
+        """
+        Return an ``after`` hook compatible with the harness lifecycle.
+
+        Signature: ``(skill_name: str, context, result: SkillResult) -> None``
+
+        Only activates when ``skill_name == "generate"``.
+        - SANITIZE: modifies ``result.messages[-1].content`` in-place.
+        - ESCALATE: attaches metadata to ``result``.
+        """
+
+        def _after_hook(skill_name: str, context, result) -> None:  # type: ignore[annots]
+            if skill_name != "generate":
+                return
+
+            if not result or not result.messages:
+                return
+
+            last_msg = result.messages[-1]
+            content = last_msg.content if hasattr(last_msg, "content") else str(last_msg)
+
+            # Gather sources from shared_state if available
+            sources: Optional[List[str]] = None
+            if hasattr(context, "shared_state"):
+                sources = context.shared_state.get("sources")
+
+            guard_result = self.check_output(content, sources)
+
+            if guard_result.action == GuardrailAction.SANITIZE:
+                if guard_result.sanitized_content is not None:
+                    log.info(f"GuardrailManager: sanitizing output - {guard_result.reason}")
+                    last_msg.content = guard_result.sanitized_content
+
+            elif guard_result.action == GuardrailAction.ESCALATE:
+                log.warning(f"GuardrailManager: escalating output - {guard_result.reason}")
+                if hasattr(result, "metadata"):
+                    result.metadata["guardrail_escalation"] = {
+                        "reason": guard_result.reason,
+                        "confidence": guard_result.confidence,
+                        **guard_result.metadata,
+                    }
+
+        return _after_hook

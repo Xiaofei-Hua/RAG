@@ -252,9 +252,9 @@ async def get_intent_classifier():
 
 
 async def get_rag_graph():
-    """Get RAG graph instance."""
-    from graph.graph import get_rag_graph
-    return get_rag_graph()
+    """Get agent harness instance."""
+    from agent.harness import get_agent_harness
+    return get_agent_harness()
 
 
 @router.get("/prompt-status")
@@ -401,10 +401,10 @@ async def chat(
 
         else:
             # RAG pipeline with retrieval
-            from graph.graph import get_rag_graph
-            rag = get_rag_graph()
+            from agent.harness import get_agent_harness
+            harness = get_agent_harness()
 
-            result = rag.invoke(request.message, thread_id=session_id)
+            result = harness.invoke(request.message, thread_id=session_id)
 
             # Extract response and sources
             messages = result.get("messages", [])
@@ -686,8 +686,8 @@ async def chat_stream(
 
             else:
                 # RAG pipeline via graph streaming
-                from graph.graph import get_rag_graph
-                rag = get_rag_graph()
+                from agent.harness import get_agent_harness
+                harness = get_agent_harness()
 
                 full_response = ""
                 collected_messages = []
@@ -702,7 +702,7 @@ async def chat_stream(
 
                 def _run_graph_stream():
                     try:
-                        for event in rag.graph.stream(
+                        for event in harness.graph.stream(
                             {
                                 "messages": [HumanMessage(content=request.message)],
                                 "rewrite_count": 0,

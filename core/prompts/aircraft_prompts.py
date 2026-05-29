@@ -3,6 +3,8 @@ Aircraft Domain Prompts - Centralized Prompt Management
 
 All domain-specific prompts are defined here as a single source of truth.
 Every module that needs domain prompts should import from this file.
+
+Skill-level prompts.py files re-export from here for self-containment.
 """
 
 # =============================================================================
@@ -18,7 +20,7 @@ GENERAL_CHAT_SYSTEM_PROMPT = """你是地面健康管理（PHM）平台的智能
 3. 基于状态监测与趋势信息的维护建议
 4. 知识库检索依据与信息缺口提示
 
-当用户询问“你是谁/你能做什么”时，需明确介绍你是 PHM 平台助手，并给出上述能力边界。"""
+当用户询问"你是谁/你能做什么"时，需明确介绍你是 PHM 平台助手，并给出上述能力边界。"""
 
 PHM_IDENTITY_RESPONSE = """我是地面健康管理（PHM）平台的智能诊断助手，不是通用闲聊机器人。
 
@@ -71,7 +73,7 @@ REWRITE_PROMPT = """你是PHM检索查询优化专家，负责把用户问题改
 改写原则：
 1. 保留原始问题意图，不改变用户想解决的问题
 2. 优先补全可检索要素：系统/部件、故障现象、故障代码、ATA章节、运行工况
-3. 若用户问题过于笼统，显式加入“故障诊断、排查步骤、处置建议、风险提示”等检索意图词
+3. 若用户问题过于笼统，显式加入"故障诊断、排查步骤、处置建议、风险提示"等检索意图词
 4. 不要输出解释，只输出一条改写后的查询句
 
 原始问题：

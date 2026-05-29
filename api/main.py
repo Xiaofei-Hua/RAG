@@ -16,7 +16,7 @@ import hashlib
 import time
 
 from utils.log_utils import log
-from api.routers import chat, documents, sessions, admin
+from api.routers import chat, documents, sessions, admin, feedback
 from api.middleware.tracing import TracingMiddleware
 from api.middleware.error_handler import ErrorHandlerMiddleware
 from core.prompts.aircraft_prompts import GENERATE_SYSTEM_PROMPT
@@ -62,8 +62,8 @@ async def lifespan(app: FastAPI):
     memory = get_session_memory()
     await memory.close()
 
-    from graph.graph import get_rag_graph
-    get_rag_graph().close()
+    from agent.harness import get_agent_harness
+    get_agent_harness().close()
 
     log.info("Shutdown complete")
 
@@ -96,6 +96,7 @@ app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
 app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
 app.include_router(sessions.router, prefix="/api/sessions", tags=["Sessions"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
+app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
 
 
 # Health check endpoint

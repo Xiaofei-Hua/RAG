@@ -1,0 +1,150 @@
+from __future__ import annotations
+
+from typing import List
+
+from agent.eval.types import EvalCase
+
+
+def get_default_eval_cases() -> List[EvalCase]:
+    return [
+        # Engine cases (5)
+        EvalCase(
+            id="engine_vibration_01",
+            query="发动机振动值偏高，如何进行故障诊断？",
+            expected_sections=["诊断结论", "排查步骤"],
+            expected_keywords=["振动", "发动机", "频谱分析", "不平衡"],
+            expected_intent="rag_query",
+            expected_min_sources=1,
+            difficulty="medium",
+        ),
+        EvalCase(
+            id="engine_overheat_02",
+            query="发动机温度异常升高，超过警戒阈值，请分析原因并给出处理建议。",
+            expected_sections=["诊断结论", "排查步骤"],
+            expected_keywords=["温度", "过热", "冷却系统", "热电偶"],
+            expected_intent="rag_query",
+            expected_min_sources=1,
+            difficulty="medium",
+        ),
+        EvalCase(
+            id="engine_fault_code_03",
+            query="发动机报故障代码E-4012，是什么含义？怎么处理？",
+            expected_sections=["诊断结论", "排查步骤"],
+            expected_keywords=["故障码", "E-4012", "传感器", "诊断"],
+            expected_intent="rag_query",
+            expected_min_sources=1,
+            difficulty="easy",
+        ),
+        EvalCase(
+            id="engine_oil_degradation_04",
+            query="发动机滑油金属含量超标，光谱分析结果显示铁元素浓度上升，请诊断磨损部位。",
+            expected_sections=["诊断结论", "排查步骤"],
+            expected_keywords=["滑油", "光谱分析", "金属含量", "磨损", "铁元素"],
+            expected_intent="rag_query",
+            expected_min_sources=1,
+            difficulty="hard",
+        ),
+        EvalCase(
+            id="engine_performance_05",
+            query="发动机推力下降3%，EGT裕度减少，状态监控数据趋势分析。",
+            expected_sections=["诊断结论", "排查步骤"],
+            expected_keywords=["推力", "EGT", "趋势分析", "性能衰退"],
+            expected_intent="rag_query",
+            expected_min_sources=1,
+            difficulty="hard",
+        ),
+        # Hydraulic cases (3)
+        EvalCase(
+            id="hydraulic_leak_06",
+            query="液压系统压力不稳定，疑似存在泄漏，如何排查？",
+            expected_sections=["诊断结论", "排查步骤"],
+            expected_keywords=["液压", "压力", "泄漏", "密封"],
+            expected_intent="rag_query",
+            expected_min_sources=1,
+            difficulty="medium",
+        ),
+        EvalCase(
+            id="hydraulic_pump_07",
+            query="液压泵出口压力低于正常值15%，振动加速度增大，请分析故障模式。",
+            expected_sections=["诊断结论", "排查步骤"],
+            expected_keywords=["液压泵", "压力", "振动", "故障模式"],
+            expected_intent="rag_query",
+            expected_min_sources=1,
+            difficulty="hard",
+        ),
+        EvalCase(
+            id="hydraulic_valve_08",
+            query="液压伺服阀响应迟缓，作动筒位移偏差超标，诊断故障原因。",
+            expected_sections=["诊断结论", "排查步骤"],
+            expected_keywords=["伺服阀", "作动筒", "响应", "位移"],
+            expected_intent="rag_query",
+            expected_min_sources=1,
+            difficulty="medium",
+        ),
+        # Avionics cases (3)
+        EvalCase(
+            id="avionics_signal_09",
+            query="航电系统ARINC429总线信号异常，数据帧校验错误频繁。",
+            expected_sections=["诊断结论", "排查步骤"],
+            expected_keywords=["ARINC429", "信号", "校验", "总线"],
+            expected_intent="rag_query",
+            expected_min_sources=1,
+            difficulty="hard",
+        ),
+        EvalCase(
+            id="avionics_power_10",
+            query="航电设备供电电压波动超出允许范围，导致系统重启，如何诊断？",
+            expected_sections=["诊断结论", "排查步骤"],
+            expected_keywords=["供电", "电压", "航电", "电源"],
+            expected_intent="rag_query",
+            expected_min_sources=1,
+            difficulty="medium",
+        ),
+        EvalCase(
+            id="avionics_display_11",
+            query="飞行显示器画面闪烁，部分参数显示为虚线，排查步骤是什么？",
+            expected_sections=["诊断结论", "排查步骤"],
+            expected_keywords=["显示器", "闪烁", "参数", "虚线"],
+            expected_intent="rag_query",
+            expected_min_sources=1,
+            difficulty="easy",
+        ),
+        # General chat cases (2)
+        EvalCase(
+            id="chat_greeting_12",
+            query="你好，请介绍一下PHM系统能做什么？",
+            expected_sections=[],
+            expected_keywords=["PHM", "健康管理"],
+            expected_intent="general_chat",
+            expected_min_sources=0,
+            difficulty="easy",
+        ),
+        EvalCase(
+            id="chat_capability_13",
+            query="你能帮我分析哪些类型的故障？支持哪些系统的诊断？",
+            expected_sections=[],
+            expected_keywords=["故障", "诊断", "系统"],
+            expected_intent="general_chat",
+            expected_min_sources=0,
+            difficulty="easy",
+        ),
+        # Edge cases (2)
+        EvalCase(
+            id="edge_ambiguous_14",
+            query="异常",
+            expected_sections=[],
+            expected_keywords=[],
+            expected_intent="rag_query",
+            expected_min_sources=0,
+            difficulty="hard",
+        ),
+        EvalCase(
+            id="edge_short_15",
+            query="振动大",
+            expected_sections=["诊断结论"],
+            expected_keywords=["振动"],
+            expected_intent="rag_query",
+            expected_min_sources=0,
+            difficulty="hard",
+        ),
+    ]
