@@ -27,15 +27,21 @@
   - [4.3 会话详情](#43-会话详情)
   - [4.4 删除会话](#44-删除会话)
   - [4.5 延长会话有效期](#45-延长会话有效期)
-- [5. 系统监控](#5-系统监控)
-  - [5.1 基础健康检查](#51-基础健康检查)
-  - [5.2 详细健康检查](#52-详细健康检查)
-  - [5.3 系统指标](#53-系统指标)
-  - [5.4 熔断器状态](#54-熔断器状态)
-  - [5.5 重置熔断器](#55-重置熔断器)
-  - [5.6 降级状态](#56-降级状态)
-  - [5.7 设置降级模式](#57-设置降级模式)
-  - [5.8 系统配置](#58-系统配置)
+- [5. 用户反馈](#5-用户反馈)
+  - [5.1 提交反馈](#51-提交反馈)
+  - [5.2 获取会话反馈](#52-获取会话反馈)
+  - [5.3 反馈统计](#53-反馈统计)
+  - [5.4 待处理升级列表](#54-待处理升级列表)
+  - [5.5 解决升级](#55-解决升级)
+- [6. 系统监控](#6-系统监控)
+  - [6.1 基础健康检查](#61-基础健康检查)
+  - [6.2 详细健康检查](#62-详细健康检查)
+  - [6.3 系统指标](#63-系统指标)
+  - [6.4 熔断器状态](#64-熔断器状态)
+  - [6.5 重置熔断器](#65-重置熔断器)
+  - [6.6 降级状态](#66-降级状态)
+  - [6.7 设置降级模式](#67-设置降级模式)
+  - [6.8 系统配置](#68-系统配置)
 
 ---
 
@@ -641,9 +647,196 @@ POST /api/sessions/{session_id}/extend
 
 ---
 
-## 5. 系统监控
+## 5. 用户反馈
 
-### 5.1 基础健康检查
+### 5.1 提交反馈
+
+```
+POST /api/feedback
+```
+
+用户对 AI 回答提交反馈（点赞/点踩/纠正/标记）。系统会自动触发升级判定，纠正类反馈还会提取知识存入记忆。
+
+#### 请求体
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `session_id` | string | 是 | 关联的会话 ID |
+| `message_id` | string | 否 | 被反馈的消息 ID |
+| `feedback_type` | string | 是 | 反馈类型，见下表 |
+| `content` | string | 否 | 反馈文字内容 |
+| `original_answer` | string | 否 | 原始回答（纠正时使用） |
+| `corrected_answer` | string | 否 | 纠正后的回答（纠正时使用） |
+
+**`feedback_type` 取值：**
+
+| 值 | 说明 |
+|----|------|
+| `THUMBS_UP` | 点赞 |
+| `THUMBS_DOWN` | 点踩 |
+| `CORRECTION` | 内容纠正（需同时提供 `original_answer` 和 `corrected_answer`） |
+| `FLAG` | 标记问题 |
+
+#### 响应体
+
+```json
+{
+  "status": "ok",
+  "id": "fb_abc123"
+}
+```
+
+#### cURL 示例
+
+```bash
+# 点赞
+curl -X POST http://localhost:8000/api/feedback \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"session_abc","feedback_type":"THUMBS_UP"}'
+
+# 内容纠正
+curl -X POST http://localhost:8000/api/feedback \
+  -H "Content-Type: application/json" \
+  -d '{
+    "session_id": "session_abc",
+    "feedback_type": "CORRECTION",
+    "original_answer": "振动限值为 5.0 IPS",
+    "corrected_answer": "振动限值应为 4.0 IPS，参考手册第 12 页"
+  }'
+```
+
+---
+
+### 5.2 获取会话反馈
+
+```
+GET /api/feedback/{session_id}
+```
+
+#### 路径参数
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `session_id` | string | 会话 ID |
+
+#### 响应体
+
+```json
+{
+  "session_id": "session_abc",
+  "feedback": [
+    {
+      "id": "fb_001",
+      "type": "thumbs_up",
+      "content": "",
+      "timestamp": 1713696000.0
+    },
+    {
+      "id": "fb_002",
+      "type": "correction",
+      "content": "振动限值应为 4.0 IPS",
+      "timestamp": 1713696100.0
+    }
+  ]
+}
+```
+
+---
+
+### 5.3 反馈统计
+
+```
+GET /api/feedback/stats/summary
+```
+
+获取全平台反馈汇总统计。
+
+#### 响应体
+
+```json
+{
+  "total_feedback": 128,
+  "by_type": {
+    "thumbs_up": 85,
+    "thumbs_down": 20,
+    "correction": 15,
+    "flag": 8
+  },
+  "escalation_count": 3
+}
+```
+
+---
+
+### 5.4 待处理升级列表
+
+```
+GET /api/feedback/escalations/pending
+```
+
+管理员接口。返回所有未解决的升级工单（由多次点踩或标记自动触发）。
+
+#### 响应体
+
+```json
+{
+  "pending": [
+    {
+      "id": "esc_001",
+      "session_id": "session_abc",
+      "level": "high",
+      "reason": "连续 3 次负面反馈",
+      "timestamp": 1713696000.0
+    }
+  ]
+}
+```
+
+**`level` 取值：**
+
+| 值 | 说明 |
+|----|------|
+| `low` | 低优先级（单次标记） |
+| `medium` | 中优先级（2 次负面反馈） |
+| `high` | 高优先级（3 次及以上负面反馈） |
+| `critical` | 严重（涉及安全风险标记） |
+
+---
+
+### 5.5 解决升级
+
+```
+POST /api/feedback/escalations/{escalation_id}/resolve
+```
+
+管理员接口。标记升级工单为已解决。
+
+#### 路径参数
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `escalation_id` | string | 升级工单 ID |
+
+#### 请求体
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `resolution` | string | 是 | 解决说明 |
+
+#### 响应体
+
+```json
+{
+  "status": "resolved",
+  "id": "esc_001"
+}
+```
+
+---
+
+## 6. 系统监控
+
+### 6.1 基础健康检查
 
 ```
 GET /health
@@ -664,7 +857,7 @@ GET /health
 
 ---
 
-### 5.2 详细健康检查
+### 6.2 详细健康检查
 
 ```
 GET /api/admin/health
@@ -703,7 +896,7 @@ GET /api/admin/health
 
 ---
 
-### 5.3 系统指标
+### 6.3 系统指标
 
 ```
 GET /api/admin/metrics
@@ -727,7 +920,7 @@ GET /api/admin/metrics
 
 ---
 
-### 5.4 熔断器状态
+### 6.4 熔断器状态
 
 ```
 GET /api/admin/circuit-breakers
@@ -749,7 +942,7 @@ GET /api/admin/circuit-breakers
 
 ---
 
-### 5.5 重置熔断器
+### 6.5 重置熔断器
 
 ```
 POST /api/admin/circuit-breakers/{name}/reset
@@ -772,7 +965,7 @@ POST /api/admin/circuit-breakers/{name}/reset
 
 ---
 
-### 5.6 降级状态
+### 6.6 降级状态
 
 ```
 GET /api/admin/degradation
@@ -790,7 +983,7 @@ GET /api/admin/degradation
 
 ---
 
-### 5.7 设置降级模式
+### 6.7 设置降级模式
 
 ```
 POST /api/admin/degradation/mode/{mode}
@@ -813,7 +1006,7 @@ POST /api/admin/degradation/mode/{mode}
 
 ---
 
-### 5.8 系统配置
+### 6.8 系统配置
 
 ```
 GET /api/admin/config
@@ -921,9 +1114,101 @@ interface SessionInfo {
 }
 ```
 
+### FeedbackRequest
+
+```typescript
+interface FeedbackRequest {
+  session_id: string                          // 必填，关联会话 ID
+  message_id?: string                         // 可选，被反馈的消息 ID
+  feedback_type: "THUMBS_UP" | "THUMBS_DOWN" | "CORRECTION" | "FLAG"  // 必填
+  content?: string                            // 可选，反馈文字
+  original_answer?: string                    // 可选，原始回答（纠正时）
+  corrected_answer?: string                   // 可选，纠正后回答（纠正时）
+}
+```
+
+### FeedbackEntry
+
+```typescript
+interface FeedbackEntry {
+  id: string
+  type: string                  // "thumbs_up" | "thumbs_down" | "correction" | "flag"
+  content: string
+  timestamp: number             // Unix 时间戳
+}
+```
+
+### EscalationRecord
+
+```typescript
+interface EscalationRecord {
+  id: string
+  session_id: string
+  level: "low" | "medium" | "high" | "critical"
+  reason: string
+  timestamp: number             // Unix 时间戳
+}
+```
+
 ---
 
-## 附录 B：快速模式 vs 深度模式流程对比
+## 附录 B：快速上手
+
+### 1. 健康检查
+
+```bash
+curl http://localhost:8000/health
+```
+
+### 2. 发送消息（非流式）
+
+```bash
+curl -X POST http://localhost:8000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"发动机振动异常如何排查？","mode":"thinking"}'
+```
+
+### 3. 发送消息（SSE 流式）
+
+```bash
+curl -N -X POST http://localhost:8000/api/chat/stream \
+  -H "Content-Type: application/json" \
+  -d '{"message":"发动机振动异常如何排查？","stream":true,"mode":"thinking"}'
+```
+
+### 4. 上传文档到知识库
+
+```bash
+curl -X POST http://localhost:8000/api/documents/upload \
+  -F "file=@engine_manual.md"
+```
+
+### 5. 多轮对话（使用 session_id）
+
+```bash
+# 第一轮 — 自动创建会话
+curl -X POST http://localhost:8000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"APU 无法启动的原因有哪些？"}'
+# 返回中包含 session_id
+
+# 第二轮 — 传入 session_id 继续对话
+curl -X POST http://localhost:8000/api/chat \
+  -H "Content-Type: application/json" \
+  -d '{"message":"如何进一步排查？","session_id":"session_abc123"}'
+```
+
+### 6. 提交用户反馈
+
+```bash
+curl -X POST http://localhost:8000/api/feedback \
+  -H "Content-Type: application/json" \
+  -d '{"session_id":"session_abc123","feedback_type":"THUMBS_UP"}'
+```
+
+---
+
+## 附录 C：快速模式 vs 深度模式流程对比
 
 ```
 深度思考模式 (mode="thinking"):
