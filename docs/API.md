@@ -27,21 +27,25 @@
   - [4.3 会话详情](#43-会话详情)
   - [4.4 删除会话](#44-删除会话)
   - [4.5 延长会话有效期](#45-延长会话有效期)
-- [5. 用户反馈](#5-用户反馈)
-  - [5.1 提交反馈](#51-提交反馈)
-  - [5.2 获取会话反馈](#52-获取会话反馈)
-  - [5.3 反馈统计](#53-反馈统计)
-  - [5.4 待处理升级列表](#54-待处理升级列表)
-  - [5.5 解决升级](#55-解决升级)
-- [6. 系统监控](#6-系统监控)
-  - [6.1 基础健康检查](#61-基础健康检查)
-  - [6.2 详细健康检查](#62-详细健康检查)
-  - [6.3 系统指标](#63-系统指标)
-  - [6.4 熔断器状态](#64-熔断器状态)
-  - [6.5 重置熔断器](#65-重置熔断器)
-  - [6.6 降级状态](#66-降级状态)
-  - [6.7 设置降级模式](#67-设置降级模式)
-  - [6.8 系统配置](#68-系统配置)
+- [5. 知识库检索](#5-知识库检索)
+  - [5.1 混合检索](#51-混合检索)
+  - [5.2 纯向量检索](#52-纯向量检索)
+  - [5.3 纯关键词检索（BM25）](#53-纯关键词检索bm25)
+- [6. 用户反馈](#6-用户反馈)
+  - [6.1 提交反馈](#61-提交反馈)
+  - [6.2 获取会话反馈](#62-获取会话反馈)
+  - [6.3 反馈统计](#63-反馈统计)
+  - [6.4 待处理升级列表](#64-待处理升级列表)
+  - [6.5 解决升级](#65-解决升级)
+- [7. 系统监控](#7-系统监控)
+  - [7.1 基础健康检查](#71-基础健康检查)
+  - [7.2 详细健康检查](#72-详细健康检查)
+  - [7.3 系统指标](#73-系统指标)
+  - [7.4 熔断器状态](#74-熔断器状态)
+  - [7.5 重置熔断器](#75-重置熔断器)
+  - [7.6 降级状态](#76-降级状态)
+  - [7.7 设置降级模式](#77-设置降级模式)
+  - [7.8 系统配置](#78-系统配置)
 
 ---
 
@@ -647,9 +651,111 @@ POST /api/sessions/{session_id}/extend
 
 ---
 
-## 5. 用户反馈
+## 5. 知识库检索
 
-### 5.1 提交反馈
+> 所有检索端点**不调用 LLM**，仅做知识库匹配，响应速度通常在 100~500ms。
+
+### 三种检索策略对比
+
+| 策略 | 端点 | 原理 | 适用场景 |
+|------|------|------|----------|
+| 混合检索 | `POST /api/retrieval` | dense 向量 + BM25 关键词，RRF 融合排序 | 通用检索，兼顾语义和关键词 |
+| 纯向量检索 | `POST /api/retrieval/dense` | 仅 embedding 余弦相似度 | 意思相近但关键词不同的查询 |
+| 纯关键词检索 | `POST /api/retrieval/sparse` | 仅 BM25 词频匹配 | 精确关键词（ATA 编号、零件号、故障代码） |
+
+---
+
+### 5.1 混合检索
+
+```
+POST /api/retrieval
+```
+
+同时执行 dense 向量检索和 BM25 关键词检索，通过 Reciprocal Rank Fusion (RRF) 融合排序，返回综合最优结果。
+
+#### 请求体
+
+| 字段 | 类型 | 必填 | 默认值 | 说明 |
+|------|------|------|--------|------|
+| `query` | string | 是 | — | 检索查询文本 |
+| `top_k` | integer | 否 | 5 | 返回结果数量（1~50） |
+
+#### 响应体
+
+```json
+{
+  "query": "发动机振动异常如何排查",
+  "results": [
+    {
+      "content": "当发动机振动值超过限制时，应按以下步骤排查：1. 检查振动传感器...",
+      "source": "engine_manual.md",
+      "title": "发动机维修手册",
+      "score": 0.032
+    }
+  ],
+  "total": 3,
+  "retrieval_time_ms": 245.8
+}
+```
+
+#### cURL 示例
+
+```bash
+curl -X POST http://localhost:8000/api/retrieval \
+  -H "Content-Type: application/json" \
+  -d '{"query":"发动机振动异常如何排查","top_k":5}'
+```
+
+---
+
+### 5.2 纯向量检索
+
+```
+POST /api/retrieval/dense
+```
+
+仅使用 embedding 向量相似度搜索（Milvus IVF/AUTOINDEX），不经过 BM25 和 RRF。
+
+#### 请求体 / 响应体
+
+与 [5.1 混合检索](#51-混合检索) 格式相同。
+
+#### cURL 示例
+
+```bash
+curl -X POST http://localhost:8000/api/retrieval/dense \
+  -H "Content-Type: application/json" \
+  -d '{"query":"APU 启动故障","top_k":3}'
+```
+
+---
+
+### 5.3 纯关键词检索（BM25）
+
+```
+POST /api/retrieval/sparse
+```
+
+仅使用 BM25 算法进行关键词匹配，基于词频和逆文档频率打分。支持中文分词（jieba）。
+
+#### 请求体 / 响应体
+
+与 [5.1 混合检索](#51-混合检索) 格式相同。
+
+#### cURL 示例
+
+```bash
+# ATA 编号精确匹配
+curl -X POST http://localhost:8000/api/retrieval/sparse \
+  -H "Content-Type: application/json" \
+  -d '{"query":"ATA72 发动机振动","top_k":5}'
+```
+
+---
+
+## 6. 用户反馈
+
+### 6.1 提交反馈
 
 ```
 POST /api/feedback
@@ -707,7 +813,7 @@ curl -X POST http://localhost:8000/api/feedback \
 
 ---
 
-### 5.2 获取会话反馈
+### 6.2 获取会话反馈
 
 ```
 GET /api/feedback/{session_id}
@@ -743,7 +849,7 @@ GET /api/feedback/{session_id}
 
 ---
 
-### 5.3 反馈统计
+### 6.3 反馈统计
 
 ```
 GET /api/feedback/stats/summary
@@ -768,7 +874,7 @@ GET /api/feedback/stats/summary
 
 ---
 
-### 5.4 待处理升级列表
+### 6.4 待处理升级列表
 
 ```
 GET /api/feedback/escalations/pending
@@ -803,7 +909,7 @@ GET /api/feedback/escalations/pending
 
 ---
 
-### 5.5 解决升级
+### 6.5 解决升级
 
 ```
 POST /api/feedback/escalations/{escalation_id}/resolve
@@ -834,9 +940,9 @@ POST /api/feedback/escalations/{escalation_id}/resolve
 
 ---
 
-## 6. 系统监控
+## 7. 系统监控
 
-### 6.1 基础健康检查
+### 7.1 基础健康检查
 
 ```
 GET /health
@@ -857,7 +963,7 @@ GET /health
 
 ---
 
-### 6.2 详细健康检查
+### 7.2 详细健康检查
 
 ```
 GET /api/admin/health
@@ -896,7 +1002,7 @@ GET /api/admin/health
 
 ---
 
-### 6.3 系统指标
+### 7.3 系统指标
 
 ```
 GET /api/admin/metrics
@@ -920,7 +1026,7 @@ GET /api/admin/metrics
 
 ---
 
-### 6.4 熔断器状态
+### 7.4 熔断器状态
 
 ```
 GET /api/admin/circuit-breakers
@@ -942,7 +1048,7 @@ GET /api/admin/circuit-breakers
 
 ---
 
-### 6.5 重置熔断器
+### 7.5 重置熔断器
 
 ```
 POST /api/admin/circuit-breakers/{name}/reset
@@ -965,7 +1071,7 @@ POST /api/admin/circuit-breakers/{name}/reset
 
 ---
 
-### 6.6 降级状态
+### 7.6 降级状态
 
 ```
 GET /api/admin/degradation
@@ -983,7 +1089,7 @@ GET /api/admin/degradation
 
 ---
 
-### 6.7 设置降级模式
+### 7.7 设置降级模式
 
 ```
 POST /api/admin/degradation/mode/{mode}
@@ -1006,7 +1112,7 @@ POST /api/admin/degradation/mode/{mode}
 
 ---
 
-### 6.8 系统配置
+### 7.8 系统配置
 
 ```
 GET /api/admin/config
@@ -1150,6 +1256,37 @@ interface EscalationRecord {
 }
 ```
 
+### RetrievalRequest
+
+```typescript
+interface RetrievalRequest {
+  query: string                 // 必填，检索查询文本
+  top_k?: number                // 可选，返回结果数量，默认 5，范围 1~50
+}
+```
+
+### RetrievedDocument
+
+```typescript
+interface RetrievedDocument {
+  content: string               // 匹配的文档片段
+  source: string                // 来源文件名
+  title: string                 // 文档标题
+  score: number                 // 相关性分数（越高越相关）
+}
+```
+
+### RetrievalResponse
+
+```typescript
+interface RetrievalResponse {
+  query: string                 // 原始查询
+  results: RetrievedDocument[]  // 检索结果列表
+  total: number                 // 结果总数
+  retrieval_time_ms: number     // 检索耗时（毫秒）
+}
+```
+
 ---
 
 ## 附录 B：快速上手
@@ -1176,14 +1313,33 @@ curl -N -X POST http://localhost:8000/api/chat/stream \
   -d '{"message":"发动机振动异常如何排查？","stream":true,"mode":"thinking"}'
 ```
 
-### 4. 上传文档到知识库
+### 4. 知识库检索（不调用 LLM）
+
+```bash
+# 混合检索（推荐）
+curl -X POST http://localhost:8000/api/retrieval \
+  -H "Content-Type: application/json" \
+  -d '{"query":"发动机振动异常","top_k":5}'
+
+# 纯向量检索
+curl -X POST http://localhost:8000/api/retrieval/dense \
+  -H "Content-Type: application/json" \
+  -d '{"query":"发动机振动异常","top_k":5}'
+
+# 纯 BM25 关键词检索
+curl -X POST http://localhost:8000/api/retrieval/sparse \
+  -H "Content-Type: application/json" \
+  -d '{"query":"ATA72 发动机振动","top_k":5}'
+```
+
+### 5. 上传文档到知识库
 
 ```bash
 curl -X POST http://localhost:8000/api/documents/upload \
   -F "file=@engine_manual.md"
 ```
 
-### 5. 多轮对话（使用 session_id）
+### 6. 多轮对话（使用 session_id）
 
 ```bash
 # 第一轮 — 自动创建会话
@@ -1198,7 +1354,7 @@ curl -X POST http://localhost:8000/api/chat \
   -d '{"message":"如何进一步排查？","session_id":"session_abc123"}'
 ```
 
-### 6. 提交用户反馈
+### 7. 提交用户反馈
 
 ```bash
 curl -X POST http://localhost:8000/api/feedback \

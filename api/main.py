@@ -16,7 +16,7 @@ import hashlib
 import time
 
 from utils.log_utils import log
-from api.routers import chat, documents, sessions, admin, feedback
+from api.routers import chat, documents, sessions, admin, feedback, retrieval
 from api.middleware.tracing import TracingMiddleware
 from api.middleware.error_handler import ErrorHandlerMiddleware
 from core.prompts.aircraft_prompts import GENERATE_SYSTEM_PROMPT
@@ -97,6 +97,7 @@ app.include_router(documents.router, prefix="/api/documents", tags=["Documents"]
 app.include_router(sessions.router, prefix="/api/sessions", tags=["Sessions"])
 app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
+app.include_router(retrieval.router, prefix="/api/retrieval", tags=["Retrieval"])
 
 
 # Health check endpoint
