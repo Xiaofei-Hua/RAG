@@ -1,0 +1,137 @@
+#!/usr/bin/env python3
+"""
+文档管理接口测试
+
+用法:
+  python tests/api/test_documents.py
+"""
+
+import json
+import sys
+import time
+import http.client
+import urllib.request
+import urllib.error
+
+BASE = "http://localhost:8000"
+
+PASSED = 0
+FAILED = 0
+
+TEST_DOC = """# B737 液压系统故障排查指南
+
+## ATA 29 - 液压系统
+
+### 故障现象：液压系统压力低
+
+#### 排故步骤：
+1. 检查液压油量是否在正常范围内
+2. 检查液压泵出口压力是否符合标准（3000 ± 200 PSI）
+3. 检查液压滤芯是否堵塞，压差指示器是否弹出
+
+#### 故障代码：
+- HYD-PRESS-LOW-A：A系统压力低
+- HYD-PRESS-LOW-B：B系统压力低
+"""
+
+
+def _req(method, path, data=None, timeout=60):
+    url = f"{BASE}{path}"
+    body = json.dumps(data).encode() if data else None
+    req = urllib.request.Request(url, data=body, method=method,
+                                headers={"Content-Type": "application/json"} if body else {})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            return resp.status, json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        return e.code, json.loads(e.read())
+    except Exception as e:
+        return 0, {"error": str(e)}
+
+
+def _upload(filename, content):
+    boundary = "----TestBoundary123456"
+    body = (
+        f"--{boundary}\r\n"
+        f'Content-Disposition: form-data; name="file"; filename="{filename}"\r\n'
+        f"Content-Type: text/markdown\r\n\r\n"
+        f"{content}\r\n"
+        f"--{boundary}--\r\n"
+    ).encode("utf-8")
+    conn = http.client.HTTPConnection("localhost", 8000, timeout=60)
+    conn.request("POST", "/api/documents/upload", body=body,
+                 headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    resp = conn.getresponse()
+    result = json.loads(resp.read())
+    conn.close()
+    return resp.status, result
+
+
+def assert_ok(name, status, body, expected_status=200):
+    global PASSED, FAILED
+    if status == expected_status:
+        PASSED += 1
+        print(f"  [PASS] {name}")
+    else:
+        FAILED += 1
+        print(f"  [FAIL] {name}  (HTTP {status}) {body}")
+
+
+def assert_true(name, condition, detail=""):
+    global PASSED, FAILED
+    if condition:
+        PASSED += 1
+        print(f"  [PASS] {name}")
+    else:
+        FAILED += 1
+        print(f"  [FAIL] {name}  {detail}")
+
+
+def main():
+    print("\n── 文档管理接口测试 ──")
+
+    doc_id = None
+
+    # 1. Upload
+    print("\n  [上传]")
+    status, body = _upload("test_hydraulic.md", TEST_DOC)
+    assert_ok("上传文档成功", status, body, expected_status=200)
+    if status == 200:
+        doc_id = body.get("id")
+        assert_true("返回 doc_id", doc_id is not None, str(body))
+
+    # 2. Duplicate upload
+    print("\n  [重复上传检测]")
+    status, body = _upload("test_hydraulic.md", TEST_DOC)
+    assert_ok("重复上传被拒绝 (409)", status, body, expected_status=409)
+
+    # 3. Wait for processing
+    if doc_id:
+        print("\n  [等待处理]")
+        print("    等待文档索引完成...")
+        time.sleep(20)
+
+        status, body = _req("GET", f"/api/documents/{doc_id}")
+        assert_ok("查询文档状态", status, body)
+
+    # 4. List
+    print("\n  [文档列表]")
+    status, body = _req("GET", "/api/documents")
+    assert_ok("GET /api/documents 返回 200", status, body)
+    assert_true("total >= 1", body.get("total", 0) >= 1, f"got: {body.get('total')}")
+
+    # 5. Delete
+    if doc_id:
+        print("\n  [删除]")
+        status, body = _req("DELETE", f"/api/documents/{doc_id}")
+        assert_ok("DELETE 返回 200", status, body)
+
+        status, body = _req("GET", f"/api/documents/{doc_id}")
+        assert_ok("删除后查询返回 404", status, body, expected_status=404)
+
+    print(f"\n  {PASSED} passed, {FAILED} failed\n")
+    sys.exit(1 if FAILED else 0)
+
+
+if __name__ == "__main__":
+    main()

@@ -10,9 +10,20 @@
 # Start backend
 python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
 
-# Run tests
-python tests/test_skills.py
-python tests/test_skills.py --full    # includes LLM calls
+# Unit tests (no backend needed)
+python tests/unit/test_skills.py
+python tests/unit/test_skills.py --full    # includes LLM calls
+
+# API tests (need backend running)
+python tests/api/test_health.py
+python tests/api/test_chat.py
+python tests/api/test_documents.py
+python tests/api/test_sessions.py
+python tests/api/test_retrieval.py
+python tests/api/test_feedback.py
+
+# Integration test (need backend running)
+python tests/integration/test_system.py
 
 # Quick import check
 python -c "import api.main; print('OK')"
@@ -61,5 +72,5 @@ utils/          # Logging, env, think_tag utilities
 
 Always verify after changes:
 1. `python -c "import api.main"` — no circular imports
-2. `python tests/test_skills.py` — all pass
+2. `python tests/unit/test_skills.py` — all pass
 3. Start backend, test `/health` and chat endpoint
