@@ -73,6 +73,8 @@ class LLMConfig:
             self.api_key = OPENAI_API_KEY or "ollama"
         if self.base_url is None:
             self.base_url = OPENAI_BASE_URL or "http://localhost:11434/v1"
+        if LLM_MODEL is not None:
+            self.model_name = LLM_MODEL 
 
 
 @dataclass
