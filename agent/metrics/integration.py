@@ -73,7 +73,8 @@ def create_token_tracking_hook(
         total_tokens = raw_usage.get("total_tokens", prompt_tokens + completion_tokens)
 
         # Try to get model name from metadata or usage
-        model_name = metadata.get("model_name", "qwen3:14b")
+        from utils.env_utils import LLM_MODEL
+        model_name = metadata.get("model_name", LLM_MODEL)
 
         usage = TokenUsage(
             prompt_tokens=prompt_tokens,

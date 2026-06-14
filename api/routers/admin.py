@@ -53,9 +53,27 @@ async def health_check():
             "error": str(e),
         }
 
+    from utils.env_utils import RERANKER_ENABLED
+    if RERANKER_ENABLED:
+        from core.retrieval.reranker import get_reranker
+
+        reranker_status = get_reranker().status()
+        services["reranker"] = {
+            "status": (
+                "healthy"
+                if reranker_status["loaded"]
+                else "degraded"
+                if reranker_status["load_error"]
+                else "ready"
+                if reranker_status["cached"]
+                else "cold"
+            ),
+            "details": reranker_status,
+        }
+
     # Overall status
     all_healthy = all(
-        s.get("status") in ("healthy", "degraded")
+        s.get("status") in ("healthy", "degraded", "ready", "cold")
         for s in services.values()
     )
 
@@ -172,9 +190,68 @@ async def set_degradation_mode(mode: str):
 @router.get("/config")
 async def get_config():
     """Get current configuration."""
-    from utils.env_utils import COLLECTION_NAME, MILVUS_URI
+    from utils.env_utils import (
+        COLLECTION_NAME,
+        EMBEDDING_BATCH_SIZE,
+        EMBEDDING_DEVICE,
+        EMBEDDING_DIMENSION,
+        EMBEDDING_MODEL,
+        EMBEDDING_MODEL_PATH,
+        EMBEDDING_NORMALIZE,
+        LLM_MAX_RETRIES,
+        LLM_MAX_TOKENS,
+        LLM_MODEL,
+        LLM_TEMPERATURE,
+        LLM_TIMEOUT,
+        MILVUS_URI,
+        OTEL_CONSOLE_EXPORTER,
+        OTEL_ENABLED,
+        OTEL_EXPORTER_OTLP_ENDPOINT,
+        OTEL_SAMPLE_RATE,
+        OTEL_SERVICE_NAME,
+        RERANKER_BATCH_SIZE,
+        RERANKER_CANDIDATE_TOP_K,
+        RERANKER_DEVICE,
+        RERANKER_ENABLED,
+        RERANKER_MODEL,
+        RERANKER_MODEL_PATH,
+        RERANKER_TOP_K,
+        RERANKER_WARMUP,
+    )
 
     return {
+        "llm": {
+            "model": LLM_MODEL,
+            "temperature": LLM_TEMPERATURE,
+            "max_tokens": LLM_MAX_TOKENS,
+            "timeout": LLM_TIMEOUT,
+            "max_retries": LLM_MAX_RETRIES,
+        },
+        "embedding": {
+            "model": EMBEDDING_MODEL,
+            "local_path": EMBEDDING_MODEL_PATH,
+            "dimension": EMBEDDING_DIMENSION,
+            "device": EMBEDDING_DEVICE,
+            "normalize": EMBEDDING_NORMALIZE,
+            "batch_size": EMBEDDING_BATCH_SIZE,
+        },
+        "reranker": {
+            "enabled": RERANKER_ENABLED,
+            "model": RERANKER_MODEL,
+            "local_path": RERANKER_MODEL_PATH,
+            "device": RERANKER_DEVICE,
+            "warmup": RERANKER_WARMUP,
+            "candidate_top_k": RERANKER_CANDIDATE_TOP_K,
+            "top_k": RERANKER_TOP_K,
+            "batch_size": RERANKER_BATCH_SIZE,
+        },
+        "opentelemetry": {
+            "enabled": OTEL_ENABLED,
+            "service_name": OTEL_SERVICE_NAME,
+            "endpoint": OTEL_EXPORTER_OTLP_ENDPOINT,
+            "sample_rate": OTEL_SAMPLE_RATE,
+            "console_exporter": OTEL_CONSOLE_EXPORTER,
+        },
         "milvus": {
             "uri": MILVUS_URI,
             "collection": COLLECTION_NAME,

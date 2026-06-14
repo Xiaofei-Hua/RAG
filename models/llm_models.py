@@ -25,7 +25,15 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.caches import InMemoryCache
 from langchain_openai import ChatOpenAI
 
-from utils.env_utils import OPENAI_API_KEY, OPENAI_BASE_URL
+from utils.env_utils import (
+    LLM_MAX_RETRIES,
+    LLM_MAX_TOKENS,
+    LLM_MODEL,
+    LLM_TEMPERATURE,
+    LLM_TIMEOUT,
+    OPENAI_API_KEY,
+    OPENAI_BASE_URL,
+)
 
 # LLM response cache — avoids re-calling the API for identical prompts
 _llm_cache = InMemoryCache()
@@ -50,11 +58,11 @@ class LLMConfig:
     Optimized for low-resource servers with conservative defaults.
     """
     # Model settings
-    model_name: str = "qwen3:14b"
-    temperature: float = 0.0
-    max_tokens: int = 4096
-    timeout: float = 60.0
-    max_retries: int = 1
+    model_name: str = field(default_factory=lambda: LLM_MODEL)
+    temperature: float = LLM_TEMPERATURE
+    max_tokens: int = LLM_MAX_TOKENS
+    timeout: float = LLM_TIMEOUT
+    max_retries: int = LLM_MAX_RETRIES
 
     # API settings
     api_key: Optional[str] = None
@@ -179,8 +187,8 @@ def reset_web_search():
 # =============================================================================
 
 def create_custom_llm(
-    model_name: str = "qwen3:14b",
-    temperature: float = 0.0,
+    model_name: str = LLM_MODEL,
+    temperature: float = LLM_TEMPERATURE,
     **kwargs
 ) -> BaseChatModel:
     """

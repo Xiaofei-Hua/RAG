@@ -118,6 +118,24 @@ async def get_session(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@router.post("/{session_id}/extend")
+async def extend_session(
+    session_id: str,
+    session_memory = Depends(get_session_memory),
+):
+    """Refresh a session's last-active timestamp."""
+    try:
+        if not await session_memory.session_exists(session_id):
+            raise HTTPException(status_code=404, detail="Session not found")
+        await session_memory.register_session(session_id)
+        return {"status": "success", "message": f"Session {session_id} extended"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        log.error(f"Failed to extend session: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @router.delete("/{session_id}")
 async def delete_session(
     session_id: str,

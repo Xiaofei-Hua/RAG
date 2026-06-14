@@ -9,6 +9,7 @@ Retrieval Router — 知识库向量/关键词检索
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import List, Optional
 
@@ -34,6 +35,9 @@ class RetrievedDocument(BaseModel):
     source: str = ""
     title: str = ""
     score: float = 0.0
+    retrieval_score: Optional[float] = None
+    rerank_score: Optional[float] = None
+    rerank_applied: bool = False
 
 
 class RetrievalResponse(BaseModel):
@@ -66,12 +70,19 @@ def _build_response(query: str, results, elapsed_ms: float) -> RetrievalResponse
             doc = r.document
             content = doc.page_content
             score = r.score
-            source = doc.metadata.get("source", "")
-            title = doc.metadata.get("title", "")
+            meta = doc.metadata
+            source = meta.get("source", "")
+            title = meta.get("title", "")
         else:
             continue
         docs.append(RetrievedDocument(
-            content=content, source=source, title=title, score=score,
+            content=content,
+            source=source,
+            title=title,
+            score=score,
+            retrieval_score=meta.get("retrieval_score"),
+            rerank_score=meta.get("rerank_score"),
+            rerank_applied=bool(meta.get("rerank_applied", False)),
         ))
     return RetrievalResponse(
         query=query, results=docs, total=len(docs), retrieval_time_ms=elapsed_ms,
@@ -94,10 +105,10 @@ async def hybrid_retrieve(req: RetrievalRequest):
     retriever = get_hybrid_retriever()
     start = time.perf_counter()
     try:
-        results = retriever.retrieve(req.query, top_k=req.top_k)
+        results = await retriever.aretrieve(req.query, top_k=req.top_k)
     except Exception as e:
-        log.error(f"Hybrid retrieval failed: {e}")
-        raise HTTPException(500, f"检索失败: {e}")
+        log.exception("Hybrid retrieval failed")
+        raise HTTPException(500, "检索失败，请稍后重试")
     elapsed = (time.perf_counter() - start) * 1000
     return _build_response(req.query, results, elapsed)
 
@@ -114,10 +125,12 @@ async def dense_retrieve(req: RetrievalRequest):
     manager = get_milvus_manager()
     start = time.perf_counter()
     try:
-        results = manager.search(query=req.query, top_k=req.top_k)
+        results = await asyncio.to_thread(
+            manager.search, query=req.query, top_k=req.top_k
+        )
     except Exception as e:
-        log.error(f"Dense retrieval failed: {e}")
-        raise HTTPException(500, f"向量检索失败: {e}")
+        log.exception("Dense retrieval failed")
+        raise HTTPException(500, "向量检索失败，请稍后重试")
     elapsed = (time.perf_counter() - start) * 1000
     return _build_response(req.query, results, elapsed)
 
@@ -131,14 +144,17 @@ async def sparse_retrieve(req: RetrievalRequest):
     """
     from core.retrieval.hybrid_retriever import get_hybrid_retriever
 
-    # HybridRetriever 的 lazy init 会自动从 Milvus 同步文档到 BM25
     retriever = get_hybrid_retriever()
-    bm25 = retriever.sparse_retriever
     start = time.perf_counter()
     try:
-        results = bm25.retrieve(req.query, top_k=req.top_k)
+        # 确保通过 worker 线程访问 sparse_retriever 属性，
+        # 避免首次调用时在事件循环上同步触发 Milvus->BM25 索引同步阻塞请求
+        bm25 = await asyncio.to_thread(lambda: retriever.sparse_retriever)
+        results = await asyncio.to_thread(
+            bm25.retrieve, req.query, top_k=req.top_k
+        )
     except Exception as e:
-        log.error(f"Sparse retrieval failed: {e}")
-        raise HTTPException(500, f"BM25 检索失败: {e}")
+        log.exception("Sparse retrieval failed")
+        raise HTTPException(500, "BM25 检索失败，请稍后重试")
     elapsed = (time.perf_counter() - start) * 1000
     return _build_response(req.query, results, elapsed)

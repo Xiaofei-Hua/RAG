@@ -12,6 +12,7 @@ Main orchestrator that:
 
 from __future__ import annotations
 
+import asyncio
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -19,6 +20,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.runnables import RunnableLambda
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.constants import START, END
 from langgraph.graph import StateGraph
@@ -106,6 +108,7 @@ class AgentHarness:
         self._graph = None
         self._memory = None
         self._checkpoint_conn = None
+        self._async_checkpoint_conn = None
 
     # ------------------------------------------------------------------
     # Properties
@@ -196,15 +199,19 @@ class AgentHarness:
         rewrite_skill = self._registry.get("rewrite")
         generate_skill = self._registry.get("generate")
         grade_skill = self._registry.get("grade")
+        retrieve_skill = self._registry.get("retrieve")
 
         # Add skill-based nodes
         if agent_skill is not None:
             workflow.add_node("agent", self._skill_to_node("agent", agent_skill))
 
-        # Retrieve uses ToolNode for backward compatibility with LangGraph
-        # (ToolNode handles tool_calls from the agent's AI response)
-        retrieve_tools = self._get_retrieve_tools()
-        workflow.add_node("retrieve", ToolNode(retrieve_tools))
+        if retrieve_skill is not None:
+            workflow.add_node(
+                "retrieve", self._skill_to_node("retrieve", retrieve_skill)
+            )
+        else:
+            retrieve_tools = self._get_retrieve_tools()
+            workflow.add_node("retrieve", ToolNode(retrieve_tools))
 
         if rewrite_skill is not None:
             workflow.add_node("rewrite", self._skill_to_node("rewrite", rewrite_skill))
@@ -238,7 +245,7 @@ class AgentHarness:
         workflow.add_edge("generate", END)
 
         # Checkpointing
-        if self._config.use_memory:
+        if self._config.use_memory and self._memory is None:
             self._setup_checkpointing()
 
         # Compile
@@ -298,7 +305,48 @@ class AgentHarness:
 
             return result.to_state_update()
 
-        return node_fn
+        async def async_node_fn(state: AgentState) -> Dict[str, Any]:
+            context = SkillContext.from_agent_state(
+                state,
+                session_id=harness._config.session_id or "",
+                thread_id=harness._config.thread_id or "",
+            )
+
+            try:
+                harness._lifecycle.fire_before_skill(skill_name, context)
+            except Exception as guardrail_err:
+                log.warning(f"Skill '{skill_name}' blocked: {guardrail_err}")
+                return SkillResult(
+                    status=SkillStatus.FAILURE,
+                    skill_name=skill_name,
+                    error=str(guardrail_err),
+                    messages=[AIMessage(content="请求被安全策略拦截，请重新描述您的问题。")],
+                ).to_state_update()
+
+            trace = harness._trace_collector.begin(skill_name)
+            from core.tracing import trace_context
+
+            with trace_context(
+                f"agent.skill.{skill_name}",
+                **{"agent.skill.name": skill_name},
+            ) as span:
+                result = await skill._timed_aexecute(context)
+                span.set_attribute("agent.skill.status", result.status.value)
+                for key, value in result.metadata.items():
+                    if isinstance(value, (str, bool, int, float)):
+                        span.set_attribute(f"agent.skill.{key}", value)
+                if result.error:
+                    span.record_exception(Exception(result.error))
+
+            trace.finish(
+                status=result.status.value,
+                error=result.error,
+                metadata=result.metadata,
+            )
+            harness._lifecycle.fire_after_skill(skill_name, context, result)
+            return result.to_state_update()
+
+        return RunnableLambda(node_fn, afunc=async_node_fn)
 
     def _skill_to_conditional(self, skill_name: str, skill: BaseSkill):
         """
@@ -331,7 +379,38 @@ class AgentHarness:
             # Return the routing decision
             return result.next_action or "generate"
 
-        return conditional_fn
+        async def async_conditional_fn(state: AgentState):
+            context = SkillContext.from_agent_state(
+                state,
+                session_id=harness._config.session_id or "",
+                thread_id=harness._config.thread_id or "",
+            )
+            harness._lifecycle.fire_before_skill(skill_name, context)
+            trace = harness._trace_collector.begin(skill_name)
+
+            from core.tracing import trace_context
+
+            with trace_context(
+                f"agent.skill.{skill_name}",
+                **{"agent.skill.name": skill_name},
+            ) as span:
+                result = await skill._timed_aexecute(context)
+                span.set_attribute("agent.skill.status", result.status.value)
+                for key, value in result.metadata.items():
+                    if isinstance(value, (str, bool, int, float)):
+                        span.set_attribute(f"agent.skill.{key}", value)
+                if result.error:
+                    span.record_exception(Exception(result.error))
+
+            trace.finish(
+                status=result.status.value,
+                error=result.error,
+                metadata=result.metadata,
+            )
+            harness._lifecycle.fire_after_skill(skill_name, context, result)
+            return result.next_action or "generate"
+
+        return RunnableLambda(conditional_fn, afunc=async_conditional_fn)
 
     def _get_retrieve_tools(self):
         """
@@ -354,7 +433,8 @@ class AgentHarness:
         """Set up SQLite checkpointing for session persistence."""
         try:
             import os
-            os.makedirs(os.path.dirname(self._config.checkpoint_path), exist_ok=True)
+            _ckpt_dir = os.path.dirname(self._config.checkpoint_path) or "."
+            os.makedirs(_ckpt_dir, exist_ok=True)
             self._checkpoint_conn = sqlite3.connect(
                 self._config.checkpoint_path,
                 check_same_thread=False,
@@ -368,6 +448,28 @@ class AgentHarness:
                 "using MemorySaver"
             )
             self._memory = MemorySaver()
+
+    async def astart(self) -> None:
+        """Initialize the native async SQLite checkpointer and rebuild the graph."""
+        if not self._config.use_memory or self._async_checkpoint_conn is not None:
+            return
+
+        import os
+        import aiosqlite
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+        _ckpt_dir = os.path.dirname(self._config.checkpoint_path) or "."
+        os.makedirs(_ckpt_dir, exist_ok=True)
+        if self._checkpoint_conn is not None:
+            self._checkpoint_conn.close()
+            self._checkpoint_conn = None
+        self._async_checkpoint_conn = await aiosqlite.connect(
+            self._config.checkpoint_path
+        )
+        self._memory = AsyncSqliteSaver(self._async_checkpoint_conn)
+        self._graph = None
+        self.build_graph()
+        log.info("AgentHarness: async SQLite checkpoint enabled")
 
     # ------------------------------------------------------------------
     # Invocation
@@ -425,7 +527,7 @@ class AgentHarness:
         self,
         question: str,
         thread_id: Optional[str] = None,
-        stream_mode: str = "values",
+        stream_mode: Any = "values",
         max_rewrites: Optional[int] = None,
     ):
         """
@@ -459,6 +561,73 @@ class AgentHarness:
         yield from self.graph.stream(
             inputs, config=config, stream_mode=stream_mode
         )
+        self._trace_collector.end_run()
+
+    async def ainvoke(
+        self,
+        question: str,
+        thread_id: Optional[str] = None,
+        max_rewrites: Optional[int] = None,
+        mode: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Invoke the graph through its native asynchronous execution path."""
+        plan = self._planner.plan(query=question, mode=mode)
+        if plan.plan_type == PlanType.FAST:
+            from core.fast_mode import fast_generate_async
+
+            result = await fast_generate_async(question, top_k=3)
+            return {
+                "messages": [
+                    HumanMessage(content=question),
+                    AIMessage(content=result.answer),
+                ],
+                "_fast_mode": True,
+                "_sources": result.sources,
+                "_retrieval_time_ms": result.retrieval_time_ms,
+                "_generation_time_ms": result.generation_time_ms,
+            }
+
+        await self.astart()
+        thread_id = thread_id or self._config.thread_id
+        max_rewrites = max_rewrites or self._config.max_rewrites
+        inputs = {
+            "messages": [HumanMessage(content=question)],
+            "rewrite_count": 0,
+            "max_rewrites": max_rewrites,
+        }
+        config = {"configurable": {"thread_id": thread_id}}
+
+        self._trace_collector.begin_run()
+        result = await self.graph.ainvoke(inputs, config=config)
+        self._trace_collector.end_run()
+        self._trace_collector.log_summary()
+        return result
+
+    async def astream(
+        self,
+        question: str,
+        thread_id: Optional[str] = None,
+        stream_mode: Any = "values",
+        max_rewrites: Optional[int] = None,
+    ) -> AsyncIterator[Any]:
+        """Stream graph updates and custom token events natively through asyncio."""
+        await self.astart()
+        thread_id = thread_id or self._config.thread_id
+        max_rewrites = max_rewrites or self._config.max_rewrites
+        inputs = {
+            "messages": [HumanMessage(content=question)],
+            "rewrite_count": 0,
+            "max_rewrites": max_rewrites,
+        }
+        config = {"configurable": {"thread_id": thread_id}}
+
+        self._trace_collector.begin_run()
+        async for event in self.graph.astream(
+            inputs,
+            config=config,
+            stream_mode=stream_mode,
+        ):
+            yield event
         self._trace_collector.end_run()
 
     def invoke_fast(self, query: str, thread_id: Optional[str] = None) -> Dict[str, Any]:
@@ -543,6 +712,13 @@ class AgentHarness:
             except Exception:
                 pass
             self._checkpoint_conn = None
+
+    async def aclose(self) -> None:
+        """Close synchronous and asynchronous checkpoint resources."""
+        self.close()
+        if self._async_checkpoint_conn is not None:
+            await self._async_checkpoint_conn.close()
+            self._async_checkpoint_conn = None
 
     def __enter__(self) -> AgentHarness:
         return self

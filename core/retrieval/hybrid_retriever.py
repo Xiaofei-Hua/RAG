@@ -16,6 +16,11 @@ from langchain_core.documents import Document
 
 from documents.milvus_db import MilvusManager, MilvusConfig
 from core.retrieval.bm25_retriever import BM25Retriever
+from utils.env_utils import (
+    RERANKER_CANDIDATE_TOP_K,
+    RERANKER_ENABLED,
+    RERANKER_TOP_K,
+)
 from utils.log_utils import log
 
 __all__ = [
@@ -29,17 +34,18 @@ class HybridRetrieverConfig:
     """Configuration for hybrid retriever."""
     # Dense retrieval
     dense_weight: float = 0.5
-    dense_top_k: int = 5
+    dense_top_k: int = RERANKER_CANDIDATE_TOP_K if RERANKER_ENABLED else 5
 
     # Sparse retrieval (BM25)
     sparse_weight: float = 0.5
-    sparse_top_k: int = 5
+    sparse_top_k: int = RERANKER_CANDIDATE_TOP_K if RERANKER_ENABLED else 5
 
     # RRF parameters
     rrf_k: int = 60  # RRF constant
 
     # Final results
-    final_top_k: int = 3
+    final_top_k: int = RERANKER_TOP_K if RERANKER_ENABLED else 3
+    enable_reranker: bool = RERANKER_ENABLED
 
     # Performance
     enable_parallel: bool = True
@@ -165,10 +171,8 @@ class HybridRetriever:
             # Fuse results
             fused_results = self._rrf_fusion(dense_results, sparse_results)
 
-            # Convert to documents
-            documents = [
-                r.document for r in fused_results[:top_k]
-            ]
+            documents = [r.document for r in fused_results]
+            documents = self._rerank(query, documents, top_k)
 
             elapsed = (time.perf_counter() - start_time) * 1000
             log.info(
@@ -226,8 +230,8 @@ class HybridRetriever:
             # Fuse results
             fused_results = self._rrf_fusion(dense_results, sparse_results)
 
-            # Convert to documents
-            documents = [r.document for r in fused_results[:top_k]]
+            documents = [r.document for r in fused_results]
+            documents = await self._arerank(query, documents, top_k)
 
             elapsed = (time.perf_counter() - start_time) * 1000
             log.info(
@@ -277,6 +281,34 @@ class HybridRetriever:
     async def _asparse_retrieve(self, query: str) -> List[RetrievalResult]:
         """Async sparse retrieval."""
         return await asyncio.get_running_loop().run_in_executor(None, self._sparse_retrieve, query)
+
+    def _rerank(
+        self,
+        query: str,
+        documents: List[Document],
+        top_k: int,
+    ) -> List[Document]:
+        """Optionally apply a cross-encoder after RRF fusion."""
+        if not self.config.enable_reranker:
+            return documents[:top_k]
+
+        from core.retrieval.reranker import get_reranker
+
+        return get_reranker().rerank(query, documents, top_k=top_k)
+
+    async def _arerank(
+        self,
+        query: str,
+        documents: List[Document],
+        top_k: int,
+    ) -> List[Document]:
+        """Async counterpart of the optional cross-encoder stage."""
+        if not self.config.enable_reranker:
+            return documents[:top_k]
+
+        from core.retrieval.reranker import get_reranker
+
+        return await get_reranker().arerank(query, documents, top_k=top_k)
 
     # Shared thread pool for parallel retrieval
     _executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
@@ -344,6 +376,14 @@ class HybridRetriever:
             result.score = score
             result.source = "hybrid"
             result.rank = rank
+            metadata = dict(result.document.metadata)
+            metadata["retrieval_score"] = float(score)
+            metadata["score"] = float(score)
+            metadata["retrieval_source"] = "hybrid"
+            result.document = Document(
+                page_content=result.document.page_content,
+                metadata=metadata,
+            )
             fused_results.append(result)
 
         log.debug(f"RRF fusion: {len(fused_results)} results")

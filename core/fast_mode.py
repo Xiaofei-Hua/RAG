@@ -25,6 +25,7 @@ from utils.think_tag_utils import strip_think_tags, build_fast_mode_prompt
 __all__ = [
     "FastModeResult",
     "fast_generate",
+    "fast_generate_async",
     "fast_generate_stream",
 ]
 
@@ -70,6 +71,9 @@ def _docs_to_sources(documents) -> List[Dict[str, Any]]:
             "source": meta.get("source"),
             "title": meta.get("title"),
             "score": meta.get("score", 0.0),
+            "retrieval_score": meta.get("retrieval_score"),
+            "rerank_score": meta.get("rerank_score"),
+            "rerank_applied": bool(meta.get("rerank_applied", False)),
         })
     return sources
 
@@ -170,7 +174,7 @@ async def fast_generate_stream(query: str, top_k: int = 3) -> AsyncIterator[Dict
     t0 = time.perf_counter()
     from core.retrieval.hybrid_retriever import get_hybrid_retriever
     retriever = get_hybrid_retriever()
-    documents = retriever.retrieve(query, top_k=top_k)
+    documents = await retriever.aretrieve(query, top_k=top_k)
     retrieval_ms = (time.perf_counter() - t0) * 1000
 
     log.info(f"Fast mode retrieval: {len(documents)} docs, {retrieval_ms:.0f}ms")
@@ -207,3 +211,40 @@ async def fast_generate_stream(query: str, top_k: int = 3) -> AsyncIterator[Dict
         "sources": _docs_to_sources(documents),
         "processing_time_ms": retrieval_ms + gen_ms,
     }
+
+
+async def fast_generate_async(query: str, top_k: int = 3) -> FastModeResult:
+    """Native async fast mode for non-streaming API calls."""
+    t0 = time.perf_counter()
+    from core.retrieval.hybrid_retriever import get_hybrid_retriever
+
+    documents = await get_hybrid_retriever().aretrieve(query, top_k=top_k)
+    retrieval_ms = (time.perf_counter() - t0) * 1000
+    if not documents:
+        return FastModeResult(
+            answer="当前知识库中暂无相关文档。请先通过文档管理页面上传排故手册、维修手册等资料，然后再进行提问。",
+            sources=[],
+            retrieval_count=0,
+            retrieval_time_ms=retrieval_ms,
+            generation_time_ms=0,
+        )
+
+    context = _format_context(documents)
+    if len(context) > 2500:
+        context = context[:2500] + "\n...[内容已截断]"
+
+    from models.llm_models import get_llm
+
+    t1 = time.perf_counter()
+    answer = await _get_chain(get_llm()).ainvoke(
+        {"question": query, "context": context}
+    )
+    answer = strip_think_tags(answer)
+    generation_ms = (time.perf_counter() - t1) * 1000
+    return FastModeResult(
+        answer=answer,
+        sources=_docs_to_sources(documents),
+        retrieval_count=len(documents),
+        retrieval_time_ms=retrieval_ms,
+        generation_time_ms=generation_ms,
+    )

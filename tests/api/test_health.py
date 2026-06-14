@@ -66,8 +66,8 @@ def main():
         assert_true(f"services.{svc} 存在", svc in services, f"got: {list(services.keys())}")
 
     # 3. Root info
-    status, body = _req("GET", "/")
-    assert_ok("GET / 返回 200", status, body)
+    status, body = _req("GET", "/api")
+    assert_ok("GET /api 返回 200", status, body)
     assert_true("name 字段存在", "name" in body, str(body))
 
     # 4. Config

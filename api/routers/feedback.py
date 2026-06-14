@@ -38,9 +38,11 @@ async def submit_feedback(request: FeedbackRequest):
     except ValueError:
         raise HTTPException(400, f"Invalid feedback_type: {request.feedback_type}")
 
+    if ft == FeedbackType.CORRECTION and not request.corrected_answer.strip():
+        raise HTTPException(400, "corrected_answer is required for CORRECTION feedback")
+
     collector = get_feedback_collector()
     entry = FeedbackEntry(
-        id="",
         session_id=request.session_id,
         message_id=request.message_id,
         feedback_type=ft,
@@ -66,27 +68,6 @@ async def submit_feedback(request: FeedbackRequest):
     return {"status": "ok", "id": entry_id}
 
 
-@router.get("/{session_id}")
-async def get_feedback(session_id: str):
-    """Get feedback for a session."""
-    from agent.feedback.collector import get_feedback_collector
-
-    collector = get_feedback_collector()
-    entries = collector.get_feedback(session_id)
-    return {
-        "session_id": session_id,
-        "feedback": [
-            {
-                "id": e.id,
-                "type": e.feedback_type.value,
-                "content": e.content,
-                "timestamp": e.timestamp,
-            }
-            for e in entries
-        ],
-    }
-
-
 @router.get("/stats/summary")
 async def feedback_stats():
     """Get aggregate feedback statistics."""
@@ -110,6 +91,27 @@ async def pending_escalations():
                 "timestamp": r.timestamp,
             }
             for r in records
+        ],
+    }
+
+
+@router.get("/{session_id}")
+async def get_feedback(session_id: str):
+    """Get feedback for a session."""
+    from agent.feedback.collector import get_feedback_collector
+
+    collector = get_feedback_collector()
+    entries = collector.get_feedback(session_id)
+    return {
+        "session_id": session_id,
+        "feedback": [
+            {
+                "id": e.id,
+                "type": e.feedback_type.value,
+                "content": e.content,
+                "timestamp": e.timestamp,
+            }
+            for e in entries
         ],
     }
 

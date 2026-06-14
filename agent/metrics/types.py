@@ -10,6 +10,8 @@ import time
 from dataclasses import dataclass, field
 from typing import Dict, List
 
+from utils.env_utils import LLM_MODEL
+
 
 @dataclass
 class TokenUsage:
@@ -18,7 +20,7 @@ class TokenUsage:
     prompt_tokens: int
     completion_tokens: int
     total_tokens: int
-    model_name: str = "qwen3:14b"
+    model_name: str = LLM_MODEL
 
 
 @dataclass

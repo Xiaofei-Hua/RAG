@@ -38,10 +38,12 @@ done
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$PROJECT_DIR/.venv"
 WEB_DIR="$PROJECT_DIR/web"
-MODEL_DIR="$PROJECT_DIR/models/local_models/bge-small-zh-v1.5"
 ENV_FILE="$PROJECT_DIR/.env"
 NODE_MAJOR=20
-LLM_MODEL="qwen3:14b"
+if [ -z "${LLM_MODEL:-}" ] && [ -f "$ENV_FILE" ]; then
+    LLM_MODEL=$(sed -n 's/^LLM_MODEL=//p' "$ENV_FILE" | tail -1)
+fi
+LLM_MODEL="${LLM_MODEL:-qwen3:14b}"
 
 # ─── 颜色 ────────────────────────────────────────────────────────────────────
 RED='\033[0;31m'
@@ -226,18 +228,25 @@ step "下载 Embedding 模型"
 if [ "$SKIP_EMBEDDING" = true ]; then
     warn "跳过 Embedding 模型下载（--skip-embedding）"
 else
-    if [ -f "$MODEL_DIR/model.safetensors" ] || [ -f "$MODEL_DIR/pytorch_model.bin" ]; then
-        ok "Embedding 模型已存在: $MODEL_DIR"
+    if uv run python -c "
+from models.embedding_models import is_embedding_model_cached
+raise SystemExit(0 if is_embedding_model_cached() else 1)
+"; then
+        ok "配置的 Embedding 模型已存在"
     else
-        info "下载 bge-small-zh-v1.5（约 91MB）..."
-        mkdir -p "$MODEL_DIR"
+        info "下载配置的 Embedding 模型..."
         uv run python -c "
 from sentence_transformers import SentenceTransformer
-model = SentenceTransformer('BAAI/bge-small-zh-v1.5')
-model.save('$MODEL_DIR')
+from pathlib import Path
+from utils.env_utils import EMBEDDING_MODEL, EMBEDDING_MODEL_PATH
+if not EMBEDDING_MODEL_PATH:
+    raise SystemExit('EMBEDDING_MODEL_PATH cannot be empty when deploy.sh downloads a model')
+Path(EMBEDDING_MODEL_PATH).mkdir(parents=True, exist_ok=True)
+model = SentenceTransformer(EMBEDDING_MODEL)
+model.save(EMBEDDING_MODEL_PATH)
 print('模型下载完成')
 "
-        ok "Embedding 模型已下载到 $MODEL_DIR"
+        ok "Embedding 模型已下载到配置的本地路径"
     fi
 fi
 
@@ -248,17 +257,51 @@ step "生成 .env 配置"
 if [ -f "$ENV_FILE" ]; then
     ok ".env 文件已存在，跳过"
 else
-    cat > "$ENV_FILE" << 'ENVEOF'
+    cat > "$ENV_FILE" << ENVEOF
 # LLM Configuration (Local Ollama)
 OPENAI_BASE_URL=http://localhost:11434/v1
 OPENAI_API_KEY=ollama
+LLM_MODEL=$LLM_MODEL
+LLM_TEMPERATURE=0.0
+LLM_MAX_TOKENS=4096
+LLM_TIMEOUT=60
+LLM_MAX_RETRIES=1
+
+# Embedding Configuration
+EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
+EMBEDDING_MODEL_PATH=models/local_models/bge-small-zh-v1.5
+EMBEDDING_DIMENSION=512
+EMBEDDING_DEVICE=cpu
+EMBEDDING_NORMALIZE=true
+EMBEDDING_BATCH_SIZE=8
+
+# Optional Reranker Configuration
+RERANKER_ENABLED=false
+RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
+RERANKER_MODEL_PATH=
+RERANKER_DEVICE=cpu
+RERANKER_WARMUP=false
+RERANKER_CANDIDATE_TOP_K=10
+RERANKER_TOP_K=5
+RERANKER_BATCH_SIZE=8
+
+# Optional OpenTelemetry Configuration
+OTEL_ENABLED=false
+OTEL_SERVICE_NAME=rag-platform
+OTEL_EXPORTER_OTLP_ENDPOINT=
+OTEL_SAMPLE_RATE=1.0
+OTEL_CONSOLE_EXPORTER=false
+
+# Storage
+MILVUS_DB_URI=./milvus_data.db
+COLLECTION_NAME=t_collection01
 ENVEOF
     ok ".env 文件已创建"
 fi
 
 # ─── 8. 前端依赖 ────────────────────────────────────────────────────────────
 
-step "安装前端依赖"
+step "构建前端静态文件"
 
 if [ -d "$WEB_DIR/node_modules" ]; then
     ok "前端依赖已存在，跳过"
@@ -268,6 +311,11 @@ else
     cd "$PROJECT_DIR"
     ok "前端依赖安装完成"
 fi
+
+cd "$WEB_DIR"
+npm run build
+cd "$PROJECT_DIR"
+ok "前端静态文件已构建，将由 FastAPI 托管"
 
 # ─── 9. 创建必要目录 ────────────────────────────────────────────────────────
 
@@ -317,7 +365,10 @@ else
 fi
 
 if [ "$SKIP_EMBEDDING" = false ]; then
-    if [ -f "$MODEL_DIR/model.safetensors" ] || [ -f "$MODEL_DIR/pytorch_model.bin" ]; then
+    if uv run python -c "
+from models.embedding_models import is_embedding_model_cached
+raise SystemExit(0 if is_embedding_model_cached() else 1)
+"; then
         ok "Embedding 模型就绪"
     else
         warn "Embedding 模型未找到"; ERRORS=$((ERRORS + 1))

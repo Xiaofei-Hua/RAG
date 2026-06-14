@@ -17,6 +17,7 @@ venv/
 # Milvus
 *.db
 milvus_data.db*
+*.db.lock
 
 # Data & sessions
 data/
@@ -40,6 +41,7 @@ Thumbs.db
 
 # Node
 node_modules/
+web/dist/
 
 # Embedding model cache
 models/sentence-transformers_*/

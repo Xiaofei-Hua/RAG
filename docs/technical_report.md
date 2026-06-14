@@ -63,17 +63,20 @@ Qwen3 的核心特性是**在同一模型权重内无缝切换思考模式与非
 
 ### 2.3 本项目 LLM 配置
 
-```python
-# models/llm_models.py — LLMConfig
-model_name:    "qwen3:14b"
-temperature:   0.0          # 确定性输出
-max_tokens:    4096         # 最大生成 token 数
-timeout:       60.0s        # 单次请求超时
-max_retries:   1            # 最大重试次数
-api_key:       "ollama"
-base_url:      "http://localhost:11434/v1"  # Ollama OpenAI 兼容接口
-cache:         InMemoryCache  # 内存缓存避免重复调用
+```dotenv
+# .env
+OPENAI_BASE_URL=http://localhost:11434/v1
+OPENAI_API_KEY=ollama
+LLM_MODEL=qwen3:14b
+LLM_TEMPERATURE=0.0
+LLM_MAX_TOKENS=4096
+LLM_TIMEOUT=60
+LLM_MAX_RETRIES=1
 ```
+
+模型配置统一从环境变量读取，进程环境变量优先于项目根目录 `.env`。
+Embedding 模型 ID、本地路径、向量维度、设备和批大小同样可通过
+`EMBEDDING_*` 环境变量配置。
 
 ### 2.4 推理性能实测
 
@@ -448,6 +451,8 @@ START
 ### 13.2 检索质量优化
 
 - **升级 Embedding**：bge-small-zh-v1.5（512维）→ bge-large-zh-v1.5（1024维）或 bge-m3（多语言）
+- **两阶段重排序已接入**：Dense 与 BM25 扩大候选召回，经 RRF 融合后可选 Cross-Encoder 重排序；接口保留 `retrieval_score`、`rerank_score` 和 `rerank_applied` 便于排障
+- **中文 Reranker 选型**：默认 MiniLM 模型轻量但主要面向英文，中文 PHM 场景应评估 `BAAI/bge-reranker-base` 等中文或多语言模型
 - **增大上下文窗口**：当前 2,500 字符截断偏小，建议提升至 4,000-6,000 字符
 - **优化 BM25**：当前 BM25 召回为 0（中文分词未生效），需引入 jieba 分词
 
@@ -455,7 +460,10 @@ START
 
 - **意图分类去 LLM 化**：当前已实现关键词快捷路由，但仍走 LLM 回退路径，可完全改为规则匹配
 - **文档评分去 LLM 化**：用 embedding 相似度替代 LLM 评分，节省一次推理
-- **Thinking 模式流式推理**：当前 thinking 推理内容仅在完整响应后返回，可改为流式推送 `delta.reasoning` 让用户实时看到推理过程
+- **原生异步执行已完成**：Agent Skill 使用 LangGraph `ainvoke/astream`，SQLite checkpoint 使用 `AsyncSqliteSaver`，同步 Milvus 操作通过受控线程边界执行
+- **Thinking 模式真正流式输出已完成**：Generate Skill 使用 LangGraph custom stream 将生成文本增量透传至 SSE，并记录首 Token 延迟（TTFT）
+- **OpenTelemetry 已接入**：支持 FastAPI HTTP Span、Agent Skill Span 与 OTLP/HTTP 导出，可对接 Jaeger、Tempo 或 OpenTelemetry Collector
+- **压测能力已补充**：`scripts/load_test.py` 可统计并发请求成功率、吞吐量、P50/P95/P99 与 TTFT
 
 ---
 

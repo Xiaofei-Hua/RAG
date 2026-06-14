@@ -157,7 +157,10 @@ class GenerateSkill(BaseSkill):
         )
 
     async def aexecute(self, context: SkillContext) -> SkillResult:
-        """Execute the generate skill asynchronously."""
+        """Generate asynchronously and publish token chunks to LangGraph streams."""
+        import asyncio
+        from langgraph.config import get_stream_writer
+
         start = time.perf_counter()
         messages = context.messages
 
@@ -180,42 +183,52 @@ class GenerateSkill(BaseSkill):
         if len(ctx) > self._skill_config.max_context_length:
             ctx = ctx[:self._skill_config.max_context_length] + "\n...[内容已截断]"
 
-        try:
-            # Try direct OpenAI call for reasoning capture
-            answer, reasoning = await self._ainvoke_with_reasoning(question, ctx)
-            answer = strip_think_tags(answer)
+        writer = get_stream_writer()
+        for attempt in range(self._skill_config.max_retries + 1):
+            try:
+                chunks: list[str] = []
+                async for chunk in self.chain.astream(
+                    {"question": question, "context": ctx}
+                ):
+                    text = str(chunk)
+                    if not text:
+                        continue
+                    chunks.append(text)
+                    writer({"type": "token", "content": text, "node": self.name})
 
-            ai_message = AIMessage(
-                content=answer,
-                additional_kwargs={"reasoning": reasoning} if reasoning else {},
-            )
-
-            elapsed = (time.perf_counter() - start) * 1000
-            log.info(
-                f"GenerateSkill (async): {len(answer)} chars, {elapsed:.0f}ms"
-            )
-
-            return SkillResult(
-                status=SkillStatus.SUCCESS,
-                messages=[ai_message],
-                metadata={
-                    "answer_length": len(answer),
-                    "has_reasoning": bool(reasoning),
-                    "elapsed_ms": elapsed,
-                },
-            )
-
-        except Exception as e:
-            elapsed = (time.perf_counter() - start) * 1000
-            log.error(f"GenerateSkill async failed ({elapsed:.0f}ms): {e}")
-            return SkillResult(
-                status=SkillStatus.FAILURE,
-                skill_name=self.name,
-                error=str(e),
-                messages=[
-                    AIMessage(content="抱歉，生成回答时遇到问题，请稍后重试。")
-                ],
-            )
+                answer = strip_think_tags("".join(chunks))
+                elapsed = (time.perf_counter() - start) * 1000
+                log.info(
+                    f"GenerateSkill (async stream): {len(answer)} chars, "
+                    f"{elapsed:.0f}ms"
+                )
+                return SkillResult(
+                    status=SkillStatus.SUCCESS,
+                    messages=[AIMessage(content=answer)],
+                    metadata={
+                        "answer_length": len(answer),
+                        "has_reasoning": False,
+                        "streamed": True,
+                        "elapsed_ms": elapsed,
+                    },
+                )
+            except Exception as e:
+                log.warning(f"Async generate attempt {attempt + 1} failed: {e}")
+                if attempt < self._skill_config.max_retries:
+                    await asyncio.sleep(
+                        self._skill_config.retry_delay * (attempt + 1)
+                    )
+                    continue
+                elapsed = (time.perf_counter() - start) * 1000
+                log.error(f"GenerateSkill async failed ({elapsed:.0f}ms): {e}")
+                return SkillResult(
+                    status=SkillStatus.FAILURE,
+                    skill_name=self.name,
+                    error=str(e),
+                    messages=[
+                        AIMessage(content="抱歉，生成回答时遇到问题，请稍后重试。")
+                    ],
+                )
 
     # ------------------------------------------------------------------
     # Qwen3 reasoning capture (from GenerateNode._invoke_with_reasoning)
@@ -229,7 +242,14 @@ class GenerateSkill(BaseSkill):
         """
         try:
             from openai import OpenAI
-            from utils.env_utils import OPENAI_BASE_URL, OPENAI_API_KEY
+            from utils.env_utils import (
+                LLM_MAX_TOKENS,
+                LLM_MODEL,
+                LLM_TEMPERATURE,
+                LLM_TIMEOUT,
+                OPENAI_API_KEY,
+                OPENAI_BASE_URL,
+            )
 
             client = OpenAI(
                 base_url=OPENAI_BASE_URL or "http://localhost:11434/v1",
@@ -242,14 +262,14 @@ class GenerateSkill(BaseSkill):
             )
 
             resp = client.chat.completions.create(
-                model="qwen3:14b",
+                model=LLM_MODEL,
                 messages=[
                     {"role": "system", "content": system_msg},
                     {"role": "user", "content": human_msg},
                 ],
-                temperature=0.0,
-                max_tokens=4096,
-                timeout=60.0,
+                temperature=LLM_TEMPERATURE,
+                max_tokens=LLM_MAX_TOKENS,
+                timeout=LLM_TIMEOUT,
             )
 
             msg = resp.choices[0].message

@@ -690,7 +690,10 @@ POST /api/retrieval
       "content": "当发动机振动值超过限制时，应按以下步骤排查：1. 检查振动传感器...",
       "source": "engine_manual.md",
       "title": "发动机维修手册",
-      "score": 0.032
+      "score": 0.87,
+      "retrieval_score": 0.032,
+      "rerank_score": 0.87,
+      "rerank_applied": true
     }
   ],
   "total": 3,
@@ -1122,6 +1125,38 @@ GET /api/admin/config
 
 ```json
 {
+  "llm": {
+    "model": "qwen3:14b",
+    "temperature": 0.0,
+    "max_tokens": 4096,
+    "timeout": 60.0,
+    "max_retries": 1
+  },
+  "embedding": {
+    "model": "BAAI/bge-small-zh-v1.5",
+    "local_path": "/path/to/models/local_models/bge-small-zh-v1.5",
+    "dimension": 512,
+    "device": "cpu",
+    "normalize": true,
+    "batch_size": 8
+  },
+  "reranker": {
+    "enabled": false,
+    "model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
+    "local_path": "",
+    "device": "cpu",
+    "warmup": false,
+    "candidate_top_k": 10,
+    "top_k": 5,
+    "batch_size": 8
+  },
+  "opentelemetry": {
+    "enabled": false,
+    "service_name": "rag-platform",
+    "endpoint": "",
+    "sample_rate": 1.0,
+    "console_exporter": false
+  },
   "milvus": {
     "uri": "./milvus_data.db",
     "collection": "t_collection01"
@@ -1272,7 +1307,10 @@ interface RetrievedDocument {
   content: string               // 匹配的文档片段
   source: string                // 来源文件名
   title: string                 // 文档标题
-  score: number                 // 相关性分数（越高越相关）
+  score: number                 // 最终相关性分数（越高越相关）
+  retrieval_score?: number      // RRF 融合分数
+  rerank_score?: number         // Cross-Encoder 重排分数
+  rerank_applied?: boolean      // 本次是否成功应用重排
 }
 ```
 

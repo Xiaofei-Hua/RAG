@@ -24,7 +24,7 @@ from langchain_core.documents import Document
 from pymilvus import DataType, MilvusClient, MilvusException
 from pymilvus.client.types import MetricType
 
-from utils.env_utils import COLLECTION_NAME, MILVUS_URI
+from utils.env_utils import COLLECTION_NAME, EMBEDDING_DIMENSION, MILVUS_URI
 from utils.log_utils import log
 
 # Type variables
@@ -49,7 +49,7 @@ class MilvusConfig:
     """
     uri: str = MILVUS_URI
     collection_name: str = COLLECTION_NAME
-    dense_dim: int = 512
+    dense_dim: int = EMBEDDING_DIMENSION
     max_text_length: int = 4000  # Reduced from 6000
     max_metadata_length: int = 500  # Reduced from 1000
     batch_size: int = 20  # Small batch size for low memory

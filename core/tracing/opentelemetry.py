@@ -1,292 +1,171 @@
-"""
-OpenTelemetry Tracing for Enterprise RAG Platform
-
-Provides distributed tracing for observability and debugging.
-"""
+"""OpenTelemetry setup and lightweight tracing helpers."""
 
 from __future__ import annotations
 
 import functools
-import time
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional, TypeVar
 
+from utils.env_utils import (
+    OTEL_CONSOLE_EXPORTER,
+    OTEL_ENABLED,
+    OTEL_EXPORTER_OTLP_ENDPOINT,
+    OTEL_SAMPLE_RATE,
+    OTEL_SERVICE_NAME,
+)
 from utils.log_utils import log
 
-__all__ = [
-    "TracingConfig",
-    "RAGTracer",
-    "trace_context",
-    "get_tracer",
-    "traced",
-]
-
 T = TypeVar("T")
+_configured = False
+_instrumented_apps: set[int] = set()
 
 
 @dataclass
 class TracingConfig:
-    """Configuration for OpenTelemetry tracing."""
-    service_name: str = "rag-platform"
+    service_name: str = OTEL_SERVICE_NAME
     environment: str = "development"
-    enable_tracing: bool = True
-    sample_rate: float = 1.0  # 100% sampling for development
-    export_endpoint: Optional[str] = None  # OTLP endpoint
+    enable_tracing: bool = OTEL_ENABLED
+    sample_rate: float = OTEL_SAMPLE_RATE
+    export_endpoint: Optional[str] = OTEL_EXPORTER_OTLP_ENDPOINT or None
+    console_exporter: bool = OTEL_CONSOLE_EXPORTER
 
 
-class SpanContext:
-    """Context for a single trace span."""
+class NoOpSpan:
+    """Span-compatible object used when OpenTelemetry is disabled."""
 
-    def __init__(self, name: str, trace_id: Optional[str] = None):
-        self.name = name
-        self.trace_id = trace_id or self._generate_trace_id()
-        self.span_id = self._generate_span_id()
-        self.start_time = time.perf_counter()
-        self.end_time: Optional[float] = None
-        self.attributes: Dict[str, Any] = {}
-        self.events: list = []
-        self.status = "OK"
+    def set_attribute(self, key: str, value: Any) -> None:
+        pass
 
-    def _generate_trace_id(self) -> str:
-        import uuid
-        return uuid.uuid4().hex[:16]
+    def add_event(self, name: str, attributes: Optional[Dict] = None) -> None:
+        pass
 
-    def _generate_span_id(self) -> str:
-        import random
-        return format(random.getrandbits(64), '016x')
+    def record_exception(self, exception: BaseException) -> None:
+        pass
 
-    def set_attribute(self, key: str, value: Any):
-        """Set span attribute."""
-        self.attributes[key] = value
-
-    def add_event(self, name: str, attributes: Optional[Dict] = None):
-        """Add event to span."""
-        self.events.append({
-            "name": name,
-            "timestamp": time.perf_counter(),
-            "attributes": attributes or {},
-        })
-
-    def set_status(self, status: str, description: str = ""):
-        """Set span status."""
-        self.status = status
-
-    def finish(self):
-        """Mark span as finished."""
-        self.end_time = time.perf_counter()
-
-    @property
-    def duration_ms(self) -> float:
-        """Get span duration in milliseconds."""
-        if self.end_time is None:
-            return 0
-        return (self.end_time - self.start_time) * 1000
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary."""
-        return {
-            "name": self.name,
-            "trace_id": self.trace_id,
-            "span_id": self.span_id,
-            "start_time": self.start_time,
-            "end_time": self.end_time,
-            "duration_ms": self.duration_ms,
-            "status": self.status,
-            "attributes": self.attributes,
-            "events": self.events,
-        }
+    def set_status(self, status: Any, description: str = "") -> None:
+        pass
 
 
-class RAGTracer:
-    """
-    Lightweight tracer for RAG operations.
+def setup_opentelemetry(config: Optional[TracingConfig] = None) -> bool:
+    """Configure the global OpenTelemetry provider once."""
+    global _configured
+    cfg = config or TracingConfig()
+    if _configured:
+        return cfg.enable_tracing
+    if not cfg.enable_tracing:
+        log.info("OpenTelemetry tracing disabled")
+        return False
 
-    Provides tracing without external dependencies for development.
-    Can be upgraded to full OpenTelemetry for production.
-    """
+    from opentelemetry import trace
+    from opentelemetry.sdk.resources import Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import (
+        BatchSpanProcessor,
+        ConsoleSpanExporter,
+        SimpleSpanProcessor,
+    )
+    from opentelemetry.sdk.trace.sampling import TraceIdRatioBased
 
-    _instance: Optional["RAGTracer"] = None
+    provider = TracerProvider(
+        resource=Resource.create(
+            {
+                "service.name": cfg.service_name,
+                "deployment.environment": cfg.environment,
+            }
+        ),
+        sampler=TraceIdRatioBased(cfg.sample_rate),
+    )
+    if cfg.export_endpoint:
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
-    def __init__(self, config: Optional[TracingConfig] = None):
-        """
-        Initialize the tracer.
-
-        Args:
-            config: Tracing configuration
-        """
-        self.config = config or TracingConfig()
-        self._current_span: Optional[SpanContext] = None
-        self._span_stack: list = []
-
-        log.debug(f"RAGTracer initialized: service={self.config.service_name}")
-
-    @classmethod
-    def get_instance(cls) -> "RAGTracer":
-        """Get singleton tracer instance."""
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
-
-    def start_span(
-        self,
-        name: str,
-        attributes: Optional[Dict[str, Any]] = None,
-    ) -> SpanContext:
-        """
-        Start a new span.
-
-        Args:
-            name: Span name
-            attributes: Initial attributes
-
-        Returns:
-            SpanContext for the new span
-        """
-        # Get trace_id from parent span if exists
-        trace_id = None
-        if self._span_stack:
-            trace_id = self._span_stack[-1].trace_id
-
-        span = SpanContext(name, trace_id)
-
-        if attributes:
-            for k, v in attributes.items():
-                span.set_attribute(k, v)
-
-        self._span_stack.append(span)
-        self._current_span = span
-
-        log.debug(f"Started span: {name} (trace={span.trace_id[:8]}...)")
-        return span
-
-    def end_span(self, span: SpanContext):
-        """
-        End a span.
-
-        Args:
-            span: Span to end
-        """
-        span.finish()
-
-        if self._span_stack and self._span_stack[-1] is span:
-            self._span_stack.pop()
-            self._current_span = self._span_stack[-1] if self._span_stack else None
-
-        log.debug(
-            f"Ended span: {span.name} "
-            f"(duration={span.duration_ms:.1f}ms, status={span.status})"
+        provider.add_span_processor(
+            BatchSpanProcessor(OTLPSpanExporter(endpoint=cfg.export_endpoint))
         )
+    if cfg.console_exporter:
+        provider.add_span_processor(SimpleSpanProcessor(ConsoleSpanExporter()))
 
-    @contextmanager
-    def trace(
-        self,
-        name: str,
-        attributes: Optional[Dict[str, Any]] = None,
-    ):
-        """
-        Context manager for tracing a block of code.
-
-        Args:
-            name: Span name
-            attributes: Initial attributes
-
-        Yields:
-            SpanContext
-        """
-        span = self.start_span(name, attributes)
-        try:
-            yield span
-        except Exception as e:
-            span.set_status("ERROR", str(e))
-            span.set_attribute("error.type", type(e).__name__)
-            span.set_attribute("error.message", str(e))
-            raise
-        finally:
-            self.end_span(span)
-
-    def get_current_span(self) -> Optional[SpanContext]:
-        """Get current active span."""
-        return self._current_span
-
-    def add_event(self, name: str, attributes: Optional[Dict] = None):
-        """Add event to current span."""
-        if self._current_span:
-            self._current_span.add_event(name, attributes)
+    trace.set_tracer_provider(provider)
+    _configured = True
+    log.info(
+        f"OpenTelemetry enabled: service={cfg.service_name}, "
+        f"sample_rate={cfg.sample_rate}, endpoint={cfg.export_endpoint or 'none'}"
+    )
+    return True
 
 
-# Module-level convenience functions
-def get_tracer() -> RAGTracer:
-    """Get the tracer instance."""
-    return RAGTracer.get_instance()
+def instrument_fastapi(app: Any) -> bool:
+    """Attach standard HTTP server spans to a FastAPI application."""
+    if not setup_opentelemetry() or id(app) in _instrumented_apps:
+        return False
+    from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+
+    FastAPIInstrumentor.instrument_app(app)
+    _instrumented_apps.add(id(app))
+    return True
+
+
+def get_tracer():
+    if not OTEL_ENABLED:
+        return None
+    setup_opentelemetry()
+    from opentelemetry import trace
+
+    return trace.get_tracer("rag-platform")
 
 
 @contextmanager
 def trace_context(name: str, **attributes):
-    """
-    Context manager for tracing.
-
-    Usage:
-        with trace_context("retrieval", query="..."):
-            # retrieval code
-    """
+    """Create an OpenTelemetry span, or a no-op span when disabled."""
     tracer = get_tracer()
-    with tracer.trace(name, attributes) as span:
-        yield span
+    if tracer is None:
+        yield NoOpSpan()
+        return
+
+    with tracer.start_as_current_span(name, attributes=attributes) as span:
+        try:
+            yield span
+        except Exception as exc:
+            span.record_exception(exc)
+            raise
 
 
 def traced(name: Optional[str] = None):
-    """
-    Decorator for tracing functions.
+    """Trace a synchronous or asynchronous function."""
 
-    Usage:
-        @traced("retrieval")
-        async def retrieve(query: str):
-            ...
-    """
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         span_name = name or func.__name__
 
         @functools.wraps(func)
-        async def async_wrapper(*args, **kwargs) -> T:
-            tracer = get_tracer()
-            with tracer.trace(span_name):
+        async def async_wrapper(*args, **kwargs):
+            with trace_context(span_name):
                 return await func(*args, **kwargs)
 
         @functools.wraps(func)
-        def sync_wrapper(*args, **kwargs) -> T:
-            tracer = get_tracer()
-            with tracer.trace(span_name):
+        def sync_wrapper(*args, **kwargs):
+            with trace_context(span_name):
                 return func(*args, **kwargs)
 
         import asyncio
-        if asyncio.iscoroutinefunction(func):
-            return async_wrapper
-        return sync_wrapper
+
+        return async_wrapper if asyncio.iscoroutinefunction(func) else sync_wrapper
 
     return decorator
 
 
-# Convenience spans for RAG operations
 def trace_intent_classification(query: str):
-    """Create span for intent classification."""
-    return get_tracer().trace(
-        "intent_classification",
-        {"query.length": len(query)}
-    )
+    return trace_context("rag.intent", **{"query.length": len(query)})
 
 
 def trace_retrieval(query: str, top_k: int = 5):
-    """Create span for retrieval."""
-    return get_tracer().trace(
-        "retrieval",
-        {"query.length": len(query), "top_k": top_k}
+    return trace_context(
+        "rag.retrieval",
+        **{"query.length": len(query), "retrieval.top_k": top_k},
     )
 
 
 def trace_llm_call(model: str, prompt_length: int):
-    """Create span for LLM call."""
-    return get_tracer().trace(
-        "llm_call",
-        {"model": model, "prompt_length": prompt_length}
+    return trace_context(
+        "rag.llm",
+        **{"gen_ai.request.model": model, "gen_ai.prompt.length": prompt_length},
     )

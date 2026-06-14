@@ -16,6 +16,19 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from utils.log_utils import log
 
 
+def _current_otel_trace_id() -> str:
+    """Return the active OpenTelemetry trace ID when one exists."""
+    try:
+        from opentelemetry import trace
+
+        context = trace.get_current_span().get_span_context()
+        if context.is_valid:
+            return format(context.trace_id, "032x")
+    except Exception:
+        pass
+    return ""
+
+
 class TracingMiddleware(BaseHTTPMiddleware):
     """
     Middleware for request tracing.
@@ -25,7 +38,11 @@ class TracingMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Generate or use existing trace ID
-        trace_id = request.headers.get("X-Trace-ID", str(uuid.uuid4())[:16])
+        trace_id = (
+            _current_otel_trace_id()
+            or request.headers.get("X-Trace-ID")
+            or str(uuid.uuid4())[:16]
+        )
 
         # Store in request state
         request.state.trace_id = trace_id
@@ -35,6 +52,7 @@ class TracingMiddleware(BaseHTTPMiddleware):
 
         # Process request
         response = await call_next(request)
+        trace_id = _current_otel_trace_id() or trace_id
 
         # Calculate duration
         duration = (time.perf_counter() - start_time) * 1000

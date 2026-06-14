@@ -40,9 +40,14 @@ dependencies = [
     "uvicorn[standard]>=0.27.0",
     "python-multipart>=0.0.6",
     "websockets>=12.0",
+    "opentelemetry-api>=1.42.1",
+    "opentelemetry-sdk>=1.42.1",
+    "opentelemetry-exporter-otlp-proto-http>=1.42.1",
+    "opentelemetry-instrumentation-fastapi>=0.63b1",
 ]
 
 [project.optional-dependencies]
+dev = ["pytest>=9.0.0"]
 redis = ["redis>=5.0.0"]
 ui = ["gradio>=4.0.0"]
 doc = [
@@ -56,6 +61,9 @@ doc = [
 
 [tool.uv]
 package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests/unit"]
 
 [tool.uv.sources]
 torch = [{ index = "pytorch-cpu" }]

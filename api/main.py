@@ -8,11 +8,14 @@ Provides REST API and WebSocket endpoints for:
 - System monitoring
 """
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 import hashlib
+import os
+from pathlib import Path
 import time
 
 from utils.log_utils import log
@@ -50,6 +53,16 @@ async def lifespan(app: FastAPI):
     prompt_sig = hashlib.sha1(GENERATE_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
     log.info(f"PHM Prompt Profile: phm_diagnosis_v1 (sig={prompt_sig})")
 
+    from agent.harness import get_agent_harness
+    await get_agent_harness().astart()
+
+    from utils.env_utils import RERANKER_ENABLED, RERANKER_WARMUP
+    if RERANKER_ENABLED and RERANKER_WARMUP:
+        from core.retrieval.reranker import get_reranker
+
+        loaded = await get_reranker().aload()
+        log.info(f"Reranker warmup: {'ready' if loaded else 'degraded'}")
+
     log.info("Startup complete!")
 
     yield
@@ -63,7 +76,7 @@ async def lifespan(app: FastAPI):
     await memory.close()
 
     from agent.harness import get_agent_harness
-    get_agent_harness().close()
+    await get_agent_harness().aclose()
 
     log.info("Shutdown complete")
 
@@ -74,6 +87,7 @@ app = FastAPI(
     description="企业级RAG智能平台API",
     version="1.0.0",
     lifespan=lifespan,
+    root_path=os.getenv("APP_ROOT_PATH", ""),
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -99,6 +113,9 @@ app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
 app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
 app.include_router(retrieval.router, prefix="/api/retrieval", tags=["Retrieval"])
 
+from core.tracing import instrument_fastapi
+instrument_fastapi(app)
+
 
 # Health check endpoint
 @app.get("/health", tags=["Health"])
@@ -119,16 +136,43 @@ async def health_check():
     }
 
 
-# Root endpoint
-@app.get("/", tags=["Root"])
-async def root():
-    """Root endpoint with API information."""
+# API information endpoint
+@app.get("/api", tags=["Root"])
+async def api_info():
+    """Return API information."""
     return {
         "name": "Enterprise RAG Platform",
         "version": "1.0.0",
         "docs": "/docs",
         "health": "/health",
     }
+
+
+# Serve the production frontend when `npm run build` has created web/dist.
+WEB_DIST_DIR = Path(
+    os.getenv("WEB_DIST_DIR", Path(__file__).resolve().parents[1] / "web" / "dist")
+).resolve()
+WEB_INDEX = WEB_DIST_DIR / "index.html"
+
+if WEB_INDEX.is_file():
+    assets_dir = WEB_DIST_DIR / "assets"
+    if assets_dir.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="frontend-assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    async def frontend(full_path: str):
+        """Serve static files and fall back to the Vue SPA entry point."""
+        if full_path == "api" or full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="API endpoint not found")
+        requested = (WEB_DIST_DIR / full_path).resolve()
+        if requested.is_relative_to(WEB_DIST_DIR) and requested.is_file():
+            return FileResponse(requested)
+        return FileResponse(WEB_INDEX)
+else:
+    @app.get("/", tags=["Root"])
+    async def root():
+        """Return API information when the frontend has not been built."""
+        return await api_info()
 
 
 if __name__ == "__main__":

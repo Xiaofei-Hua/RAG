@@ -61,6 +61,7 @@ fi
 
 PYTHON="$VENV_DIR/bin/python"
 PIP="$VENV_DIR/bin/pip"
+cd "$PROJECT_DIR"
 
 # Install Python dependencies if uvicorn not available
 if ! "$PYTHON" -c "import uvicorn" 2>/dev/null; then
@@ -69,18 +70,24 @@ if ! "$PYTHON" -c "import uvicorn" 2>/dev/null; then
     ok "Python 依赖安装完成"
 fi
 
-# Download embedding model if not present
-MODEL_DIR="$PROJECT_DIR/models/local_models/bge-small-zh-v1.5"
-if [ ! -f "$MODEL_DIR/model.safetensors" ]; then
-    info "下载 Embedding 模型 bge-small-zh-v1.5（约 91MB，仅首次）..."
-    mkdir -p "$MODEL_DIR"
+# Download configured embedding model if the local cache is not present
+if ! "$PYTHON" -c "
+from models.embedding_models import is_embedding_model_cached
+raise SystemExit(0 if is_embedding_model_cached() else 1)
+"; then
+    info "下载配置的 Embedding 模型（仅首次）..."
     "$PYTHON" -c "
 from sentence_transformers import SentenceTransformer
-model = SentenceTransformer('BAAI/bge-small-zh-v1.5')
-model.save('$MODEL_DIR')
+from pathlib import Path
+from utils.env_utils import EMBEDDING_MODEL, EMBEDDING_MODEL_PATH
+if not EMBEDDING_MODEL_PATH:
+    raise SystemExit('EMBEDDING_MODEL_PATH cannot be empty when run.sh downloads a model')
+Path(EMBEDDING_MODEL_PATH).mkdir(parents=True, exist_ok=True)
+model = SentenceTransformer(EMBEDDING_MODEL)
+model.save(EMBEDDING_MODEL_PATH)
 print('模型下载完成')
 "
-    ok "Embedding 模型已下载到本地"
+    ok "Embedding 模型已下载到配置的本地路径"
 else
     ok "Embedding 模型已就绪"
 fi

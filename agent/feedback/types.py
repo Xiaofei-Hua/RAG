@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Dict
@@ -15,7 +16,7 @@ class FeedbackType(str, Enum):
 
 @dataclass
 class FeedbackEntry:
-    id: str = ""
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str = ""
     message_id: str = ""
     feedback_type: FeedbackType = FeedbackType.THUMBS_UP
@@ -35,7 +36,7 @@ class EscalationLevel(str, Enum):
 
 @dataclass
 class EscalationRecord:
-    id: str = ""
+    id: str = field(default_factory=lambda: str(uuid.uuid4()))
     session_id: str = ""
     level: EscalationLevel = EscalationLevel.NONE
     reason: str = ""

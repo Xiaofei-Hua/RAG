@@ -10,16 +10,18 @@ Provides distributed tracing using OpenTelemetry:
 
 from core.tracing.opentelemetry import (
     TracingConfig,
-    RAGTracer,
     trace_context,
     get_tracer,
+    instrument_fastapi,
+    setup_opentelemetry,
     traced,
 )
 
 __all__ = [
     "TracingConfig",
-    "RAGTracer",
     "trace_context",
     "get_tracer",
+    "instrument_fastapi",
+    "setup_opentelemetry",
     "traced",
 ]

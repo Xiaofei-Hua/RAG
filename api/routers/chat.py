@@ -55,6 +55,9 @@ class SourceDocument(BaseModel):
     source: Optional[str] = None
     title: Optional[str] = None
     score: float = 0.0
+    retrieval_score: Optional[float] = None
+    rerank_score: Optional[float] = None
+    rerank_applied: bool = False
 
 
 class ChatResponse(BaseModel):
@@ -330,9 +333,9 @@ async def chat(
 
         # Fast mode: skip intent classification / agent / grading, directly retrieve + generate
         if request.mode == "fast":
-            from core.fast_mode import fast_generate
+            from core.fast_mode import fast_generate_async
 
-            result = fast_generate(request.message)
+            result = await fast_generate_async(request.message)
             processing_time = (time.perf_counter() - start_time) * 1000
 
             background_tasks.add_task(
@@ -404,7 +407,7 @@ async def chat(
             from agent.harness import get_agent_harness
             harness = get_agent_harness()
 
-            result = harness.invoke(request.message, thread_id=session_id)
+            result = await harness.ainvoke(request.message, thread_id=session_id)
 
             # Extract response and sources
             messages = result.get("messages", [])
@@ -692,46 +695,28 @@ async def chat_stream(
                 full_response = ""
                 collected_messages = []
 
-                import asyncio
-                import queue as _queue
-                import threading
-
-                # Use a dedicated thread (not the default ThreadPoolExecutor) to avoid
-                # starving LangGraph's internal thread pools.
-                event_queue: _queue.Queue = _queue.Queue()
-
-                def _run_graph_stream():
-                    try:
-                        for event in harness.graph.stream(
-                            {
-                                "messages": [HumanMessage(content=request.message)],
-                                "rewrite_count": 0,
-                                "max_rewrites": 3,
-                            },
-                            config={"configurable": {"thread_id": session_id}},
-                            stream_mode="updates",
-                        ):
-                            event_queue.put(event)
-                    except Exception as exc:
-                        event_queue.put(exc)
-                    finally:
-                        event_queue.put(None)  # sentinel
-
-                t = threading.Thread(target=_run_graph_stream, daemon=True)
-                t.start()
-
-                # Poll the thread-safe queue from the event loop
-                while True:
-                    try:
-                        event = event_queue.get_nowait()
-                    except _queue.Empty:
-                        await asyncio.sleep(0.15)
+                async for event in harness.astream(
+                    request.message,
+                    thread_id=session_id,
+                    stream_mode=["updates", "custom"],
+                ):
+                    if (
+                        isinstance(event, tuple)
+                        and len(event) == 2
+                        and event[0] == "custom"
+                    ):
+                        custom_event = event[1]
+                        if custom_event.get("type") == "token":
+                            token = custom_event.get("content", "")
+                            if not full_response:
+                                yield _sse({"type": "node", "name": "generate"})
+                                yield _sse({"type": "status", "message": "正在生成回答..."})
+                            full_response += token
+                            yield _sse({"type": "token", "content": token})
                         continue
 
-                    if event is None:
-                        break
-                    if isinstance(event, Exception):
-                        raise event
+                    if isinstance(event, tuple) and len(event) == 2:
+                        _, event = event
 
                     for node_name, node_output in event.items():
                         if node_name == "agent":
@@ -762,8 +747,16 @@ async def chat_stream(
                             messages = node_output.get("messages", [])
                             if messages:
                                 answer = strip_think_tags(messages[-1].content)
-                                full_response = answer
-                                yield _sse({"type": "token", "content": answer})
+                                if not full_response:
+                                    full_response = answer
+                                    yield _sse({"type": "token", "content": answer})
+                                elif answer.startswith(full_response):
+                                    suffix = answer[len(full_response):]
+                                    if suffix:
+                                        full_response = answer
+                                        yield _sse({"type": "token", "content": suffix})
+                                else:
+                                    full_response = answer
 
                 # Save to session
                 await session_memory.save_message(session_id, HumanMessage(content=request.message))
