@@ -8,6 +8,8 @@
 #   sudo ./deploy.sh --skip-redis        # 跳过 Redis 安装
 #   sudo ./deploy.sh --skip-model        # 跳过 LLM 模型下载（离线环境）
 #   sudo ./deploy.sh --skip-embedding    # 跳过 Embedding 模型下载
+#   sudo ./deploy.sh --build-offline-bundle
+#                                           # 在线预热后生成离线部署包
 # =============================================================================
 
 set -e
@@ -17,6 +19,10 @@ SKIP_OLLAMA=false
 SKIP_REDIS=false
 SKIP_MODEL=false
 SKIP_EMBEDDING=false
+SKIP_RERANKER=false
+SKIP_OCR=false
+BUILD_OFFLINE_BUNDLE=false
+OFFLINE_BUNDLE_DIR=""
 
 for arg in "$@"; do
     case "$arg" in
@@ -24,12 +30,16 @@ for arg in "$@"; do
         --skip-redis)    SKIP_REDIS=true ;;
         --skip-model)    SKIP_MODEL=true ;;
         --skip-embedding) SKIP_EMBEDDING=true ;;
+        --skip-reranker) SKIP_RERANKER=true ;;
+        --skip-ocr)      SKIP_OCR=true ;;
+        --build-offline-bundle) BUILD_OFFLINE_BUNDLE=true ;;
+        --offline-bundle-dir=*) OFFLINE_BUNDLE_DIR="${arg#*=}" ;;
         --help|-h)
-            echo "用法: sudo ./deploy.sh [--skip-ollama] [--skip-redis] [--skip-model] [--skip-embedding]"
+            echo "用法: sudo ./deploy.sh [--skip-ollama] [--skip-redis] [--skip-model] [--skip-embedding] [--skip-reranker] [--skip-ocr] [--build-offline-bundle] [--offline-bundle-dir=DIR]"
             exit 0 ;;
         *)
             echo "未知参数: $arg"
-            echo "用法: sudo ./deploy.sh [--skip-ollama] [--skip-redis] [--skip-model] [--skip-embedding]"
+            echo "用法: sudo ./deploy.sh [--skip-ollama] [--skip-redis] [--skip-model] [--skip-embedding] [--skip-reranker] [--skip-ocr] [--build-offline-bundle] [--offline-bundle-dir=DIR]"
             exit 1 ;;
     esac
 done
@@ -40,6 +50,11 @@ VENV_DIR="$PROJECT_DIR/.venv"
 WEB_DIR="$PROJECT_DIR/web"
 ENV_FILE="$PROJECT_DIR/.env"
 NODE_MAJOR=20
+LOCAL_MODELS_DIR="$PROJECT_DIR/models/local_models"
+OLLAMA_MODELS_DIR="${OLLAMA_MODELS:-$LOCAL_MODELS_DIR/ollama}"
+OFFLINE_BUNDLE_DIR="${OFFLINE_BUNDLE_DIR:-$PROJECT_DIR/offline_bundle}"
+PADDLEOCR_CACHE_DIR="${PADDLEOCR_CACHE_DIR:-$HOME/.paddlex/official_models}"
+export OLLAMA_MODELS="$OLLAMA_MODELS_DIR"
 if [ -z "${LLM_MODEL:-}" ] && [ -f "$ENV_FILE" ]; then
     LLM_MODEL=$(sed -n 's/^LLM_MODEL=//p' "$ENV_FILE" | tail -1)
 fi
@@ -59,6 +74,10 @@ info()  { echo -e "  ${CYAN}*${NC} $1"; }
 ok()    { echo -e "  ${GREEN}OK${NC} $1"; }
 warn()  { echo -e "  ${YELLOW}!!${NC} $1"; }
 fail()  { echo -e "  ${RED}FAIL${NC} $1"; exit 1; }
+
+sanitize_model_name() {
+    echo "$1" | sed 's#[/:]#_#g'
+}
 
 # ─── 前置检查 ────────────────────────────────────────────────────────────────
 
@@ -150,12 +169,29 @@ else
         ok "Ollama 安装完成"
     fi
 
+    mkdir -p "$OLLAMA_MODELS_DIR"
+    info "配置 Ollama 模型目录: $OLLAMA_MODELS_DIR"
+    if systemctl list-unit-files ollama.service >/dev/null 2>&1; then
+        OLLAMA_SERVICE_FILE="/etc/systemd/system/ollama.service"
+        if [ -f "$OLLAMA_SERVICE_FILE" ]; then
+            if grep -q '^Environment="OLLAMA_MODELS=' "$OLLAMA_SERVICE_FILE"; then
+                sed -i "s#^Environment=\"OLLAMA_MODELS=.*#Environment=\"OLLAMA_MODELS=$OLLAMA_MODELS_DIR\"#" "$OLLAMA_SERVICE_FILE"
+            else
+                sed -i "/\[Service\]/a Environment=\"OLLAMA_MODELS=$OLLAMA_MODELS_DIR\"" "$OLLAMA_SERVICE_FILE"
+            fi
+            systemctl daemon-reload || true
+            systemctl restart ollama || true
+        fi
+    elif pgrep -x ollama > /dev/null; then
+        warn "检测到非 systemd Ollama 正在运行；如需离线打包，请确认它使用 OLLAMA_MODELS=$OLLAMA_MODELS_DIR"
+    fi
+
     info "启动 Ollama 服务..."
-    if ! pgrep -x ollama > /dev/null; then
-        ollama serve > /dev/null 2>&1 &
+    if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
+        OLLAMA_MODELS="$OLLAMA_MODELS_DIR" ollama serve > /dev/null 2>&1 &
         OLLAMA_PID=$!
         sleep 3
-        if ! pgrep -x ollama > /dev/null; then
+        if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
             fail "Ollama 服务启动失败"
         fi
     fi
@@ -278,7 +314,7 @@ EMBEDDING_BATCH_SIZE=8
 # Optional Reranker Configuration
 RERANKER_ENABLED=false
 RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
-RERANKER_MODEL_PATH=
+RERANKER_MODEL_PATH=models/local_models/reranker/ms-marco-MiniLM-L-6-v2
 RERANKER_DEVICE=cpu
 RERANKER_WARMUP=false
 RERANKER_CANDIDATE_TOP_K=10
@@ -295,11 +331,89 @@ OTEL_CONSOLE_EXPORTER=false
 # Storage
 MILVUS_DB_URI=./milvus_data.db
 COLLECTION_NAME=t_collection01
+
+# PDF ingestion and OCR
+PDF_EXTRACT_TABLES=true
+PDF_OCR_ENABLED=true
+PDF_OCR_ENGINE=paddleocr
+PDF_OCR_LANG=ch
+PDF_OCR_DPI=220
+PDF_OCR_MIN_TEXT_CHARS=20
+PDF_ASSET_DIR=data/document_assets
+PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT=0
 ENVEOF
     ok ".env 文件已创建"
 fi
 
-# ─── 8. 前端依赖 ────────────────────────────────────────────────────────────
+set -a
+. "$ENV_FILE"
+set +a
+
+# ─── 8. Reranker 模型预热 ──────────────────────────────────────────────────
+
+step "预热 Reranker 模型"
+
+if [ "$SKIP_RERANKER" = true ]; then
+    warn "跳过 Reranker 模型预热（--skip-reranker）"
+else
+    uv run python - <<'PY'
+from pathlib import Path
+
+from sentence_transformers import CrossEncoder
+
+from utils.env_utils import PROJECT_ROOT, RERANKER_DEVICE, RERANKER_MODEL, RERANKER_MODEL_PATH
+
+
+def safe_name(model_name: str) -> str:
+    return model_name.replace("/", "_").replace(":", "_")
+
+
+target = Path(RERANKER_MODEL_PATH) if RERANKER_MODEL_PATH else (
+    PROJECT_ROOT / "models" / "local_models" / "reranker" / safe_name(RERANKER_MODEL)
+)
+target = target.expanduser()
+if not target.is_absolute():
+    target = PROJECT_ROOT / target
+
+source = str(target) if target.is_dir() else RERANKER_MODEL
+print(f"Reranker source: {source}")
+model = CrossEncoder(source, device=RERANKER_DEVICE)
+target.mkdir(parents=True, exist_ok=True)
+model.save(str(target))
+print(f"Reranker saved to: {target}")
+PY
+    ok "Reranker 模型已预热并保存到本地目录"
+fi
+
+# ─── 9. OCR 模型预热 ───────────────────────────────────────────────────────
+
+step "预热 OCR 模型"
+
+if [ "$SKIP_OCR" = true ]; then
+    warn "跳过 OCR 模型预热（--skip-ocr）"
+else
+    PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT="${PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT:-0}" uv run python - <<'PY'
+from pathlib import Path
+
+from PIL import Image, ImageDraw, ImageFont
+
+from documents.ocr_engine import extract_text_from_image
+
+probe = Path("/tmp/rag_ocr_prewarm.png")
+image = Image.new("RGB", (900, 320), "white")
+draw = ImageDraw.Draw(image)
+font_path = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
+font = ImageFont.truetype(str(font_path), 48) if font_path.exists() else None
+draw.text((60, 120), "OCR PREWARM 12345", fill="black", font=font)
+image.save(probe)
+result = extract_text_from_image(str(probe))
+print(f"OCR text: {result.text[:80]!r}")
+print(f"OCR confidence: {result.confidence}")
+PY
+    ok "OCR 模型已预热"
+fi
+
+# ─── 10. 前端依赖 ───────────────────────────────────────────────────────────
 
 step "构建前端静态文件"
 
@@ -317,14 +431,139 @@ npm run build
 cd "$PROJECT_DIR"
 ok "前端静态文件已构建，将由 FastAPI 托管"
 
-# ─── 9. 创建必要目录 ────────────────────────────────────────────────────────
+# ─── 11. 创建必要目录 ───────────────────────────────────────────────────────
 
 step "创建运行时目录"
 
 mkdir -p "$PROJECT_DIR/data" "$PROJECT_DIR/logs" "$PROJECT_DIR/.pids"
 ok "目录就绪: data/, logs/, .pids/"
 
-# ─── 10. 验证 ───────────────────────────────────────────────────────────────
+# ─── 12. 离线部署包 ─────────────────────────────────────────────────────────
+
+if [ "$BUILD_OFFLINE_BUNDLE" = true ]; then
+    step "构建离线部署包"
+
+    mkdir -p "$OFFLINE_BUNDLE_DIR"
+    BUNDLE_NAME="rag_offline_bundle_$(date +%Y%m%d_%H%M%S)"
+    STAGING_DIR="$OFFLINE_BUNDLE_DIR/$BUNDLE_NAME"
+    TARBALL="$OFFLINE_BUNDLE_DIR/$BUNDLE_NAME.tar.gz"
+
+    rm -rf "$STAGING_DIR"
+    mkdir -p "$STAGING_DIR/project" "$STAGING_DIR/wheelhouse" "$STAGING_DIR/models"
+
+    info "导出 Python 依赖锁定文件"
+    uv export --frozen --no-hashes --no-dev --format requirements.txt \
+        --output-file "$STAGING_DIR/requirements.lock.txt"
+
+    info "下载 Python wheelhouse（包含 CPU PyTorch 索引）"
+    PIP_EXTRA_INDEX_URL="${PIP_EXTRA_INDEX_URL:-https://download.pytorch.org/whl/cpu}" \
+        "$VENV_DIR/bin/python" -m pip download \
+        --prefer-binary \
+        --dest "$STAGING_DIR/wheelhouse" \
+        -r "$STAGING_DIR/requirements.lock.txt"
+    ok "Python wheelhouse 已生成"
+
+    info "复制项目代码与前端构建产物"
+    tar -C "$PROJECT_DIR" \
+        --exclude='./.git' \
+        --exclude='./.venv' \
+        --exclude='./offline_bundle' \
+        --exclude='./data' \
+        --exclude='./logs' \
+        --exclude='./.pids' \
+        --exclude='./milvus_data.db' \
+        --exclude='./models/local_models' \
+        --exclude='./web/node_modules' \
+        -cf - . | tar -C "$STAGING_DIR/project" -xf -
+    ok "项目文件已复制"
+
+    if [ -d "$LOCAL_MODELS_DIR" ]; then
+        info "复制本地模型目录: $LOCAL_MODELS_DIR"
+        mkdir -p "$STAGING_DIR/models"
+        cp -a "$LOCAL_MODELS_DIR" "$STAGING_DIR/models/local_models"
+        ok "本地模型目录已复制"
+    else
+        warn "未找到本地模型目录: $LOCAL_MODELS_DIR"
+    fi
+
+    if [ -d "$PADDLEOCR_CACHE_DIR" ]; then
+        info "复制 PaddleOCR 模型缓存: $PADDLEOCR_CACHE_DIR"
+        mkdir -p "$STAGING_DIR/paddleocr"
+        cp -a "$PADDLEOCR_CACHE_DIR" "$STAGING_DIR/paddleocr/official_models"
+        ok "PaddleOCR 模型缓存已复制"
+    else
+        warn "未找到 PaddleOCR 模型缓存: $PADDLEOCR_CACHE_DIR"
+    fi
+
+    cp "$PROJECT_DIR/scripts/install_offline.sh" "$STAGING_DIR/install_offline.sh"
+    chmod +x "$STAGING_DIR/install_offline.sh"
+
+    info "生成离线 .env"
+    RERANKER_BUNDLE_PATH="${RERANKER_MODEL_PATH:-models/local_models/reranker/$(sanitize_model_name "${RERANKER_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}")}"
+    cat > "$STAGING_DIR/env.offline" << ENVEOF
+# Offline bundle configuration
+OPENAI_BASE_URL=http://localhost:11434/v1
+OPENAI_API_KEY=ollama
+LLM_MODEL=${LLM_MODEL:-qwen3:14b}
+LLM_TEMPERATURE=${LLM_TEMPERATURE:-0.0}
+LLM_MAX_TOKENS=${LLM_MAX_TOKENS:-4096}
+LLM_TIMEOUT=${LLM_TIMEOUT:-60}
+LLM_MAX_RETRIES=${LLM_MAX_RETRIES:-1}
+
+EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}
+EMBEDDING_MODEL_PATH=${EMBEDDING_MODEL_PATH:-models/local_models/bge-small-zh-v1.5}
+EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-512}
+EMBEDDING_DEVICE=${EMBEDDING_DEVICE:-cpu}
+EMBEDDING_NORMALIZE=${EMBEDDING_NORMALIZE:-true}
+EMBEDDING_BATCH_SIZE=${EMBEDDING_BATCH_SIZE:-8}
+
+RERANKER_ENABLED=${RERANKER_ENABLED:-false}
+RERANKER_MODEL=${RERANKER_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}
+RERANKER_MODEL_PATH=$RERANKER_BUNDLE_PATH
+RERANKER_DEVICE=${RERANKER_DEVICE:-cpu}
+RERANKER_WARMUP=${RERANKER_WARMUP:-false}
+RERANKER_CANDIDATE_TOP_K=${RERANKER_CANDIDATE_TOP_K:-10}
+RERANKER_TOP_K=${RERANKER_TOP_K:-5}
+RERANKER_BATCH_SIZE=${RERANKER_BATCH_SIZE:-8}
+
+OTEL_ENABLED=false
+OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-rag-platform}
+OTEL_EXPORTER_OTLP_ENDPOINT=
+OTEL_SAMPLE_RATE=${OTEL_SAMPLE_RATE:-1.0}
+OTEL_CONSOLE_EXPORTER=false
+
+MILVUS_DB_URI=./milvus_data.db
+COLLECTION_NAME=${COLLECTION_NAME:-t_collection01}
+
+PDF_EXTRACT_TABLES=${PDF_EXTRACT_TABLES:-true}
+PDF_OCR_ENABLED=${PDF_OCR_ENABLED:-true}
+PDF_OCR_ENGINE=${PDF_OCR_ENGINE:-paddleocr}
+PDF_OCR_LANG=${PDF_OCR_LANG:-ch}
+PDF_OCR_DPI=${PDF_OCR_DPI:-220}
+PDF_OCR_MIN_TEXT_CHARS=${PDF_OCR_MIN_TEXT_CHARS:-20}
+PDF_ASSET_DIR=${PDF_ASSET_DIR:-data/document_assets}
+PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT=${PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT:-0}
+ENVEOF
+
+    {
+        echo "RAG offline bundle"
+        echo "created_at=$(date -Iseconds)"
+        echo "project_dir=$PROJECT_DIR"
+        echo "llm_model=${LLM_MODEL:-qwen3:14b}"
+        echo "ollama_models_dir=$OLLAMA_MODELS_DIR"
+        echo "local_models_dir=$LOCAL_MODELS_DIR"
+        echo "paddleocr_cache_dir=$PADDLEOCR_CACHE_DIR"
+        echo ""
+        echo "Bundle size summary:"
+        du -sh "$STAGING_DIR"/* 2>/dev/null || true
+    } > "$STAGING_DIR/OFFLINE_BUNDLE_MANIFEST.txt"
+
+    info "压缩离线包"
+    tar -C "$OFFLINE_BUNDLE_DIR" -czf "$TARBALL" "$BUNDLE_NAME"
+    ok "离线部署包已生成: $TARBALL"
+fi
+
+# ─── 13. 验证 ───────────────────────────────────────────────────────────────
 
 step "验证部署"
 
@@ -372,6 +611,33 @@ raise SystemExit(0 if is_embedding_model_cached() else 1)
         ok "Embedding 模型就绪"
     else
         warn "Embedding 模型未找到"; ERRORS=$((ERRORS + 1))
+    fi
+fi
+
+if [ "$SKIP_RERANKER" = false ]; then
+    if uv run python -c "
+from core.retrieval.reranker import is_reranker_model_cached
+raise SystemExit(0 if is_reranker_model_cached(refresh=True) else 1)
+"; then
+        ok "Reranker 模型就绪"
+    else
+        warn "Reranker 模型未找到"; ERRORS=$((ERRORS + 1))
+    fi
+fi
+
+if [ "$SKIP_OCR" = false ]; then
+    if [ -d "$PADDLEOCR_CACHE_DIR" ]; then
+        ok "PaddleOCR 模型缓存就绪: $PADDLEOCR_CACHE_DIR"
+    else
+        warn "PaddleOCR 模型缓存未找到: $PADDLEOCR_CACHE_DIR"; ERRORS=$((ERRORS + 1))
+    fi
+fi
+
+if [ "$BUILD_OFFLINE_BUNDLE" = true ]; then
+    if [ -f "$TARBALL" ]; then
+        ok "离线部署包就绪: $TARBALL"
+    else
+        warn "离线部署包未生成"; ERRORS=$((ERRORS + 1))
     fi
 fi
 

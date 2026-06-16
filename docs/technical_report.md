@@ -78,7 +78,34 @@ LLM_MAX_RETRIES=1
 Embedding 模型 ID、本地路径、向量维度、设备和批大小同样可通过
 `EMBEDDING_*` 环境变量配置。
 
-### 2.4 推理性能实测
+### 2.4 离线资产预热与打包
+
+`deploy.sh` 支持在线预热后生成离线部署包：
+
+```bash
+sudo ./deploy.sh --build-offline-bundle
+```
+
+预热阶段会下载或验证以下资产：
+
+1. Ollama LLM 模型，存放于 `models/local_models/ollama`。
+2. Embedding 模型，存放于 `models/local_models/bge-small-zh-v1.5`。
+3. Reranker 模型，存放于 `models/local_models/reranker/...`，避免依赖用户级 Hugging Face cache。
+4. PaddleOCR 官方模型，默认缓存于 `~/.paddlex/official_models`。
+5. Python wheelhouse 和前端 `web/dist` 构建产物。
+
+离线包输出为 `offline_bundle/rag_offline_bundle_<timestamp>.tar.gz`，包含项目代码、
+`requirements.lock.txt`、`wheelhouse/`、`models/local_models/`、PaddleOCR cache、
+`env.offline` 与 `install_offline.sh`。目标机解压后运行：
+
+```bash
+./install_offline.sh /opt/rag-platform
+```
+
+离线安装脚本不访问网络；它会从包内 wheelhouse 安装 Python 依赖，并恢复 PaddleOCR
+模型缓存。目标机仍需预先具备 `python3` 和 Ollama 可执行文件；Redis 仍是可选组件。
+
+### 2.5 推理性能实测
 
 测试硬件：NVIDIA RTX 5070 Ti 16GB（GPU 占用约 12GB，14B Q4_K_M 量化）
 

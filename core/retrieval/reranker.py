@@ -77,6 +77,10 @@ class RerankerConfig:
     top_k: int = RERANKER_TOP_K
     batch_size: int = RERANKER_BATCH_SIZE
 
+    def __post_init__(self) -> None:
+        if self.model_name != RERANKER_MODEL and self.model_path == RERANKER_MODEL_PATH:
+            self.model_path = ""
+
     @property
     def model_source(self) -> str:
         if self.model_path and Path(self.model_path).is_dir():

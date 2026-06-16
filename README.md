@@ -212,10 +212,49 @@ sudo ./deploy.sh --skip-ollama
 sudo ./deploy.sh --skip-redis
 sudo ./deploy.sh --skip-model
 sudo ./deploy.sh --skip-embedding
+sudo ./deploy.sh --build-offline-bundle
 ```
+
+`deploy.sh` 会预热运行所需的本地资产：Ollama LLM 模型、Embedding 模型、
+Reranker 模型、PaddleOCR 模型、Python 依赖和前端 `web/dist` 构建产物。
+其中 Reranker 会保存到 `models/local_models/reranker/...`，避免离线环境依赖
+用户级 Hugging Face cache。
 
 部署脚本完成后，使用 `./run.sh` 启动开发模式，或按下一节使用 FastAPI
 托管生产静态文件。
+
+### 构建离线部署包
+
+在一台有网络的同架构机器上完成预热并打包：
+
+```bash
+sudo ./deploy.sh --build-offline-bundle
+```
+
+生成物位于 `offline_bundle/rag_offline_bundle_<timestamp>.tar.gz`。包内包含：
+
+- 项目代码与 `web/dist` 前端静态构建产物
+- `wheelhouse/` Python 离线安装包和 `requirements.lock.txt`
+- `models/local_models/` 下的 Embedding、Reranker、Ollama 模型目录快照
+- `paddleocr/official_models/` PaddleOCR 模型缓存
+- `install_offline.sh` 离线安装脚本和 `env.offline`
+
+在断网目标机上解压并安装：
+
+```bash
+tar -xzf rag_offline_bundle_<timestamp>.tar.gz
+cd rag_offline_bundle_<timestamp>
+./install_offline.sh /opt/rag-platform
+```
+
+目标机仍需预先具备基础系统能力：`python3`、可用的 `ollama` 可执行文件，以及可选的
+Redis。离线脚本不访问网络，会从包内 wheelhouse 安装 Python 依赖，并把 PaddleOCR
+模型缓存恢复到当前用户的 `~/.paddlex/official_models`。启动 Ollama 时请设置：
+
+```bash
+export OLLAMA_MODELS=/opt/rag-platform/models/local_models/ollama
+ollama serve
+```
 
 ## 生产静态部署
 
@@ -281,7 +320,7 @@ location /rag/ {
 | `EMBEDDING_BATCH_SIZE` | `8` | Embedding 编码批大小 |
 | `RERANKER_ENABLED` | `false` | 是否在 RRF 融合后启用 Cross-Encoder 重排序 |
 | `RERANKER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | 可选重排序模型 |
-| `RERANKER_MODEL_PATH` | 空 | 可选本地模型目录，配置且存在时优先于模型 ID |
+| `RERANKER_MODEL_PATH` | `models/local_models/reranker/ms-marco-MiniLM-L-6-v2` | 可选本地模型目录，配置且存在时优先于模型 ID |
 | `RERANKER_DEVICE` | `cpu` | Reranker 运行设备，例如 `cpu`、`cuda` |
 | `RERANKER_WARMUP` | `false` | 是否在服务启动时加载 Reranker |
 | `RERANKER_CANDIDATE_TOP_K` | `10` | Dense 与 BM25 各自送入 RRF 的候选数 |
@@ -363,7 +402,7 @@ uv run python documents/milvus_db.py --action create --drop
 ```dotenv
 RERANKER_ENABLED=true
 RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
-RERANKER_MODEL_PATH=
+RERANKER_MODEL_PATH=models/local_models/reranker/ms-marco-MiniLM-L-6-v2
 RERANKER_DEVICE=cpu
 RERANKER_WARMUP=false
 RERANKER_CANDIDATE_TOP_K=10
@@ -371,20 +410,21 @@ RERANKER_TOP_K=5
 RERANKER_BATCH_SIZE=8
 ```
 
-使用 Hugging Face 模型 ID 时，首次加载会自动下载到：
+`deploy.sh` 和 `scripts/download_reranker.py` 会把模型保存到
+`RERANKER_MODEL_PATH`，便于离线运行。若该路径为空且只使用 Hugging Face 模型 ID，
+首次加载会自动下载到：
 
 ```text
 ~/.cache/huggingface/hub/models--<organization>--<model-name>/
 ```
 
-无需手动放入 `models/local_models`。需要提前下载并验证模型时运行：
+推荐保留项目内路径，便于离线打包。需要提前下载并验证模型时运行：
 
 ```bash
 uv run python scripts/download_reranker.py
 ```
 
-如果希望使用项目管理的本地目录，可将模型保存到任意目录并配置
-`RERANKER_MODEL_PATH`。配置 `RERANKER_WARMUP=true` 后，服务启动时会加载模型，
+配置 `RERANKER_WARMUP=true` 后，服务启动时会加载模型，
 避免首个检索请求承担模型加载耗时。
 
 默认 `cross-encoder/ms-marco-MiniLM-L-6-v2` 体积较小，但主要面向英文检索。

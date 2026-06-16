@@ -456,7 +456,8 @@ PDF 上传支持带图片、表格、图表或扫描页的混合 PDF。系统会
 
 当前本地 OCR 引擎为 PaddleOCR（`paddlepaddle` + `paddleocr`）。首次 OCR 会
 下载官方模型到 `~/.paddlex/official_models/`；CPU 环境默认禁用 PaddleX
-MKLDNN 路径以提升兼容性。
+MKLDNN 路径以提升兼容性。执行 `deploy.sh --build-offline-bundle` 时，该模型
+缓存会被复制到离线部署包中的 `paddleocr/official_models/`。
 
 #### 响应体
 
@@ -1167,7 +1168,7 @@ GET /api/admin/config
   "reranker": {
     "enabled": false,
     "model": "cross-encoder/ms-marco-MiniLM-L-6-v2",
-    "local_path": "",
+    "local_path": "/path/to/models/local_models/reranker/ms-marco-MiniLM-L-6-v2",
     "device": "cpu",
     "warmup": false,
     "candidate_top_k": 10,
