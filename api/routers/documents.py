@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, UploadFile, File, BackgroundTasks
 from pydantic import BaseModel, Field
 from langchain_core.documents import Document
 
-from documents.document_registry import get_document_registry
+from documents.document_registry import get_document_registry, DocumentStatus
 from utils.log_utils import log
 
 router = APIRouter()
@@ -31,7 +31,7 @@ class DocumentInfo(BaseModel):
     """Document information model."""
     id: str
     filename: str
-    status: str
+    status: DocumentStatus
     chunks: int = 0
     created_at: float
     size_bytes: int = 0
@@ -48,7 +48,7 @@ class UploadResponse(BaseModel):
     """Document upload response."""
     id: str
     filename: str
-    status: str
+    status: DocumentStatus
     message: str
 
 
@@ -281,24 +281,9 @@ def _process_document(doc_id: str, file_path: str, filename: str, file_hash: str
             parser = MarkdownParser()
             documents = parser.parse_markdown_to_documents(file_path)
         elif ext == ".pdf":
-            from pypdf import PdfReader
-            reader = PdfReader(file_path)
-            # Split by page first, then by paragraph to preserve document structure.
-            # Short paragraphs stay intact; only long ones are further split.
-            documents = []
-            for i, page in enumerate(reader.pages, 1):
-                page_text = page.extract_text()
-                if not page_text or not page_text.strip():
-                    continue
-                for para in page_text.strip().split("\n\n"):
-                    para = para.strip()
-                    if para:
-                        documents.append(Document(
-                            page_content=para,
-                            metadata={"source": filename, "page": i}
-                        ))
-            if not documents:
-                raise ValueError("PDF 文件内容为空或无法提取文本")
+            from documents.pdf_parser import parse_pdf_to_documents
+
+            documents = parse_pdf_to_documents(file_path, filename)
             documents = _split_documents(documents)
         else:
             with open(file_path, "r", encoding="utf-8") as f:

@@ -6,7 +6,7 @@ Handles system administration and monitoring endpoints.
 
 from __future__ import annotations
 
-from typing import Dict, Any
+from typing import Dict, Any, Literal
 
 from fastapi import APIRouter
 
@@ -145,7 +145,7 @@ async def get_circuit_breakers():
 
 
 @router.post("/circuit-breakers/{name}/reset")
-async def reset_circuit_breaker(name: str):
+async def reset_circuit_breaker(name: Literal["llm", "retriever"]):
     """Reset a circuit breaker."""
     from core.fallback.circuit_breaker import get_llm_circuit, get_retriever_circuit
 
@@ -155,8 +155,6 @@ async def reset_circuit_breaker(name: str):
     elif name == "retriever":
         get_retriever_circuit().reset()
         return {"status": "success", "message": "Retriever circuit breaker reset"}
-    else:
-        return {"status": "error", "message": f"Unknown circuit breaker: {name}"}
 
 
 @router.get("/degradation")
@@ -169,22 +167,14 @@ async def get_degradation_status():
 
 
 @router.post("/degradation/mode/{mode}")
-async def set_degradation_mode(mode: str):
+async def set_degradation_mode(mode: Literal["full", "cached", "simplified", "offline"]):
     """Set degradation mode."""
     from core.fallback.degradation import get_degradation_handler, FallbackMode
 
     handler = get_degradation_handler()
-
-    try:
-        new_mode = FallbackMode(mode)
-        handler.mode = new_mode
-        return {"status": "success", "mode": new_mode.value}
-    except ValueError:
-        valid_modes = [m.value for m in FallbackMode]
-        return {
-            "status": "error",
-            "message": f"Invalid mode. Valid modes: {valid_modes}"
-        }
+    new_mode = FallbackMode(mode)
+    handler.mode = new_mode
+    return {"status": "success", "mode": new_mode.value}
 
 
 @router.get("/config")
@@ -209,6 +199,13 @@ async def get_config():
         OTEL_EXPORTER_OTLP_ENDPOINT,
         OTEL_SAMPLE_RATE,
         OTEL_SERVICE_NAME,
+        PDF_ASSET_DIR,
+        PDF_EXTRACT_TABLES,
+        PDF_OCR_DPI,
+        PDF_OCR_ENABLED,
+        PDF_OCR_ENGINE,
+        PDF_OCR_LANG,
+        PDF_OCR_MIN_TEXT_CHARS,
         RERANKER_BATCH_SIZE,
         RERANKER_CANDIDATE_TOP_K,
         RERANKER_DEVICE,
@@ -255,6 +252,15 @@ async def get_config():
         "milvus": {
             "uri": MILVUS_URI,
             "collection": COLLECTION_NAME,
+        },
+        "pdf_ingestion": {
+            "extract_tables": PDF_EXTRACT_TABLES,
+            "ocr_enabled": PDF_OCR_ENABLED,
+            "ocr_engine": PDF_OCR_ENGINE,
+            "ocr_lang": PDF_OCR_LANG,
+            "ocr_dpi": PDF_OCR_DPI,
+            "ocr_min_text_chars": PDF_OCR_MIN_TEXT_CHARS,
+            "asset_dir": PDF_ASSET_DIR,
         },
         "session": {
             "ttl": 3600,

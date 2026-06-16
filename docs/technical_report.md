@@ -228,6 +228,23 @@ Embedding 模型 ID、本地路径、向量维度、设备和批大小同样可�
 
 ### 4.5 文档分块策略
 
+#### PDF 结构化解析与 OCR
+
+PDF 上传按页面级 ingestion pipeline 处理：
+
+1. 优先使用 `pypdfium2` 抽取文字层；单页失败或文字不足时使用 `pypdf` 逐页兜底。
+2. 明确保留列分隔符（`|`、Tab、多空格）的表格转换为 Markdown 表格 chunk，metadata 标记 `content_type=table` 与 `table_id`。
+3. 带图片对象的页面记录 `pdf_image_count`、`pdf_has_images` 等 metadata，便于来源审计和后续多模态扩展。
+4. 当 `PDF_OCR_ENABLED=true` 时，图片页/扫描页会由 `pypdfium2` 渲染为页面图片，并调用 PaddleOCR 生成 `content_type=ocr_text` chunk。
+
+当前 OCR 引擎为 PaddleOCR（`paddlepaddle` + `paddleocr`）。首次运行会下载官方模型到
+`~/.paddlex/official_models/`。在 CPU 环境中，项目默认设置
+`PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT=0`，以规避 PaddlePaddle 3.x 在部分主机上
+触发 oneDNN/PIR `ConvertPirAttribute2RuntimeAttribute` 推理错误。
+
+OCR 结果适合进入 RAG 检索，但不是强一致结构化抽取；故障码中的 `0/O`、`1/I` 等字符
+可能出现混淆，关键业务字段仍建议在上游 PDF 生成阶段保留文字层或经过人工校验。
+
 | 参数 | 数值 |
 |------|------|
 | 语义分块阈值 | 1,200 tokens |

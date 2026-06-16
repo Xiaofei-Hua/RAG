@@ -216,6 +216,7 @@ data: {JSON}\n\n
 
 | message 取值 | 说明 |
 |-------------|------|
+| `正在返回平台能力说明...` | 识别为能力咨询/身份类问题，直接返回平台说明 |
 | `正在分析意图...` | 意图分类中（仅 thinking 模式） |
 | `正在检索知识库...` | 向量检索中 |
 | `正在评估文档相关性...` | 文档评估中（仅 thinking 模式） |
@@ -446,6 +447,17 @@ POST /api/documents/upload
 |------|------|------|------|
 | `file` | File | 是 | 文档文件，支持 `.md`、`.txt`、`.pdf` |
 
+PDF 上传支持带图片、表格、图表或扫描页的混合 PDF。系统会索引可抽取的文字层，
+将明确保留列分隔的表格转换为 Markdown 表格 chunk，并在 metadata 中记录页码、
+`content_type`、图片对象数量和表格 ID。若页面没有文字层，只有在
+`PDF_OCR_ENABLED=true` 且本地 OCR 引擎可用时才会渲染页面图片并写入
+`content_type=ocr_text` 的 OCR chunk；否则该图片页会被跳过，整份 PDF 都无
+可索引文本时后台状态为 `failed`。
+
+当前本地 OCR 引擎为 PaddleOCR（`paddlepaddle` + `paddleocr`）。首次 OCR 会
+下载官方模型到 `~/.paddlex/official_models/`；CPU 环境默认禁用 PaddleX
+MKLDNN 路径以提升兼容性。
+
 #### 响应体
 
 ```json
@@ -457,10 +469,9 @@ POST /api/documents/upload
 }
 ```
 
-| status 值 | 说明 |
-|-----------|------|
-| `processing` | 已接收，后台处理中 |
-| `duplicate` | 文件已存在（HTTP 409） |
+上传接口同步返回的 `status` 恒为 `processing`（后台异步处理）。`indexed` / `failed` 为后台处理完成后，经 [3.3 文档详情](#33-文档详情) 查询可见的终态。文档状态完整说明见 [3. 文档管理](#3-文档管理) 开篇。
+
+> 若文件名或内容（SHA256）已存在，上传被拒绝并返回 **HTTP 409**，响应体为 `{"detail": "..."}`（不返回 `UploadResponse`）。
 
 ---
 
@@ -485,7 +496,7 @@ GET /api/documents
     {
       "id": "988f849c",
       "filename": "engine_manual.md",
-      "status": "completed",
+      "status": "indexed",
       "chunks": 12,
       "created_at": 1713696000.0,
       "size_bytes": 15360,
@@ -594,7 +605,7 @@ GET /api/sessions
     {
       "session_id": "session_abc123",
       "message_count": 6,
-      "ttl_seconds": 3600,
+      "title": "发动机振动异常排查",
       "created_at": 1713696000.0,
       "last_active": 1713699600.0
     }
@@ -1063,6 +1074,8 @@ POST /api/admin/circuit-breakers/{name}/reset
 |------|------|------|
 | `name` | string | 熔断器名称：`llm` 或 `retriever` |
 
+> 非法取值将返回 HTTP 422。
+
 #### 响应体
 
 ```json
@@ -1102,14 +1115,25 @@ POST /api/admin/degradation/mode/{mode}
 
 | 参数 | 类型 | 说明 |
 |------|------|------|
-| `mode` | string | 降级模式：`normal` / `degraded` / `fallback` |
+| `mode` | string | 降级模式：`full` / `cached` / `simplified` / `offline` |
+
+**`mode` 取值说明：**
+
+| 值 | 说明 |
+|----|------|
+| `full` | 正常运行，使用完整 RAG 流程 |
+| `cached` | 仅返回缓存响应 |
+| `simplified` | 简化回答模式 |
+| `offline` | 最小离线兜底模式 |
+
+> 非法取值将返回 HTTP 422。
 
 #### 响应体
 
 ```json
 {
   "status": "success",
-  "mode": "normal"
+  "mode": "full"
 }
 ```
 
@@ -1160,6 +1184,15 @@ GET /api/admin/config
   "milvus": {
     "uri": "./milvus_data.db",
     "collection": "t_collection01"
+  },
+  "pdf_ingestion": {
+    "extract_tables": true,
+    "ocr_enabled": true,
+    "ocr_engine": "paddleocr",
+    "ocr_lang": "ch",
+    "ocr_dpi": 220,
+    "ocr_min_text_chars": 20,
+    "asset_dir": "/path/to/data/document_assets"
   },
   "session": {
     "ttl": 3600,
@@ -1213,6 +1246,9 @@ interface SourceDocument {
   source?: string
   title?: string
   score: number
+  retrieval_score?: number      // RRF 融合分数
+  rerank_score?: number         // Cross-Encoder 重排分数
+  rerank_applied?: boolean      // 本次是否成功应用重排
 }
 ```
 
@@ -1235,7 +1271,7 @@ interface PHMDiagnosis {
 interface DocumentInfo {
   id: string
   filename: string
-  status: string               // "processing" | "completed" | "failed"
+  status: string               // "processing" | "indexed" | "failed"
   chunks: number
   created_at: number           // Unix 时间戳
   size_bytes: number
@@ -1249,9 +1285,9 @@ interface DocumentInfo {
 interface SessionInfo {
   session_id: string
   message_count: number
-  ttl_seconds: number
-  created_at: number
-  last_active: number
+  title: string                 // 会话标题（可能为空）
+  created_at: number | null     // Unix 时间戳
+  last_active: number | null    // Unix 时间戳
 }
 ```
 

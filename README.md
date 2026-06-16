@@ -138,6 +138,24 @@ curl -X POST http://localhost:8000/api/documents/upload \
   -F "file=@md/phm_test_knowledge_base.md"
 ```
 
+支持上传 `.md`、`.txt` 和 `.pdf`。PDF 会按页面解析：优先使用 `pypdfium2`
+抽取文字层，并用 `pypdf` 逐页兜底；明确保留列分隔的表格会转成 Markdown
+表格 chunk 入库；带图片页面会记录图片对象元数据。纯扫描图片 PDF 或图片内文字
+需要启用 OCR 后才能进入检索索引。
+
+OCR 默认为关闭，适合在安装本地 OCR 引擎后按需打开：
+
+```dotenv
+PDF_OCR_ENABLED=true
+PDF_OCR_ENGINE=paddleocr
+PDF_OCR_LANG=ch
+PDF_OCR_DPI=220
+```
+
+本项目已支持 PaddleOCR，本地依赖为 `paddlepaddle` + `paddleocr`。首次 OCR 会
+下载 PaddleOCR 官方模型到 `~/.paddlex/official_models/`；CPU 环境默认禁用
+PaddleX MKLDNN 路径以避免部分主机上的 oneDNN/PIR 推理错误。
+
 上传完成并建立索引后，即可在前端询问：
 
 ```text
@@ -276,6 +294,14 @@ location /rag/ {
 | `OTEL_CONSOLE_EXPORTER` | `false` | 是否将 Span 输出到控制台 |
 | `MILVUS_DB_URI` | `./milvus_data.db` | Milvus Lite 数据库路径 |
 | `COLLECTION_NAME` | `t_collection01` | Milvus collection 名称 |
+| `PDF_EXTRACT_TABLES` | `true` | 是否将明确列分隔的 PDF 表格转为 Markdown chunk |
+| `PDF_OCR_ENABLED` | `false` | 是否对扫描页/图片页启用 OCR |
+| `PDF_OCR_ENGINE` | `paddleocr` | OCR 引擎，目前支持 `paddleocr`、`tesseract` |
+| `PDF_OCR_LANG` | `ch` | OCR 语言配置 |
+| `PDF_OCR_DPI` | `220` | PDF 页面渲染为 OCR 图片时的 DPI |
+| `PDF_OCR_MIN_TEXT_CHARS` | `20` | 页面文字少于该阈值时才尝试 OCR |
+| `PDF_ASSET_DIR` | `data/document_assets` | OCR 页面图片与后续图片资产目录 |
+| `PADDLE_PDX_ENABLE_MKLDNN_BYDEFAULT` | `0` | PaddleOCR CPU 兼容性开关，默认禁用 MKLDNN |
 | `APP_ROOT_PATH` | 空 | FastAPI 对外反代路径前缀 |
 | `VITE_BASE_PATH` | `/` | 前端构建时的公共路径 |
 | `WEB_DIST_DIR` | `web/dist` | FastAPI 托管的前端构建目录 |

@@ -6,7 +6,8 @@
 tests/
 ├── README.md              ← 你在这里
 ├── unit/                  # 单元测试（不需要后端运行）
-│   └── test_skills.py     # Skill 组件、AgentState、MCP Server
+│   ├── test_skills.py     # Skill 组件、AgentState、MCP Server
+│   └── test_pdf_parser.py # PDF 文本层 / 表格 / OCR fallback
 ├── api/                   # API 接口测试（需要后端运行）
 │   ├── test_health.py     # 健康检查 / 配置 / 监控
 │   ├── test_chat.py       # 对话接口（非流式 + SSE 流式 + 快速模式）
@@ -59,3 +60,5 @@ python tests/integration/test_system.py    # 完整流程
 - `test_retrieval.py` 会自动上传测试文档（如知识库为空）
 - `test_documents.py` 会在测试结束时清理上传的文档
 - 所有测试脚本均可独立运行，无交叉依赖
+- OCR 功能测试需要 `paddlepaddle` 和 `paddleocr`；首次运行会下载模型到
+  `~/.paddlex/official_models/`

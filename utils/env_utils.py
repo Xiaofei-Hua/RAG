@@ -82,3 +82,13 @@ OTEL_CONSOLE_EXPORTER = _get_bool("OTEL_CONSOLE_EXPORTER", False)
 # Storage. Do not use the name `MILVUS_URI`; pymilvus reserves it for servers.
 MILVUS_URI = os.getenv("MILVUS_DB_URI", "./milvus_data.db")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "t_collection01")
+
+# PDF ingestion. OCR is opt-in because local OCR engines add non-trivial
+# dependencies and memory usage.
+PDF_EXTRACT_TABLES = _get_bool("PDF_EXTRACT_TABLES", True)
+PDF_OCR_ENABLED = _get_bool("PDF_OCR_ENABLED", False)
+PDF_OCR_ENGINE = os.getenv("PDF_OCR_ENGINE", "paddleocr")
+PDF_OCR_LANG = os.getenv("PDF_OCR_LANG", "ch")
+PDF_OCR_DPI = _get_int("PDF_OCR_DPI", 220)
+PDF_OCR_MIN_TEXT_CHARS = _get_int("PDF_OCR_MIN_TEXT_CHARS", 20)
+PDF_ASSET_DIR = _get_path("PDF_ASSET_DIR", "data/document_assets")

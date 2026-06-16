@@ -9,9 +9,12 @@ from __future__ import annotations
 import os
 import sqlite3
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Literal, Optional
 
 from utils.log_utils import log
+
+# 文档处理状态：上传后后台分块/向量化/索引的生命周期取值
+DocumentStatus = Literal["processing", "indexed", "failed"]
 
 
 class DocumentRegistry:
@@ -40,7 +43,7 @@ class DocumentRegistry:
         self._conn.commit()
         log.info(f"Document registry initialized: {db_path}")
 
-    def put(self, doc_id: str, filename: str, status: str, chunks: int,
+    def put(self, doc_id: str, filename: str, status: DocumentStatus, chunks: int,
             created_at: float, size_bytes: int, file_hash: str) -> None:
         self._conn.execute(
             "INSERT OR REPLACE INTO documents "
@@ -70,7 +73,7 @@ class DocumentRegistry:
         ).fetchone()
         return dict(row) if row else None
 
-    def update_status(self, doc_id: str, status: str, chunks: int = 0) -> None:
+    def update_status(self, doc_id: str, status: DocumentStatus, chunks: int = 0) -> None:
         self._conn.execute(
             "UPDATE documents SET status = ?, chunks = ? WHERE id = ?",
             (status, chunks, doc_id),
