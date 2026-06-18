@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
-from typing import Dict, List, Optional
+import threading
+from contextlib import contextmanager
+from typing import Dict, Iterator, List, Optional
 
 from agent.memory.types import MemoryEntry, MemoryQuery, MemoryType
 from utils.log_utils import log
@@ -15,7 +17,25 @@ class MemoryStore:
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        self._init_table()
+        # WAL improves concurrent reader/writer throughput on the shared file
+        # (this store shares agent_memory.db with FeedbackCollector).
+        try:
+            self._conn.execute("PRAGMA journal_mode=WAL")
+        except Exception as e:  # noqa: BLE001 - WAL is best-effort
+            log.debug(f"MemoryStore: WAL mode unavailable: {e}")
+        # Guard all cursor/commit access: the single shared connection is used
+        # from multiple hook callbacks (and across threads), so unsynchronised
+        # commits can interleave and raise "database is locked" / corrupt
+        # cursor state. inference_store fixed this; MemoryStore had not.
+        self._lock = threading.RLock()
+        with self._lock:
+            self._init_table()
+
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        """Hold the connection lock for a DB transaction."""
+        with self._lock:
+            yield
 
     def _init_table(self):
         self._conn.execute("""
@@ -32,19 +52,20 @@ class MemoryStore:
         self._conn.commit()
 
     def store(self, entry: MemoryEntry) -> str:
-        self._conn.execute(
-            "INSERT INTO agent_memory (id, memory_type, content, metadata_json, created_at, access_count, relevance_score) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                entry.id,
-                entry.memory_type.value,
-                entry.content,
-                json.dumps(entry.metadata),
-                entry.created_at,
-                entry.access_count,
-                entry.relevance_score,
-            ),
-        )
-        self._conn.commit()
+        with self._locked():
+            self._conn.execute(
+                "INSERT INTO agent_memory (id, memory_type, content, metadata_json, created_at, access_count, relevance_score) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    entry.id,
+                    entry.memory_type.value,
+                    entry.content,
+                    json.dumps(entry.metadata),
+                    entry.created_at,
+                    entry.access_count,
+                    entry.relevance_score,
+                ),
+            )
+            self._conn.commit()
         log.debug(f"MemoryStore: stored memory {entry.id}")
         return entry.id
 
@@ -70,6 +91,9 @@ class MemoryStore:
         """
         Embedding-based semantic retrieval. Returns None when embeddings are
         unavailable (caller falls back to LIKE).
+
+        The expensive embedding step runs outside the connection lock; only the
+        candidate fetch and the access-count write-back are locked.
         """
         # Gather candidates with a broad LIKE (or all rows for small stores),
         # then re-rank by embedding cosine similarity.
@@ -80,7 +104,8 @@ class MemoryStore:
             sql += f" WHERE memory_type IN ({placeholders})"
             params.extend(mt.value for mt in query.memory_types)
         sql += " LIMIT 500"
-        rows = self._conn.execute(sql, params).fetchall()
+        with self._locked():
+            rows = self._conn.execute(sql, params).fetchall()
         if not rows:
             return []
 
@@ -104,15 +129,16 @@ class MemoryStore:
         # Rank by similarity, take top results.
         ranked = sorted(enumerate(rows), key=lambda x: sims[x[0]], reverse=True)
         results = []
-        for idx, row in ranked[: query.limit]:
-            entry = self._row_to_entry(row)
-            # Boost access count for retrieved memories.
-            self._conn.execute(
-                "UPDATE agent_memory SET access_count = access_count + 1 WHERE id = ?",
-                (entry.id,),
-            )
-            results.append(entry)
-        self._conn.commit()
+        with self._locked():
+            for idx, row in ranked[: query.limit]:
+                entry = self._row_to_entry(row)
+                # Boost access count for retrieved memories.
+                self._conn.execute(
+                    "UPDATE agent_memory SET access_count = access_count + 1 WHERE id = ?",
+                    (entry.id,),
+                )
+                results.append(entry)
+            self._conn.commit()
         return results
 
     def _retrieve_like(self, query: MemoryQuery) -> List[MemoryEntry]:
@@ -132,17 +158,18 @@ class MemoryStore:
         sql += " ORDER BY relevance_score DESC, access_count DESC LIMIT ?"
         params.append(query.limit)
 
-        rows = self._conn.execute(sql, params).fetchall()
+        with self._locked():
+            rows = self._conn.execute(sql, params).fetchall()
 
-        results = []
-        for row in rows:
-            entry = self._row_to_entry(row)
-            self._conn.execute(
-                "UPDATE agent_memory SET access_count = access_count + 1 WHERE id = ?",
-                (entry.id,),
-            )
-            results.append(entry)
-        self._conn.commit()
+            results = []
+            for row in rows:
+                entry = self._row_to_entry(row)
+                self._conn.execute(
+                    "UPDATE agent_memory SET access_count = access_count + 1 WHERE id = ?",
+                    (entry.id,),
+                )
+                results.append(entry)
+            self._conn.commit()
         return results
 
     def update(self, id: str, updates: Dict) -> bool:
@@ -161,21 +188,24 @@ class MemoryStore:
                 set_clauses.append(f"{key} = ?")
                 values.append(val)
         values.append(id)
-        cursor = self._conn.execute(
-            f"UPDATE agent_memory SET {', '.join(set_clauses)} WHERE id = ?",
-            values,
-        )
-        self._conn.commit()
-        return cursor.rowcount > 0
+        with self._locked():
+            cursor = self._conn.execute(
+                f"UPDATE agent_memory SET {', '.join(set_clauses)} WHERE id = ?",
+                values,
+            )
+            self._conn.commit()
+            return cursor.rowcount > 0
 
     def delete(self, id: str) -> bool:
-        cursor = self._conn.execute("DELETE FROM agent_memory WHERE id = ?", (id,))
-        self._conn.commit()
-        return cursor.rowcount > 0
+        with self._locked():
+            cursor = self._conn.execute("DELETE FROM agent_memory WHERE id = ?", (id,))
+            self._conn.commit()
+            return cursor.rowcount > 0
 
     def get_by_id(self, id: str) -> Optional[MemoryEntry]:
-        row = self._conn.execute("SELECT * FROM agent_memory WHERE id = ?", (id,)).fetchone()
-        return self._row_to_entry(row) if row else None
+        with self._locked():
+            row = self._conn.execute("SELECT * FROM agent_memory WHERE id = ?", (id,)).fetchone()
+            return self._row_to_entry(row) if row else None
 
     def _row_to_entry(self, row) -> MemoryEntry:
         return MemoryEntry(

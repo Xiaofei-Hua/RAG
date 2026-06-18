@@ -43,21 +43,19 @@ class FastModeResult:
 
 
 def _format_context(documents) -> str:
-    """Format retrieved documents into context string (mirrors GenerateNode._extract_context)."""
-    text_parts: list[str] = []
-    for idx, doc in enumerate(documents, 1):
-        text = doc.page_content.strip() if hasattr(doc, "page_content") else str(doc).strip()
-        if not text:
-            continue
-        meta = getattr(doc, "metadata", None) or {}
-        source = meta.get("source", "未知来源")
-        title = meta.get("title", "未知标题")
-        score = meta.get("score")
-        score_text = f"{float(score):.4f}" if isinstance(score, (int, float)) else "N/A"
-        text_parts.append(
-            f"[证据{idx}] 来源={source} | 标题={title} | 相关度={score_text}\n{text}"
-        )
-    return "\n\n".join(text_parts)
+    """Format retrieved documents into context string.
+
+    Delegates to the shared :mod:`core.retrieval.formatting` layer (the single
+    source of truth for the evidence-line format). The Chinese fallback labels
+    (未知来源/未知标题) are preserved via ``defaults`` so existing prompts are
+    unaffected.
+    """
+    from core.retrieval.formatting import format_documents
+
+    context, _ = format_documents(
+        documents, defaults={"source": "未知来源", "title": "未知标题"}
+    )
+    return context
 
 
 def _docs_to_sources(documents) -> List[Dict[str, Any]]:

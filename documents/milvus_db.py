@@ -67,6 +67,18 @@ class MilvusConfig:
     index_params: Optional[Dict[str, Any]] = None
     search_params: Optional[Dict[str, Any]] = None
 
+    # Extra dynamic-field metadata to return from search (alongside the base
+    # text/source/title). These are written as dynamic fields at insert time
+    # (e.g. page, content_type, file_hash from PDF parsing). Listing them here
+    # makes them visible to retriever formatting / grounding; previously search
+    # returned only text/source/title and the rich chunk metadata was lost.
+    extra_output_fields: tuple = (
+        "page",
+        "content_type",
+        "file_hash",
+        "parent_id",
+    )
+
     def __post_init__(self):
         # Read env vars live (not from cached module constants) so runtime
         # overrides and test monkeypatching take effect.
@@ -163,13 +175,27 @@ def retry_on_failure(
 
 def _get_embedding_function():
     """
-    Reuse the global singleton embedding model.
+    Reuse the global singleton embedding model, wrapped with a query-embedding
+    cache so repeated queries skip the (CPU-bound) embedding call.
 
     Delegates to models.embedding_models.get_local_embeddings() to ensure
-    only one model instance is loaded across the entire process.
+    only one model instance is loaded across the entire process. The cache is
+    opt-out via env ``RETRIEVAL_CACHE_ENABLED`` (default on) and only caches
+    query embeddings (document embeddings are write-path, not cached).
     """
     from models.embedding_models import get_local_embeddings
-    return get_local_embeddings()
+    base = get_local_embeddings()
+
+    import os
+    if os.getenv("RETRIEVAL_CACHE_ENABLED", "true").lower() in (
+        "1", "true", "yes", "on"
+    ):
+        try:
+            from core.retrieval.cache import cached_embedding_function
+            return cached_embedding_function(base)
+        except Exception:  # noqa: BLE001 - caching is best-effort
+            return base
+    return base
 
 
 class MilvusManager:
@@ -511,15 +537,41 @@ class MilvusManager:
             if self.config.search_params:
                 search_params.update(self.config.search_params)
 
-            results = self.client.search(
-                collection_name=self.config.collection_name,
-                data=[query_embedding],
-                anns_field="dense",
-                search_params=search_params,
-                limit=top_k,
-                output_fields=["text", "source", "title"],
-                filter=filter_expr,
-            )
+            # Request the base fields plus any known dynamic metadata fields so
+            # the rich chunk metadata (page, content_type, ...) is returned.
+            # Missing dynamic fields are tolerated: a field absent from a hit's
+            # entity simply defaults to "" below.
+            output_fields = ["text", "source", "title"] + [
+                f for f in self.config.extra_output_fields
+            ]
+
+            try:
+                results = self.client.search(
+                    collection_name=self.config.collection_name,
+                    data=[query_embedding],
+                    anns_field="dense",
+                    search_params=search_params,
+                    limit=top_k,
+                    output_fields=output_fields,
+                    filter=filter_expr,
+                )
+            except Exception as field_err:
+                # Some Milvus versions reject output_fields that were never
+                # created (e.g. a legacy collection without 'page'). Fall back
+                # to the base fields only.
+                log.debug(
+                    f"search with extra output_fields failed ({field_err}); "
+                    f"retrying with base fields"
+                )
+                results = self.client.search(
+                    collection_name=self.config.collection_name,
+                    data=[query_embedding],
+                    anns_field="dense",
+                    search_params=search_params,
+                    limit=top_k,
+                    output_fields=["text", "source", "title"],
+                    filter=filter_expr,
+                )
 
             # Clean up embedding
             del query_embedding
@@ -528,14 +580,20 @@ class MilvusManager:
             search_results = []
             if results and len(results) > 0:
                 for hit in results[0]:
+                    entity = hit.get("entity", {})
+                    metadata = {
+                        "source": entity.get("source", ""),
+                        "title": entity.get("title", ""),
+                    }
+                    # Surface extra dynamic fields when present.
+                    for fld in self.config.extra_output_fields:
+                        if fld in entity and entity[fld] not in (None, ""):
+                            metadata[fld] = entity[fld]
                     result = SearchResult(
                         id=hit.get("id", 0),
-                        text=hit.get("entity", {}).get("text", ""),
+                        text=entity.get("text", ""),
                         score=hit.get("distance", 0.0),
-                        metadata={
-                            "source": hit.get("entity", {}).get("source", ""),
-                            "title": hit.get("entity", {}).get("title", ""),
-                        }
+                        metadata=metadata,
                     )
                     search_results.append(result)
 

@@ -189,12 +189,15 @@ class Reranker:
             results = []
             for doc, score in scored_docs[:top_k]:
                 metadata = dict(doc.metadata)
-                metadata["retrieval_score"] = metadata.get(
-                    "retrieval_score", metadata.get("score", 0.0)
-                )
+                # Preserve the upstream retrieval score (e.g. RRF) under its
+                # own key so downstream stages (MMR) still see it; previously
+                # the raw cross-encoder logit overwrote "score", which broke
+                # MMR's score-blending (negative logits got clamped to 0).
+                if "score" not in metadata:
+                    metadata["score"] = 0.0
+                metadata["retrieval_score"] = metadata.get("score", 0.0)
                 metadata["rerank_score"] = float(score)
                 metadata["rerank_applied"] = True
-                metadata["score"] = float(score)
                 results.append(Document(page_content=doc.page_content, metadata=metadata))
             log.debug(f"Reranked {len(documents)} documents -> {len(results)}")
             return results

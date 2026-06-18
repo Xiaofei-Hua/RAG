@@ -18,6 +18,7 @@ Reliability contract (critical for the hot path):
 
 from __future__ import annotations
 
+import asyncio
 from typing import List, Optional, Tuple
 
 from utils.log_utils import log
@@ -157,6 +158,86 @@ class GroundingGuardrail:
                 faithfulness=None, degraded=True, reason=f"error: {e}"
             )
 
+    async def acheck(
+        self,
+        answer: str,
+        contexts: List[str],
+    ) -> GroundingResult:
+        """
+        Async grounding check that fans out the per-claim entailment calls
+        concurrently via ``asyncio.gather``.
+
+        This is the variant the async/streaming generate path should use: the
+        sync ``check`` issues one blocking judge round-trip per hard claim,
+        which freezes the event loop for N claims. ``acheck`` overlaps them.
+
+        Same reliability contract as ``check``: never raises, returns a
+        degraded ``GroundingResult`` on any failure.
+        """
+        if not answer.strip() or not any(c.strip() for c in contexts):
+            return GroundingResult(
+                faithfulness=None, degraded=True, reason="empty answer or contexts"
+            )
+
+        judge = self.judge
+        if judge is None or not judge.available:
+            return GroundingResult(
+                faithfulness=None, degraded=True, reason="judge unavailable (circuit open)"
+            )
+
+        try:
+            from agent.eval.judge import is_hard_claim, split_claims
+
+            claims = split_claims(answer)
+            hard_claims = [c for c in claims if is_hard_claim(c)]
+            if not hard_claims:
+                return GroundingResult(
+                    faithfulness=1.0, supported=0, total=0,
+                    reason="no hard claims to verify",
+                )
+
+            context_blob = "\n\n".join(
+                f"[片段{i+1}] {c.strip()}" for i, c in enumerate(contexts) if c.strip()
+            )
+
+            # Fan out all claims concurrently; isolate per-claim failures.
+            verdicts = await asyncio.gather(
+                *[judge._aentail(c, context_blob) for c in hard_claims],
+                return_exceptions=True,
+            )
+
+            supported = 0
+            unsupported: List[str] = []
+            judged = 0
+            for claim, verdict in zip(hard_claims, verdicts):
+                if isinstance(verdict, Exception) or verdict is None:
+                    continue  # unavailable != unsupported
+                judged += 1
+                if verdict.supported:
+                    supported += 1
+                else:
+                    unsupported.append(claim)
+
+            if judged == 0:
+                return GroundingResult(
+                    faithfulness=None, degraded=True,
+                    reason="judge could not evaluate any claim",
+                )
+
+            faith = supported / judged
+            return GroundingResult(
+                faithfulness=faith,
+                supported=supported,
+                total=judged,
+                unsupported_claims=unsupported,
+                reason=f"{supported}/{judged} hard claims grounded (async)",
+            )
+        except Exception as e:  # noqa: BLE001 - hot path must not crash
+            log.warning(f"GroundingGuardrail acheck failed: {e}")
+            return GroundingResult(
+                faithfulness=None, degraded=True, reason=f"error: {e}"
+            )
+
 
 _guardrail: Optional[GroundingGuardrail] = None
 
@@ -167,3 +248,11 @@ def check_grounding(answer: str, contexts: List[str]) -> GroundingResult:
     if _guardrail is None:
         _guardrail = GroundingGuardrail()
     return _guardrail.check(answer, contexts)
+
+
+async def acheck_grounding(answer: str, contexts: List[str]) -> GroundingResult:
+    """Async module-level convenience: concurrent grounding check."""
+    global _guardrail
+    if _guardrail is None:
+        _guardrail = GroundingGuardrail()
+    return await _guardrail.acheck(answer, contexts)

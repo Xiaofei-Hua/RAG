@@ -465,6 +465,34 @@ class LLMJudge:
             return None
         return JudgeVerdict(supported=verdict)
 
+    async def _aentail(self, claim: str, context_blob: str) -> Optional[JudgeVerdict]:
+        """Async single-claim NLI entailment check via the judge.
+
+        Safe to fan out with asyncio.gather so an answer with N hard claims
+        does not pay N sequential round-trips on the event loop.
+        """
+        prompt = (
+            "你是一个严格的航空排故事实核查员。请判断【声明】是否能够被【检索内容】"
+            "所支持（蕴含）。\n\n"
+            f"【检索内容】\n{context_blob}\n\n"
+            f"【声明】\n{claim}\n\n"
+            "只依据检索内容判断，不要使用外部知识。仅输出 JSON：\n"
+            '{"supported": true/false, "rationale": "一句话理由"}'
+        )
+        text = await self._aask(prompt)
+        if text is None:
+            return None
+        data = _extract_json(text)
+        if data is not None and "supported" in data:
+            return JudgeVerdict(
+                supported=bool(data["supported"]),
+                rationale=str(data.get("rationale", "")),
+            )
+        verdict = _parse_bool_answer(text, default=None)
+        if verdict is None:
+            return None
+        return JudgeVerdict(supported=verdict)
+
     def hallucination_score(self, answer: str, contexts: List[str]) -> Tuple[Optional[float], str]:
         """
         Fraction of HARD claims (values/steps/conclusions) that are unsupported

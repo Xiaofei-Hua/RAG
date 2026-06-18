@@ -71,6 +71,19 @@ class MCPRetrievalServer(InProcessMCPServer):
                         "description": "Number of results to return",
                         "default": self._default_top_k,
                     },
+                    "filter_expr": {
+                        "type": "string",
+                        "description": (
+                            "Optional Milvus boolean expression to pre-filter "
+                            "dense candidates, e.g. source == \"engine_manual\""
+                        ),
+                    },
+                    "transform": {
+                        "type": "string",
+                        "description": (
+                            "Optional query transform: 'hyde' or 'multi_query'"
+                        ),
+                    },
                 },
                 "required": ["query"],
             },
@@ -133,10 +146,18 @@ class MCPRetrievalServer(InProcessMCPServer):
     # Handler implementations (delegate to existing code)
     # ------------------------------------------------------------------
 
-    def _hybrid_retrieve(self, query: str, top_k: Optional[int] = None) -> List[Dict[str, Any]]:
+    def _hybrid_retrieve(
+        self,
+        query: str,
+        top_k: Optional[int] = None,
+        filter_expr: Optional[str] = None,
+        transform: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
         """
         Hybrid retrieval using dense + BM25 via HybridRetriever.
 
+        Forwards ``filter_expr`` (Milvus pre-filter) and ``transform``
+        (hyde/multi_query) so the MCP path matches the direct-retrieval path.
         Returns formatted result dicts with content, source, score.
         """
         top_k = top_k or self._default_top_k
@@ -145,12 +166,28 @@ class MCPRetrievalServer(InProcessMCPServer):
         try:
             from core.retrieval.hybrid_retriever import get_hybrid_retriever
             retriever = get_hybrid_retriever()
-            documents = retriever.retrieve(query, top_k=top_k)
+            if transform == "multi_query":
+                from core.retrieval.query_transform import multi_query_retrieve
+                documents = multi_query_retrieve(
+                    query, retriever, top_k=top_k, filter_expr=filter_expr
+                )
+            elif transform == "hyde":
+                from core.retrieval.query_transform import hyde
+                hyde_query = hyde(query)
+                documents = retriever.retrieve(
+                    hyde_query, top_k=top_k, filter_expr=filter_expr
+                )
+            else:
+                documents = retriever.retrieve(
+                    query, top_k=top_k, filter_expr=filter_expr
+                )
             elapsed_ms = (time.perf_counter() - start) * 1000
 
             log.info(
                 f"MCP rag_retrieve: {len(documents)} docs, "
                 f"{elapsed_ms:.0f}ms, query='{query[:50]}...'"
+                f"{f', filter={filter_expr}' if filter_expr else ''}"
+                f"{f', transform={transform}' if transform else ''}"
             )
             return self._format_documents(documents)
 
@@ -183,14 +220,20 @@ class MCPRetrievalServer(InProcessMCPServer):
             raise
 
     def _sparse_search(self, query: str, top_k: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Sparse-only BM25 retrieval."""
+        """Sparse-only BM25 retrieval.
+
+        Uses the hybrid retriever's shared BM25 index (which is auto-synced
+        from Milvus on first access). Previously this constructed a brand-new
+        empty ``BM25Retriever()`` per call, which always returned zero results
+        because the index was never populated.
+        """
         top_k = top_k or self._default_top_k
 
         start = time.perf_counter()
         try:
-            from core.retrieval.bm25_retriever import BM25Retriever
-            retriever = BM25Retriever()
-            results = retriever.retrieve(query, top_k=top_k)
+            from core.retrieval.hybrid_retriever import get_hybrid_retriever
+            retriever = get_hybrid_retriever()
+            results = retriever.sparse_retriever.retrieve(query, top_k=top_k)
             documents = [r.document for r in results]
             elapsed_ms = (time.perf_counter() - start) * 1000
 

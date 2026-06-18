@@ -29,6 +29,12 @@ __all__ = [
 ]
 
 
+def _retrieval_cache_enabled() -> bool:
+    """Env-gated retrieval-result cache (default on)."""
+    import os
+    return os.getenv("RETRIEVAL_CACHE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
+
+
 @dataclass
 class HybridRetrieverConfig:
     """Configuration for hybrid retriever."""
@@ -173,6 +179,21 @@ class HybridRetriever:
         top_k = top_k or self.config.final_top_k
         start_time = time.perf_counter()
 
+        # Result cache: identical (query, filter, top_k) returns instantly.
+        # The cache is best-effort; on any failure we fall through to live
+        # retrieval (never break the path over caching).
+        if _retrieval_cache_enabled():
+            try:
+                from core.retrieval.cache import get_retrieval_cache, cache_key
+                key = cache_key("hybrid", query, filter_expr or "", top_k)
+                cached = get_retrieval_cache().get(key)
+                if cached is not None:
+                    log.debug(f"Hybrid retrieval cache HIT (key={key[:8]})")
+                    return cached
+            except Exception as e:  # noqa: BLE001
+                log.debug(f"retrieval cache read skipped: {e}")
+        cache_key_str = None
+
         try:
             # Perform retrievals
             if self.config.enable_parallel:
@@ -195,6 +216,16 @@ class HybridRetriever:
                 f"dense={len(dense_results)}, sparse={len(sparse_results)}, "
                 f"final={len(documents)}, elapsed={elapsed:.1f}ms"
             )
+
+            # Persist into the result cache (store a shallow copy so callers
+            # mutating the returned docs don't corrupt the cached entry).
+            if _retrieval_cache_enabled():
+                try:
+                    from core.retrieval.cache import get_retrieval_cache, cache_key as _ck
+                    cache_key_str = _ck("hybrid", query, filter_expr or "", top_k)
+                    get_retrieval_cache().put(cache_key_str, list(documents))
+                except Exception as e:  # noqa: BLE001
+                    log.debug(f"retrieval cache write skipped: {e}")
 
             return documents
 
@@ -226,6 +257,18 @@ class HybridRetriever:
         """
         top_k = top_k or self.config.final_top_k
         start_time = time.perf_counter()
+
+        # Result cache (parity with the sync path).
+        if _retrieval_cache_enabled():
+            try:
+                from core.retrieval.cache import get_retrieval_cache, cache_key
+                key = cache_key("hybrid", query, filter_expr or "", top_k)
+                cached = get_retrieval_cache().get(key)
+                if cached is not None:
+                    log.debug(f"Async hybrid retrieval cache HIT (key={key[:8]})")
+                    return cached
+            except Exception as e:  # noqa: BLE001
+                log.debug(f"retrieval cache read skipped: {e}")
 
         try:
             # Parallel async retrieval
@@ -261,6 +304,14 @@ class HybridRetriever:
                 f"Async hybrid retrieval: "
                 f"final={len(documents)}, elapsed={elapsed:.1f}ms"
             )
+
+            if _retrieval_cache_enabled():
+                try:
+                    from core.retrieval.cache import get_retrieval_cache, cache_key as _ck
+                    ckey = _ck("hybrid", query, filter_expr or "", top_k)
+                    get_retrieval_cache().put(ckey, list(documents))
+                except Exception as e:  # noqa: BLE001
+                    log.debug(f"retrieval cache write skipped: {e}")
 
             return documents
 

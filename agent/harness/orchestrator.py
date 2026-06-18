@@ -13,6 +13,7 @@ Main orchestrator that:
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import sqlite3
 import uuid
 from dataclasses import dataclass
@@ -35,6 +36,14 @@ from agent.context.state import AgentState
 from utils.log_utils import log
 
 __all__ = ["AgentHarness", "HarnessConfig"]
+
+
+# Per-run trace collector. Each invoke()/ainvoke() call installs a fresh
+# TraceCollector here so that concurrent runs on the singleton harness never
+# share/overwrite each other's traces (begin_run()/_traces.clear() isolation).
+_run_trace_ctx: contextvars.ContextVar[Optional[TraceCollector]] = (
+    contextvars.ContextVar("agent_run_trace", default=None)
+)
 
 
 @dataclass
@@ -98,6 +107,9 @@ class AgentHarness:
         self._config = config or HarnessConfig()
         self._registry = SkillRegistry()
         self._lifecycle = LifecycleManager()
+        # Default collector for non-graph/legacy callers. Concurrent runs use
+        # a per-run collector stored in _run_trace_ctx (a contextvar) so that
+        # begin_run()/_traces.clear() on one run never interleaves with another.
         self._trace_collector = TraceCollector()
         self._planner = Planner(
             default_mode=self._config.default_mode,
@@ -109,6 +121,9 @@ class AgentHarness:
         self._memory = None
         self._checkpoint_conn = None
         self._async_checkpoint_conn = None
+        # Guards the async checkpoint init (astart) so concurrent first-calls
+        # do not double-build the graph.
+        self._async_init_lock = asyncio.Lock()
 
     # ------------------------------------------------------------------
     # Properties
@@ -131,7 +146,13 @@ class AgentHarness:
 
     @property
     def traces(self) -> TraceCollector:
-        return self._trace_collector
+        """Trace collector for the current run, if any; else the default one.
+
+        Concurrent invocations each get their own collector via the run
+        contextvar, so traces from one run never bleed into another.
+        """
+        run_collector = _run_trace_ctx.get()
+        return run_collector if run_collector is not None else self._trace_collector
 
     @property
     def graph(self):
@@ -349,7 +370,7 @@ class AgentHarness:
                 ).to_state_update()
 
             # Execute with tracing
-            trace = harness._trace_collector.begin(skill_name)
+            trace = harness.traces.begin(skill_name)
             result = skill._timed_execute(context)
 
             trace.finish(
@@ -381,7 +402,7 @@ class AgentHarness:
                     messages=[AIMessage(content="请求被安全策略拦截，请重新描述您的问题。")],
                 ).to_state_update()
 
-            trace = harness._trace_collector.begin(skill_name)
+            trace = harness.traces.begin(skill_name)
             from core.tracing import trace_context
 
             with trace_context(
@@ -428,7 +449,7 @@ class AgentHarness:
             # "grade" node, so this is benign; if one is added, grade must be
             # converted from a conditional edge into a real node.
 
-            trace = harness._trace_collector.begin(skill_name)
+            trace = harness.traces.begin(skill_name)
             result = skill._timed_execute(context)
 
             trace.finish(
@@ -449,7 +470,7 @@ class AgentHarness:
                 thread_id=harness._config.thread_id or "",
             )
             harness._lifecycle.fire_before_skill(skill_name, context)
-            trace = harness._trace_collector.begin(skill_name)
+            trace = harness.traces.begin(skill_name)
 
             from core.tracing import trace_context
 
@@ -492,6 +513,35 @@ class AgentHarness:
         from agent.mcp.retriever_tools import get_retriever_tool
         return [get_retriever_tool()]
 
+    # ------------------------------------------------------------------
+    # Per-run trace isolation
+    # ------------------------------------------------------------------
+
+    def _begin_run(self) -> TraceCollector:
+        """Install a fresh per-run TraceCollector and start it.
+
+        The collector is stored in a contextvar so that node functions (which
+        may run as asyncio tasks spawned by LangGraph) inherit it via the
+        standard contextvar copy-on-task semantics. This isolates traces and
+        begin_run()/_traces.clear() across concurrent runs on the singleton
+        harness.
+        """
+        collector = TraceCollector()
+        _run_trace_ctx.set(collector)
+        collector.begin_run()
+        return collector
+
+    def _end_run(self, collector: TraceCollector) -> None:
+        """Finalise a run's trace and log the summary, then clear the var."""
+        try:
+            collector.end_run()
+            collector.log_summary()
+        finally:
+            # Only reset if we still own the var (a nested run would have
+            # replaced it; we must not clobber that).
+            if _run_trace_ctx.get() is collector:
+                _run_trace_ctx.set(None)
+
     def _setup_checkpointing(self) -> None:
         """Set up SQLite checkpointing for session persistence."""
         try:
@@ -513,26 +563,37 @@ class AgentHarness:
             self._memory = MemorySaver()
 
     async def astart(self) -> None:
-        """Initialize the native async SQLite checkpointer and rebuild the graph."""
+        """Initialize the native async SQLite checkpointer and rebuild the graph.
+
+        Guarded by an asyncio lock with double-checked locking so that
+        concurrent first async invocations do not double-build the graph or
+        open multiple async checkpoint connections.
+        """
         if not self._config.use_memory or self._async_checkpoint_conn is not None:
             return
 
-        import os
-        import aiosqlite
-        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+        async with self._async_init_lock:
+            # Re-check inside the lock: another task may have completed the
+            # init while we were waiting.
+            if self._async_checkpoint_conn is not None:
+                return
 
-        _ckpt_dir = os.path.dirname(self._config.checkpoint_path) or "."
-        os.makedirs(_ckpt_dir, exist_ok=True)
-        if self._checkpoint_conn is not None:
-            self._checkpoint_conn.close()
-            self._checkpoint_conn = None
-        self._async_checkpoint_conn = await aiosqlite.connect(
-            self._config.checkpoint_path
-        )
-        self._memory = AsyncSqliteSaver(self._async_checkpoint_conn)
-        self._graph = None
-        self.build_graph()
-        log.info("AgentHarness: async SQLite checkpoint enabled")
+            import os
+            import aiosqlite
+            from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+            _ckpt_dir = os.path.dirname(self._config.checkpoint_path) or "."
+            os.makedirs(_ckpt_dir, exist_ok=True)
+            if self._checkpoint_conn is not None:
+                self._checkpoint_conn.close()
+                self._checkpoint_conn = None
+            self._async_checkpoint_conn = await aiosqlite.connect(
+                self._config.checkpoint_path
+            )
+            self._memory = AsyncSqliteSaver(self._async_checkpoint_conn)
+            self._graph = None
+            self.build_graph()
+            log.info("AgentHarness: async SQLite checkpoint enabled")
 
     # ------------------------------------------------------------------
     # Invocation
@@ -579,11 +640,11 @@ class AgentHarness:
             "max_rewrites": max_rewrites,
         }
 
-        self._trace_collector.begin_run()
-        result = self.graph.invoke(inputs, config=config)
-        self._trace_collector.end_run()
-        self._trace_collector.log_summary()
-
+        run_collector = self._begin_run()
+        try:
+            result = self.graph.invoke(inputs, config=config)
+        finally:
+            self._end_run(run_collector)
         return result
 
     def stream(
@@ -620,11 +681,13 @@ class AgentHarness:
             "max_rewrites": max_rewrites,
         }
 
-        self._trace_collector.begin_run()
-        yield from self.graph.stream(
-            inputs, config=config, stream_mode=stream_mode
-        )
-        self._trace_collector.end_run()
+        run_collector = self._begin_run()
+        try:
+            yield from self.graph.stream(
+                inputs, config=config, stream_mode=stream_mode
+            )
+        finally:
+            self._end_run(run_collector)
 
     async def ainvoke(
         self,
@@ -660,10 +723,11 @@ class AgentHarness:
         }
         config = {"configurable": {"thread_id": thread_id}}
 
-        self._trace_collector.begin_run()
-        result = await self.graph.ainvoke(inputs, config=config)
-        self._trace_collector.end_run()
-        self._trace_collector.log_summary()
+        run_collector = self._begin_run()
+        try:
+            result = await self.graph.ainvoke(inputs, config=config)
+        finally:
+            self._end_run(run_collector)
         return result
 
     async def astream(
@@ -684,14 +748,16 @@ class AgentHarness:
         }
         config = {"configurable": {"thread_id": thread_id}}
 
-        self._trace_collector.begin_run()
-        async for event in self.graph.astream(
-            inputs,
-            config=config,
-            stream_mode=stream_mode,
-        ):
-            yield event
-        self._trace_collector.end_run()
+        run_collector = self._begin_run()
+        try:
+            async for event in self.graph.astream(
+                inputs,
+                config=config,
+                stream_mode=stream_mode,
+            ):
+                yield event
+        finally:
+            run_collector.end_run()
 
     def invoke_fast(self, query: str, thread_id: Optional[str] = None) -> Dict[str, Any]:
         """
@@ -709,12 +775,11 @@ class AgentHarness:
         """
         from core.fast_mode import fast_generate
 
-        self._trace_collector.begin_run()
-
-        result = fast_generate(query, top_k=3)
-
-        self._trace_collector.end_run()
-        self._trace_collector.log_summary()
+        run_collector = self._begin_run()
+        try:
+            result = fast_generate(query, top_k=3)
+        finally:
+            self._end_run(run_collector)
 
         # Convert FastModeResult to a state-like dict
         ai_message = AIMessage(content=result.answer)
@@ -736,12 +801,12 @@ class AgentHarness:
         """
         from core.fast_mode import fast_generate_stream
 
-        self._trace_collector.begin_run()
-
-        async for event in fast_generate_stream(query, top_k=top_k):
-            yield event
-
-        self._trace_collector.end_run()
+        run_collector = self._begin_run()
+        try:
+            async for event in fast_generate_stream(query, top_k=top_k):
+                yield event
+        finally:
+            run_collector.end_run()
 
     # ------------------------------------------------------------------
     # Session management

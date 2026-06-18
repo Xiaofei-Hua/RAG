@@ -104,11 +104,12 @@ def mmr_rerank(
     rel = (doc_vecs @ q_vec) / (
         np.linalg.norm(doc_vecs, axis=1) * q_norm + 1e-9
     )
-    # Blend with retrieval score if available (normalised to 0..1).
-    scores = np.array(
-        [_norm_score(d.metadata.get("score")) for d in pool], dtype=np.float32
-    )
-    # If retrieval scores look meaningful, blend 50/50; else use cosine only.
+    # Blend with retrieval score if available. Scores are min-max normalised
+    # *within the candidate pool* (not globally clamped): RRF scores are tiny
+    # (~0.01) and reranker logits can be negative, so a global clamp to [0,1]
+    # would destroy the ranking signal. Min-max preserves relative ordering.
+    raw_scores = [d.metadata.get("rerank_score", d.metadata.get("score")) for d in pool]
+    scores = _norm_scores(raw_scores)
     if scores.max() > 0:
         relevance = 0.5 * rel + 0.5 * scores
     else:
@@ -140,11 +141,33 @@ def mmr_rerank(
     return [pool[i] for i in selected]
 
 
-def _norm_score(s) -> float:
-    """Normalise a retrieval score to roughly 0..1 (best-effort)."""
-    try:
-        v = float(s)
-    except (TypeError, ValueError):
-        return 0.0
-    # RRF scores are tiny (~0.01); cosine scores are ~0..1. Saturate at 1.
-    return max(0.0, min(1.0, v))
+def _norm_scores(raw_scores) -> np.ndarray:
+    """
+    Min-max normalise a list of retrieval scores to [0, 1].
+
+    Unlike a global clamp, min-max preserves the relative ordering of the
+    candidate pool. This matters because:
+      - RRF scores are tiny (~0.01) — clamping to [0,1] collapses them all.
+      - Reranker logits can be negative — clamping maps negatives to 0,
+        destroying the reranker's ranking signal when MMR runs after it.
+
+    Returns an all-zero array when no numeric scores are present (so the
+    caller falls back to pure cosine relevance).
+    """
+    numeric = []
+    for s in raw_scores:
+        try:
+            numeric.append(float(s))
+        except (TypeError, ValueError):
+            numeric.append(None)
+    if not any(v is not None for v in numeric):
+        return np.zeros(len(raw_scores), dtype=np.float32)
+    # Replace missing values with the min of present values (least relevant).
+    present = [v for v in numeric if v is not None]
+    fill = min(present)
+    vals = np.array([fill if v is None else v for v in numeric], dtype=np.float32)
+    lo, hi = float(vals.min()), float(vals.max())
+    if hi - lo < 1e-9:
+        # All equal: no discriminative signal; treat as uniform (0.5 mid-band).
+        return np.full(len(vals), 0.5, dtype=np.float32)
+    return (vals - lo) / (hi - lo)

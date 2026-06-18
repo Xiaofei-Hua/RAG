@@ -31,7 +31,10 @@ def test_reranker_preserves_retrieval_score_and_updates_final_score():
     assert results[0].metadata["retrieval_score"] == 0.3
     assert results[0].metadata["rerank_score"] == 0.9
     assert results[0].metadata["rerank_applied"] is True
-    assert results[0].metadata["score"] == 0.9
+    # The reranker must NOT overwrite the upstream retrieval score with its raw
+    # logit — that would corrupt MMR's score-blending downstream. The original
+    # RRF/retrieval score is preserved under "score".
+    assert results[0].metadata["score"] == 0.3
 
 
 def test_reranker_load_failure_is_not_retried(monkeypatch):

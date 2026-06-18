@@ -286,6 +286,26 @@ class GenerateSkill(BaseSkill):
             log.debug(f"grounding faithfulness skipped: {e}")
             return None
 
+    async def _agrounding_faithfulness(
+        self, answer: str, messages: List[BaseMessage]
+    ) -> Optional[float]:
+        """
+        Async grounding score: fans out per-claim entailment concurrently so an
+        answer with N hard claims does not block the event loop for N sequential
+        judge round-trips. The sync path above is kept for the sync pipeline.
+        """
+        try:
+            from agent.guardrails.grounding_guardrail import acheck_grounding
+
+            contexts = self._contexts_list(messages)
+            if not contexts:
+                return None
+            result = await acheck_grounding(answer, contexts)
+            return result.faithfulness  # None when degraded
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"async grounding faithfulness skipped: {e}")
+            return None
+
     @staticmethod
     def _contexts_list(messages: List[BaseMessage]) -> List[str]:
         """Flatten retrieved chunks from the last message into plain strings."""
@@ -408,8 +428,10 @@ class GenerateSkill(BaseSkill):
                     writer({"type": "token", "content": text, "node": self.name})
 
                 answer = strip_think_tags("".join(chunks))
-                # Grounding + confidence (best-effort).
-                faith = self._grounding_faithfulness(answer, messages)
+                # Grounding + confidence (best-effort). Async path fans out
+                # per-claim entailment concurrently instead of blocking the
+                # event loop with N sequential judge round-trips.
+                faith = await self._agrounding_faithfulness(answer, messages)
                 # Cache the verdict so the output guardrail can reuse it.
                 shared_state["grounding_faithfulness"] = faith
                 confidence, degraded = self._compute_confidence(shared_state, faith)
@@ -573,7 +595,9 @@ class GenerateSkill(BaseSkill):
         Extract context from messages.
 
         The context is in the last message (from the retriever / ToolNode).
-        Handles both string and list (tool result) formats.
+        Handles both string and list (tool result) formats. The list branch
+        delegates to the shared formatting layer so the evidence-line format
+        is defined once.
         """
         last_message = messages[-1] if messages else None
         if last_message is None:
@@ -581,10 +605,15 @@ class GenerateSkill(BaseSkill):
 
         content = last_message.content
 
-        # If content is a list (tool result format), extract text
+        # If content is a list (tool result format), format via shared layer.
         if isinstance(content, list):
-            text_parts = []
-            for idx, item in enumerate(content, 1):
+            from core.retrieval.formatting import FormattedDoc, format_score
+
+            # Build FormattedDocs straight from the list items (they already
+            # carry text/source/title/score) and render with the shared format.
+            parts: List[str] = []
+            idx = 0
+            for item in content:
                 if isinstance(item, dict) and "text" in item:
                     text = str(item.get("text", "")).strip()
                     if not text:
@@ -592,21 +621,18 @@ class GenerateSkill(BaseSkill):
                     metadata = item.get("metadata", {})
                     if not isinstance(metadata, dict):
                         metadata = {}
+                    idx += 1
                     source = item.get("source") or metadata.get("source", "unknown")
                     title = item.get("title") or metadata.get("title", "unknown")
-                    score = item.get("score") or metadata.get("score")
-                    score_text = (
-                        f"{float(score):.4f}"
-                        if isinstance(score, (int, float))
-                        else "N/A"
+                    raw_score = item.get("score") or metadata.get("score")
+                    score = raw_score if isinstance(raw_score, (int, float)) else None
+                    fd = FormattedDoc(
+                        index=idx, source=source, title=title, score=score, content=text
                     )
-                    text_parts.append(
-                        f"[证据{idx}] 来源={source} | "
-                        f"标题={title} | 相关度={score_text}\n{text}"
-                    )
+                    parts.append(f"{fd.to_evidence_line()}\n{text}")
                 elif isinstance(item, str):
-                    text_parts.append(item)
-            return "\n\n".join(text_parts)
+                    parts.append(item)
+            return "\n\n".join(parts)
 
         return str(content)
 
@@ -618,42 +644,68 @@ class GenerateSkill(BaseSkill):
         """
         Truncate the context string to fit the token budget.
 
-        Uses token-aware truncation (cuts at a token boundary, never mid-CJK)
-        when ``max_context_tokens > 0``; otherwise falls back to the legacy
-        character-based truncation for backward compatibility.
-        """
-        budget = self._skill_config.max_context_tokens
-        if budget and budget > 0:
-            from core.context.token_budget import estimate_tokens
+        Truncates at chunk boundaries (``\\n\\n``) rather than mid-character,
+        so individual evidence chunks are never cut in half and the per-character
+        walk is avoided. When ``max_context_tokens > 0`` the budget is measured
+        in estimated tokens; otherwise the legacy character cap applies.
 
-            if estimate_tokens(ctx) <= budget:
-                return ctx
-            # Truncate by tokens: walk the string, keep adding tokens worth of
-            # chars until the budget is hit. This keeps multi-byte boundaries.
-            kept_chars = 0
-            used = 0
-            for ch in ctx:
-                cjk = "\u4e00" <= ch <= "\u9fff"
-                cost = (1 / 1.5) if cjk else (1 / 4)
-                if used + cost > budget:
+        Greedy: keeps chunks in order until adding the next would exceed the
+        budget, then appends a truncation marker.
+        """
+        from core.context.token_budget import estimate_tokens
+
+        # Split into evidence chunks on the blank-line separator the formatter
+        # emits between chunks.
+        chunks = ctx.split("\n\n")
+
+        budget_tokens = self._skill_config.max_context_tokens
+        budget_chars = self._skill_config.max_context_length
+        use_tokens = bool(budget_tokens and budget_tokens > 0)
+
+        if use_tokens and estimate_tokens(ctx) <= budget_tokens:
+            return ctx
+        if not use_tokens and len(ctx) <= budget_chars:
+            return ctx
+
+        kept: List[str] = []
+        used_tokens = 0
+        used_chars = 0
+        for chunk in chunks:
+            piece = "\n\n".join(kept + [chunk]) if kept else chunk
+            if use_tokens:
+                cost = estimate_tokens(chunk) + 2  # +2 for the separator
+                if used_tokens + cost > budget_tokens and kept:
                     break
-                kept_chars += 1
-                used += cost
-            return ctx[:kept_chars] + "\n...[内容已按 token 预算截断]"
-        # Legacy char-based truncation.
-        if len(ctx) > self._skill_config.max_context_length:
-            return ctx[:self._skill_config.max_context_length] + "\n...[内容已截断]"
-        return ctx
+                used_tokens += cost
+            else:
+                cost = len(chunk) + 2
+                if used_chars + cost > budget_chars and kept:
+                    break
+                used_chars += cost
+            kept.append(chunk)
+
+        if not kept:
+            # Budget too small for even one chunk: keep the first chunk's head.
+            if chunks:
+                head = chunks[0]
+                if use_tokens:
+                    return head[:budget_tokens * 2] + "\n...[内容已按 token 预算截断]"
+                return head[:budget_chars] + "\n...[内容已截断]"
+            return ""
+        marker = "...[内容已按 token 预算截断]" if use_tokens else "...[内容已截断]"
+        return "\n\n".join(kept) + "\n" + marker
 
     @staticmethod
     def _extract_relevance_scores(messages: List[BaseMessage]) -> List[float]:
         """
         Extract retrieval relevance scores from the last tool/retriever message.
 
-        Looks for numeric "相关度=X" markers first (the format _extract_context
-        emits), then falls back to score metadata in list items.
+        The string branch uses the shared parser
+        (:func:`core.retrieval.formatting.parse_relevance_scores`) — the single
+        authoritative reader for the ``相关度=X`` markers emitted by the shared
+        formatter. The list branch reads score metadata directly.
         """
-        import re as _re
+        from core.retrieval.formatting import parse_relevance_scores
 
         last_message = messages[-1] if messages else None
         if last_message is None:
@@ -669,11 +721,7 @@ class GenerateSkill(BaseSkill):
                     if isinstance(s, (int, float)):
                         scores.append(float(s))
         elif isinstance(content, str):
-            for m in _re.finditer(r"相关度=([\d.]+)", content):
-                try:
-                    scores.append(float(m.group(1)))
-                except ValueError:
-                    continue
+            scores = parse_relevance_scores(content)
         return scores
 
     def _should_refuse(

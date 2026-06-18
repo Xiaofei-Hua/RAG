@@ -158,7 +158,15 @@ class RetrieveSkill(BaseSkill):
                 try:
                     raw_results = await self._mcp_client.call_tool(
                         "rag_retrieve",
-                        {"query": query, "top_k": self._skill_config.top_k},
+                        {
+                            "query": query,
+                            "top_k": self._skill_config.top_k,
+                            # Forward filtering + query transform so the MCP
+                            # path matches the direct-retrieval path. Previously
+                            # these were dropped, causing a correctness divergence.
+                            "filter_expr": filter_expr,
+                            "transform": transform,
+                        },
                     )
                     documents = self._raw_to_documents(raw_results)
                 except Exception as e:
@@ -457,22 +465,14 @@ class RetrieveSkill(BaseSkill):
         """
         Format documents into the context string used by GenerateNode.
 
-        Mirrors the format from GenerateNode._extract_context.
+        Delegates to the shared :mod:`core.retrieval.formatting` layer so the
+        evidence-line format is defined in one place (previously this was
+        duplicated across retrieve/generate/fast-mode).
         """
-        parts: list[str] = []
-        for idx, doc in enumerate(documents, 1):
-            text = doc.page_content.strip() if hasattr(doc, "page_content") else str(doc).strip()
-            if not text:
-                continue
-            meta = getattr(doc, "metadata", None) or {}
-            source = meta.get("source", "unknown")
-            title = meta.get("title", "unknown")
-            score = meta.get("score")
-            score_text = f"{float(score):.4f}" if isinstance(score, (int, float)) else "N/A"
-            parts.append(
-                f"[证据{idx}] 来源={source} | 标题={title} | 相关度={score_text}\n{text}"
-            )
-        return "\n\n".join(parts)
+        from core.retrieval.formatting import format_documents
+
+        context, _ = format_documents(documents)
+        return context
 
     @staticmethod
     def _raw_to_documents(raw_results: list) -> List[Document]:
