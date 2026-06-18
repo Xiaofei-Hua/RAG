@@ -61,6 +61,30 @@ def _compute_file_hash(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
+def _secure_filename(filename: str) -> str:
+    """
+    Sanitise a user-supplied filename for safe use in a filesystem path.
+
+    Strips directory components and path separators so that a name like
+    ``../../etc/x.md`` cannot escape the destination directory. Falls back to
+    a generic name when nothing safe remains. The original (sanitised) name
+    is still used for display/duplicate-detection.
+    """
+    import os
+    import re
+
+    if not filename:
+        return "upload"
+    # Take the basename only (handles both / and \ and any leading ../).
+    name = os.path.basename(filename.replace("\\", "/"))
+    # Drop any remaining path separators / dots-only / control chars.
+    name = re.sub(r"[\/\x00-\x1f]", "_", name)
+    # Collapse ".." sequences that survived.
+    name = name.replace("..", "_")
+    name = name.strip(". ") or "upload"
+    return name
+
+
 def _escape_filter_value(value: str) -> str:
     """Escape special characters in Milvus filter expression values."""
     return value.replace("\\", "\\\\").replace('"', '\\"')
@@ -230,8 +254,10 @@ async def upload_document(
             log.warning(f"Duplicate upload rejected: {filename} (hash={file_hash[:16]}...)")
             raise HTTPException(status_code=409, detail=duplicate_msg)
 
-        # Save temporarily
-        temp_path = f"/tmp/{doc_id}_{filename}"
+        # Save temporarily — sanitise the filename to prevent path traversal
+        # (a user-supplied name like ../../etc/x must not escape /tmp).
+        safe_name = _secure_filename(filename)
+        temp_path = f"/tmp/{doc_id}_{safe_name}"
         with open(temp_path, "wb") as f:
             f.write(content)
 

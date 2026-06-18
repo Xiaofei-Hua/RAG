@@ -92,10 +92,25 @@ app = FastAPI(
     redoc_url="/redoc",
 )
 
-# CORS middleware
+# CORS middleware.
+#
+# ``allow_origins=["*"]`` combined with ``allow_credentials=True`` is an
+# invalid and insecure combination per the CORS spec (browsers reject it, and
+# it signals a credential leak if any auth is ever added). Origins are now
+# driven by the ``ALLOWED_ORIGINS`` env var (comma-separated). When unset, a
+# safe local-dev default is used; production deployments MUST set it
+# explicitly.
+_default_origins = "http://localhost:5173,http://127.0.0.1:5173"
+_allowed_origins = [
+    o.strip()
+    for o in os.getenv("ALLOWED_ORIGINS", _default_origins).split(",")
+    if o.strip()
+]
+# ``allow_credentials`` is only meaningful with a concrete origin list (never
+# with "*"); keep it on so cookies/auth headers work in production once set.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Configure for production
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

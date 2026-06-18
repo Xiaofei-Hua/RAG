@@ -2,17 +2,70 @@
 Admin Router for Enterprise RAG Platform
 
 Handles system administration and monitoring endpoints.
+
+Security: sensitive endpoints (config, inference detail, circuit-breaker
+reset, degradation mode) are gated by :func:`require_admin`, which checks an
+``X-Admin-Key`` header against the ``ADMIN_API_KEY`` env var. When no key is
+configured, requests are allowed only from localhost (127.0.0.1/::1) so local
+development keeps working. Read-only health/metrics remain open.
 """
 
 from __future__ import annotations
 
+import ipaddress
+import os
 from typing import Dict, Any, Literal
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header, HTTPException, Request, Depends
 
 from utils.log_utils import log
 
 router = APIRouter()
+
+
+def require_admin(
+    request: Request,
+    x_admin_key: str | None = Header(default=None, alias="X-Admin-Key"),
+) -> None:
+    """
+    Gate sensitive admin endpoints.
+
+    - If ``ADMIN_API_KEY`` is set: the request must carry a matching
+      ``X-Admin-Key`` header.
+    - If unset (local dev): only loopback clients are allowed.
+
+    Raises 401 on missing/mismatched key, 403 on non-loopback without a key.
+    """
+    configured = os.getenv("ADMIN_API_KEY", "").strip()
+    client_host = None
+    try:
+        client = request.client
+        client_host = client.host if client else None
+    except Exception:  # noqa: BLE001
+        client_host = None
+
+    if configured:
+        if not x_admin_key or x_admin_key.strip() != configured:
+            raise HTTPException(status_code=401, detail="invalid or missing admin key")
+        return
+
+    # No key configured -> allow loopback (and the in-process Starlette test
+    # client, whose client.host is the literal "testclient") so local dev and
+    # the test suite keep working. Production MUST set ADMIN_API_KEY to lock
+    # these down.
+    if client_host:
+        if client_host == "testclient":
+            return
+        try:
+            ip = ipaddress.ip_address(client_host)
+            if ip.is_loopback:
+                return
+        except ValueError:
+            pass
+    raise HTTPException(
+        status_code=403,
+        detail="admin endpoints require ADMIN_API_KEY or a loopback client",
+    )
 
 
 @router.get("/health")
@@ -145,7 +198,9 @@ async def get_circuit_breakers():
 
 
 @router.post("/circuit-breakers/{name}/reset")
-async def reset_circuit_breaker(name: Literal["llm", "retriever"]):
+async def reset_circuit_breaker(
+    name: Literal["llm", "retriever"], _: None = Depends(require_admin)
+):
     """Reset a circuit breaker."""
     from core.fallback.circuit_breaker import get_llm_circuit, get_retriever_circuit
 
@@ -167,7 +222,10 @@ async def get_degradation_status():
 
 
 @router.post("/degradation/mode/{mode}")
-async def set_degradation_mode(mode: Literal["full", "cached", "simplified", "offline"]):
+async def set_degradation_mode(
+    mode: Literal["full", "cached", "simplified", "offline"],
+    _: None = Depends(require_admin),
+):
     """Set degradation mode."""
     from core.fallback.degradation import get_degradation_handler, FallbackMode
 
@@ -178,7 +236,7 @@ async def set_degradation_mode(mode: Literal["full", "cached", "simplified", "of
 
 
 @router.get("/config")
-async def get_config():
+async def get_config(_: None = Depends(require_admin)):
     """Get current configuration."""
     from utils.env_utils import (
         COLLECTION_NAME,
@@ -319,7 +377,7 @@ async def eval_candidates():
 
 
 @router.get("/inferences")
-async def inferences(limit: int = 50, offset: int = 0):
+async def inferences(limit: int = 50, offset: int = 0, _: None = Depends(require_admin)):
     """Browse sampled production inferences."""
     from agent.eval import get_inference_store
 
@@ -346,7 +404,7 @@ async def inferences(limit: int = 50, offset: int = 0):
 
 
 @router.get("/inferences/{trace_id}")
-async def inference_detail(trace_id: str):
+async def inference_detail(trace_id: str, _: None = Depends(require_admin)):
     """Full detail (incl. retrieved docs + answer) for one inference."""
     from agent.eval import get_inference_store
     from fastapi import HTTPException

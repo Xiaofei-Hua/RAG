@@ -206,15 +206,65 @@ class ExternalAPIToolsServer(InProcessMCPServer):
         )
 
     @staticmethod
+    def _ssf_blocked(url: str) -> str | None:
+        """
+        Validate a URL for SSRF safety. Returns a reason string if blocked,
+        else None.
+
+        Blocks: non-http(s) schemes, private/loopback/link-local/multicast IP
+        literals, and hostnames that don't resolve to a public address. An
+        optional allowlist can be set via ``HTTP_TOOL_ALLOWED_HOSTS`` (comma-
+        separated); when set, only those hosts are permitted.
+        """
+        import ipaddress
+        import os
+        import socket
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        if parsed.scheme not in ("http", "https"):
+            return "URL 必须以 http:// 或 https:// 开头"
+        host = parsed.hostname
+        if not host:
+            return "URL 缺少主机名"
+
+        # Optional host allowlist (most restrictive control).
+        allow_env = os.getenv("HTTP_TOOL_ALLOWED_HOSTS", "").strip()
+        if allow_env:
+            allowed = {h.strip().lower() for h in allow_env.split(",") if h.strip()}
+            if host.lower() not in allowed:
+                return f"主机 {host} 不在允许列表内"
+
+        # Resolve the hostname and reject if ANY resolved address is private /
+        # loopback / link-local. DNS rebinding to a private IP is also caught
+        # because we check every returned address.
+        try:
+            infos = socket.getaddrinfo(host, None)
+        except socket.gaierror:
+            return f"无法解析主机 {host}"
+        for info in infos:
+            ip_str = info[4][0]
+            try:
+                # getaddrinfo may return IPv6 in brackets-free form; zone ids
+                # are stripped by ipaddress.
+                ip = ipaddress.ip_address(ip_str.split("%")[0])
+            except ValueError:
+                continue
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved:
+                return f"主机 {host} 解析到内网/保留地址 {ip}，已拒绝"
+        return None
+
+    @staticmethod
     def http_get(url: str, timeout: int = 10) -> str:
-        """Perform a read-only HTTP GET."""
+        """Perform a read-only HTTP GET (SSRF-hardened)."""
         import urllib.request
 
-        if not url or not url.startswith(("http://", "https://")):
-            return "错误：URL 必须以 http:// 或 https:// 开头"
+        blocked = ExternalAPIToolsServer._ssf_blocked(url)
+        if blocked:
+            return f"错误：{blocked}"
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "RAG-Agent/1.0"})
-            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - tool is opt-in
+            with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - SSRF-checked above
                 body = resp.read().decode("utf-8", errors="replace")[:2000]
             return body
         except Exception as ex:

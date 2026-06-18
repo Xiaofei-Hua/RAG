@@ -44,8 +44,11 @@ PII_PATTERNS: List[Tuple[str, re.Pattern]] = [
     ("bank_card", re.compile(r"(?<!\d)[1-9]\d{15,18}(?!\d)")),
     # Email
     ("email", re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")),
-    # IPv4
-    ("ip", re.compile(r"(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)")),
+    # IPv4 — each octet validated to 0-255 (rejects e.g. 999.999.999.999).
+    # octet = 25[0-5] | 2[0-4]\d | 1?\d?\d
+    ("ip", re.compile(
+        r"(?<!\d)(?:25[0-5]|2[0-4]\d|1?\d?\d)(?:\.(?:25[0-5]|2[0-4]\d|1?\d?\d)){3}(?!\d)"
+    )),
 ]
 
 
