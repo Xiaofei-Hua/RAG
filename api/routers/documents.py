@@ -255,7 +255,9 @@ async def upload_document(
             raise HTTPException(status_code=409, detail=duplicate_msg)
 
         # Save temporarily — sanitise the filename to prevent path traversal
-        # (a user-supplied name like ../../etc/x must not escape /tmp).
+        # (a user-supplied name like ../../etc/x must not escape /tmp). The
+        # sanitised name is also used as the document source/registry name so
+        # path fragments don't leak into chunk metadata or the listing.
         safe_name = _secure_filename(filename)
         temp_path = f"/tmp/{doc_id}_{safe_name}"
         with open(temp_path, "wb") as f:
@@ -265,7 +267,7 @@ async def upload_document(
         registry = get_document_registry()
         registry.put(
             doc_id=doc_id,
-            filename=filename,
+            filename=safe_name,
             status="processing",
             chunks=0,
             created_at=time.time(),
@@ -278,13 +280,13 @@ async def upload_document(
             _process_document,
             doc_id,
             temp_path,
-            filename,
+            safe_name,
             file_hash,
         )
 
         return UploadResponse(
             id=doc_id,
-            filename=filename,
+            filename=safe_name,
             status="processing",
             message="Document uploaded and processing started",
         )

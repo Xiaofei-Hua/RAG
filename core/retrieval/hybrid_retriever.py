@@ -217,13 +217,16 @@ class HybridRetriever:
                 f"final={len(documents)}, elapsed={elapsed:.1f}ms"
             )
 
-            # Persist into the result cache (store a shallow copy so callers
-            # mutating the returned docs don't corrupt the cached entry).
+            # Persist into the result cache. We deep-copy so downstream
+            # mutations to the returned Document objects (e.g. retrieve skill
+            # injecting memory metadata) do not corrupt the cached entry — a
+            # shallow list copy would share element refs and leak mutations.
             if _retrieval_cache_enabled():
                 try:
+                    import copy
                     from core.retrieval.cache import get_retrieval_cache, cache_key as _ck
                     cache_key_str = _ck("hybrid", query, filter_expr or "", top_k)
-                    get_retrieval_cache().put(cache_key_str, list(documents))
+                    get_retrieval_cache().put(cache_key_str, copy.deepcopy(documents))
                 except Exception as e:  # noqa: BLE001
                     log.debug(f"retrieval cache write skipped: {e}")
 
@@ -307,9 +310,11 @@ class HybridRetriever:
 
             if _retrieval_cache_enabled():
                 try:
+                    import copy
                     from core.retrieval.cache import get_retrieval_cache, cache_key as _ck
                     ckey = _ck("hybrid", query, filter_expr or "", top_k)
-                    get_retrieval_cache().put(ckey, list(documents))
+                    # Deep-copy to insulate the cache from downstream mutations.
+                    get_retrieval_cache().put(ckey, copy.deepcopy(documents))
                 except Exception as e:  # noqa: BLE001
                     log.debug(f"retrieval cache write skipped: {e}")
 

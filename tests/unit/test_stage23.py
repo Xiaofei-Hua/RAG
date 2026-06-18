@@ -163,6 +163,33 @@ class TestRetrievalCache:
         assert v1 == v2 == [0.1, 0.2]
         assert calls["n"] == 1  # second call served from cache
 
+    def test_cache_is_insulated_from_caller_mutations(self, monkeypatch):
+        """Cached Document objects must be deep-copied so downstream
+        metadata mutations (memory injection, score rewrites) don't corrupt
+        the cached entry returned to later identical queries."""
+        from core.retrieval import hybrid_retriever as hr
+        from core.retrieval.cache import get_retrieval_cache
+        from langchain_core.documents import Document
+
+        get_retrieval_cache().clear()
+        retriever = hr.HybridRetriever()
+        doc = Document(page_content="chunk", metadata={"score": 0.9})
+        retriever._parallel_retrieve = lambda q, f=None: (
+            [hr.RetrievalResult(document=doc, score=0.9, source="dense", rank=1)], [],
+        )
+        retriever._rerank = lambda q, d, k: d
+        retriever._time_decay = lambda d: d
+        retriever._mmr = lambda q, d, k: d
+
+        d1 = retriever.retrieve("q_isolated", top_k=3)
+        # Caller mutates the returned doc (simulating retrieve-skill edits).
+        d1[0].metadata["score"] = 0.01
+        d1[0].metadata["polluted"] = True
+        # Second identical query hits the cache; it must NOT reflect mutations.
+        d2 = retriever.retrieve("q_isolated", top_k=3)
+        assert d2[0].metadata.get("polluted") is None, "cache leaked caller mutation"
+        assert d2[0].metadata.get("score") != 0.01, "cache score was corrupted"
+
 
 # ===========================================================================
 # Stage 3.1 — async grounding concurrency
