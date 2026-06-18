@@ -63,16 +63,87 @@ class OutputGuardrail:
         )
 
     def _check_hallucination(
-        self, answer: str, sources: Optional[List[str]] = None
+        self,
+        answer: str,
+        sources: Optional[List[str]] = None,
+        contexts: Optional[List[str]] = None,
+        cached_faith: Optional[float] = None,
     ) -> GuardrailResult:
         """
-        Compare cited sources in the answer against the actual retrieval
-        sources.  If the answer cites something not grounded in the sources,
-        flag it for escalation.
+        Verify the answer is grounded in the retrieved evidence.
+
+        Two modes, in priority order:
+          1. Semantic grounding (NLI) — when ``contexts`` are available and
+             ``enable_grounding_check`` is on, reuse the eval LLMJudge to check
+             that the answer's hard claims are entailed by the contexts. This
+             is the trustworthy path. When ``cached_faith`` is provided (the
+             generate skill already ran the judge), it is used directly instead
+             of re-invoking the judge — avoids a duplicate per-claim round trip.
+          2. Legacy regex check — falls back when grounding is disabled or the
+             judge is unavailable. Compares cited source names against the
+             actual sources list (best-effort substring match).
         """
         if not self._config.enable_hallucination_check:
             return GuardrailResult(action=GuardrailAction.ALLOW)
 
+        # --- Mode 1: semantic grounding (NLI) ---
+        if self._config.enable_grounding_check and (contexts or cached_faith is not None):
+            try:
+                # Use the cached verdict when available; otherwise compute it.
+                supported = total = None
+                if cached_faith is not None:
+                    faith = cached_faith
+                    meta = {"grounding": {"faithfulness": faith, "cached": True}}
+                else:
+                    from agent.guardrails.grounding_guardrail import check_grounding
+
+                    result = check_grounding(answer, contexts or [])
+                    if not result.available:
+                        # judge unavailable — fall through to regex.
+                        raise RuntimeError("grounding degraded")
+                    faith = result.faithfulness
+                    supported, total = result.supported, result.total
+                    meta = {"grounding": result.to_dict()}
+
+                if faith <= self._config.grounding_escalate_threshold:
+                    # Fully unsupported hard claims — escalate.
+                    detail = (
+                        f" ({supported}/{total} grounded)" if supported is not None else ""
+                    )
+                    return GuardrailResult(
+                        action=GuardrailAction.ESCALATE,
+                        reason=(
+                            f"答案硬声明未经检索内容支持 "
+                            f"(faithfulness={faith:.2f}{detail})"
+                        ),
+                        confidence=0.8,
+                        metadata=meta,
+                    )
+                if faith < self._config.grounding_threshold:
+                    # Partially unsupported — append a caveat.
+                    caveat = (
+                        "\n\n> ⚠️ 提示：本回答部分结论未经手册直接验证，"
+                        "请核对原始资料后再行决策。"
+                    )
+                    return GuardrailResult(
+                        action=GuardrailAction.SANITIZE,
+                        reason=(
+                            f"部分硬声明未经支持 "
+                            f"(faithfulness={faith:.2f})"
+                        ),
+                        sanitized_content=answer + caveat,
+                        confidence=0.7,
+                        metadata=meta,
+                    )
+                # Well grounded.
+                return GuardrailResult(
+                    action=GuardrailAction.ALLOW,
+                    metadata=meta,
+                )
+            except Exception as e:  # noqa: BLE001 - never block on grounding
+                log.debug(f"Grounding check unavailable, falling back to regex: {e}")
+
+        # --- Mode 2: legacy regex check (fallback) ---
         # If no sources provided, we cannot verify -- allow through.
         if not sources:
             return GuardrailResult(action=GuardrailAction.ALLOW)
@@ -119,14 +190,20 @@ class OutputGuardrail:
     # ------------------------------------------------------------------
 
     def validate(
-        self, answer: str, sources: Optional[List[str]] = None
+        self,
+        answer: str,
+        sources: Optional[List[str]] = None,
+        contexts: Optional[List[str]] = None,
+        cached_faith: Optional[float] = None,
     ) -> GuardrailResult:
         """Run all output checks in sequence; return the most restrictive result."""
         # Priority order: BLOCK > ESCALATE > SANITIZE > ALLOW
         worst = GuardrailResult(action=GuardrailAction.ALLOW)
 
         # 1. Hallucination check (can produce ESCALATE)
-        result = self._check_hallucination(answer, sources)
+        result = self._check_hallucination(
+            answer, sources, contexts=contexts, cached_faith=cached_faith
+        )
         if result.action == GuardrailAction.ESCALATE:
             worst = result
         elif result.action.value > worst.action.value:
@@ -142,6 +219,27 @@ class OutputGuardrail:
         result = self._check_structure(answer)
         if result.action == GuardrailAction.SANITIZE and worst.action == GuardrailAction.ALLOW:
             worst = result
+
+        # 4. PII redaction (P3.1): redact any PII in the answer before it
+        #    reaches the user. Highest priority — always applies.
+        if self._config.enable_pii_check:
+            from agent.guardrails.pii import detect_pii, redact_pii
+
+            pii_matches = detect_pii(answer)
+            if pii_matches:
+                redacted = redact_pii(answer)
+                log.info(
+                    f"OutputGuardrail: redacting {len(pii_matches)} PII "
+                    f"({', '.join(m.kind for m in pii_matches)})"
+                )
+                # Redaction is a SANITIZE that overrides (always wins).
+                return GuardrailResult(
+                    action=GuardrailAction.SANITIZE,
+                    reason=f"redacted {len(pii_matches)} PII occurrence(s)",
+                    sanitized_content=redacted,
+                    confidence=1.0,
+                    metadata={"pii": [m.kind for m in pii_matches]},
+                )
 
         if worst.action != GuardrailAction.ALLOW:
             log.info(f"OutputGuardrail: {worst.action.value} - {worst.reason}")

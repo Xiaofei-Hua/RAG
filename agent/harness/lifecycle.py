@@ -84,7 +84,13 @@ class LifecycleManager:
         """
         Register a hook to run before a skill executes.
 
-        Callback signature: (skill_name: str, context: SkillContext) -> None
+        Callback signature:
+            (skill_name: str, context: SkillContext) -> Optional[dict]
+
+        A hook may optionally return a dict of state increments (e.g.
+        ``{"shared_state": {"relevant_memories": [...]}}``) that the
+        orchestrator merges into the graph state so downstream nodes see them.
+        Returning ``None`` (the default) is a no-op.
         """
         self._hooks[HookType.BEFORE_SKILL].append(
             LifecycleHook(
@@ -148,13 +154,36 @@ class LifecycleManager:
         self,
         skill_name: str,
         context: SkillContext,
-    ) -> None:
-        """Fire all before_skill hooks."""
+    ) -> Dict[str, Any]:
+        """
+        Fire all before_skill hooks.
+
+        A before-skill hook may optionally return a dict of ``shared_state``
+        increments (and, in principle, any other state fields) that should be
+        persisted into the graph state for downstream nodes to see. The
+        orchestrator merges the collected increments into the node's state
+        update. Returning ``None`` is equivalent to returning no increment.
+
+        This is the mechanism that lets, e.g., the memory-enrichment hook
+        populate ``shared_state["relevant_memories"]`` before the ``agent``
+        node so the ``retrieve`` node (a separate node invocation) can read it.
+        """
+        increments: Dict[str, Any] = {}
         for hook in self._hooks[HookType.BEFORE_SKILL]:
             try:
-                hook.callback(skill_name, context)
+                ret = hook.callback(skill_name, context)
             except Exception as e:
                 log.warning(f"Before-skill hook '{hook.name}' failed: {e}")
+                continue
+            if isinstance(ret, dict) and ret:
+                # Shallow-merge each hook's increment; later hooks win per key.
+                for key, value in ret.items():
+                    if key == "shared_state" and isinstance(value, dict):
+                        inc = increments.setdefault("shared_state", {})
+                        inc.update(value)
+                    else:
+                        increments[key] = value
+        return increments
 
     def fire_after_skill(
         self,

@@ -34,23 +34,30 @@ def create_memory_store_hook() -> Callable:
 def create_memory_enrichment_hook() -> Callable:
     def before_agent(skill_name: str, context: SkillContext):
         if skill_name != "agent":
-            return
+            return None
         try:
             from agent.memory.types import MemoryQuery
 
             question = context.question
             if not question:
-                return
+                return None
             store = get_memory_store()
             query = MemoryQuery(query=question, limit=5)
             memories = store.retrieve(query)
             if memories:
-                context.shared_state["relevant_memories"] = [
+                relevant = [
                     {"id": m.id, "content": m.content, "type": m.memory_type.value}
                     for m in memories
                 ]
+                # Make visible to the current (agent) node immediately.
+                context.shared_state["relevant_memories"] = relevant
                 log.debug(f"Memory enrichment: injected {len(memories)} memories")
+                # Return an increment so the orchestrator persists it into the
+                # graph state and downstream nodes (e.g. retrieve) can read it.
+                # This relies on AgentState.shared_state being a merged field.
+                return {"shared_state": {"relevant_memories": relevant}}
         except Exception as e:
             log.warning(f"Memory enrichment hook failed: {e}")
+        return None
 
     return before_agent

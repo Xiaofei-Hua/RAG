@@ -83,6 +83,13 @@ OTEL_CONSOLE_EXPORTER = _get_bool("OTEL_CONSOLE_EXPORTER", False)
 MILVUS_URI = os.getenv("MILVUS_DB_URI", "./milvus_data.db")
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "t_collection01")
 
+# Vector index tuning. AUTOINDEX is the safe default (works on Milvus Lite).
+# Switch to HNSW / IVF_FLAT on a standalone Milvus server for tunable
+# recall-vs-latency trade-offs. Index build + search params are JSON env vars.
+MILVUS_INDEX_TYPE = os.getenv("MILVUS_INDEX_TYPE", "AUTOINDEX")
+MILVUS_INDEX_PARAMS = os.getenv("MILVUS_INDEX_PARAMS", "")   # e.g. {"M":16,"efConstruction":200}
+MILVUS_SEARCH_PARAMS = os.getenv("MILVUS_SEARCH_PARAMS", "")  # e.g. {"ef":64} or {"nprobe":10}
+
 # PDF ingestion. OCR is opt-in because local OCR engines add non-trivial
 # dependencies and memory usage.
 PDF_EXTRACT_TABLES = _get_bool("PDF_EXTRACT_TABLES", True)

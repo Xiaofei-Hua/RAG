@@ -87,3 +87,46 @@ Each skill implements `BaseSkill` with `execute(ctx) -> SkillResult` and optiona
 - LangChain (messages, tools, output parsers)
 - Milvus Lite (vector storage)
 - Redis / SQLite (session memory)
+
+## Evaluation Flywheel
+
+`agent/eval/` implements a trustworthy evaluation + online-feedback flywheel.
+RAG is one capability; this subsystem makes the whole agent measurably
+trustworthy and continuously improvable.
+
+```
+Online ─► chat ──sample──► InferenceStore(query,ctx,answer,trace_id)
+            │                       │
+            ▼                       │ promote on negative feedback
+         feedback ──trace_id──► CandidatePool ──curate──► golden.yaml
+                                         │
+Offline                                 ▼ run_eval.py
+  golden.yaml ──► EvalRunner ──► EvalScorer ──► LLMJudge (local Qwen3)
+                   │              (rule-based + trustworthy metrics)
+                   ▼
+             runs/history.jsonl ──► compare_runs ──► CI regression gate
+```
+
+| Module | Role |
+|--------|------|
+| `agent/eval/judge.py` | Local Qwen3 LLM-as-judge: faithfulness / answer relevancy / hallucination / context precision & recall. SQLite verdict cache + circuit breaker → graceful degradation to rule-based scoring. |
+| `agent/eval/scorer.py` | Blends rule-based signals (section/keyword/intent/source) with judge metrics into a composite score. |
+| `agent/eval/runner.py` | Runs golden cases through the live pipeline (sync + bounded-concurrency async). Fixes the legacy bug of reading non-existent `shared_state` keys. |
+| `agent/eval/dataset.py` | External YAML/JSON dataset loader (`data/eval/golden.yaml`); cases are no longer hardcoded. |
+| `agent/eval/history.py` | Per-run JSON + `history.jsonl`; `compare_runs` produces a regression report used as the CI gate. |
+| `agent/eval/inference_store.py` | Captures `(query, retrieved_docs, answer, trace_id)` for sampled production requests — the missing first-class production log. |
+| `agent/eval/sampler.py` | Importance sampling (`EVAL_SAMPLE_RATE`); degraded/low-confidence/forced responses always sampled. |
+| `agent/eval/candidates.py` | Promotes negative-feedback inferences into a candidate pool; corrections become zero-cost golden answers. |
+| `agent/eval/flywheel.py` | On negative feedback: promote candidate → re-evaluate with judge → record retrieval miss for tuning. |
+
+**Trustworthy metrics** (0.0–1.0, all via the local judge, no external API):
+- *Faithfulness* — fraction of answer claims supported by retrieved context (RAGAS-style claim extraction + per-claim NLI).
+- *Answer relevancy* — cosine(BGE) between the question and a reverse-generated question from the answer.
+- *Hallucination* — fraction of hard claims (values/steps/conclusions) unsupported by context.
+- *Context precision* — rank-aware relevance of retrieved contexts; *recall* — golden-reference coverage.
+
+**CLIs**: `scripts/run_eval.py` (run + `--fail-on-regression` gate), `scripts/curate_golden.py` (review/promote candidates).
+
+**Admin API**: `/api/admin/eval/runs`, `/api/admin/eval/candidates`, `/api/admin/inferences`, `/api/admin/retrieval-misses`.
+
+**CI**: `.github/workflows/tests.yml` (unit tests) + `eval-regression.yml` (rule-based on every PR, judge-enabled nightly on self-hosted runner).

@@ -79,6 +79,7 @@ class SkillContext:
             "messages": self.messages,
             "rewrite_count": self.rewrite_count,
             "max_rewrites": self.max_rewrites,
+            "shared_state": dict(self.shared_state),
         }
 
     @classmethod
@@ -95,6 +96,7 @@ class SkillContext:
             session_id=session_id,
             thread_id=thread_id,
             mode=mode,
+            shared_state=dict(state.get("shared_state", {}) or {}),
             rewrite_count=state.get("rewrite_count", 0),
             max_rewrites=state.get("max_rewrites", 3),
             trace_id=trace_id,

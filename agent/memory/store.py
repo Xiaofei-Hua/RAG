@@ -49,6 +49,74 @@ class MemoryStore:
         return entry.id
 
     def retrieve(self, query: MemoryQuery) -> List[MemoryEntry]:
+        """
+        Retrieve memories matching the query.
+
+        Uses semantic (embedding) retrieval when available, falling back to
+        the legacy SQL LIKE substring match if embeddings are unavailable.
+        """
+        # Try semantic retrieval first (handles synonyms / paraphrases that
+        # a substring LIKE match would miss).
+        try:
+            semantic = self.retrieve_semantic(query)
+            if semantic is not None:
+                return semantic
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"Semantic memory retrieve unavailable, using LIKE: {e}")
+
+        return self._retrieve_like(query)
+
+    def retrieve_semantic(self, query: MemoryQuery) -> Optional[List[MemoryEntry]]:
+        """
+        Embedding-based semantic retrieval. Returns None when embeddings are
+        unavailable (caller falls back to LIKE).
+        """
+        # Gather candidates with a broad LIKE (or all rows for small stores),
+        # then re-rank by embedding cosine similarity.
+        sql = "SELECT * FROM agent_memory"
+        params: list = []
+        if query.memory_types:
+            placeholders = ",".join("?" for _ in query.memory_types)
+            sql += f" WHERE memory_type IN ({placeholders})"
+            params.extend(mt.value for mt in query.memory_types)
+        sql += " LIMIT 500"
+        rows = self._conn.execute(sql, params).fetchall()
+        if not rows:
+            return []
+
+        try:
+            import numpy as np
+
+            from models.embedding_models import get_local_embeddings
+
+            emb = get_local_embeddings()
+            contents = [r["content"] for r in rows]
+            doc_vecs = np.asarray(emb.embed_documents(contents), dtype=np.float32)
+            q_vec = np.asarray(emb.embed_query(query.query), dtype=np.float32)
+            q_norm = np.linalg.norm(q_vec) or 1.0
+            sims = (doc_vecs @ q_vec) / (
+                np.linalg.norm(doc_vecs, axis=1) * q_norm + 1e-9
+            )
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"Embedding retrieval failed: {e}")
+            return None  # signal fallback
+
+        # Rank by similarity, take top results.
+        ranked = sorted(enumerate(rows), key=lambda x: sims[x[0]], reverse=True)
+        results = []
+        for idx, row in ranked[: query.limit]:
+            entry = self._row_to_entry(row)
+            # Boost access count for retrieved memories.
+            self._conn.execute(
+                "UPDATE agent_memory SET access_count = access_count + 1 WHERE id = ?",
+                (entry.id,),
+            )
+            results.append(entry)
+        self._conn.commit()
+        return results
+
+    def _retrieve_like(self, query: MemoryQuery) -> List[MemoryEntry]:
+        """Legacy substring (LIKE) retrieval — the original implementation."""
         sql = "SELECT * FROM agent_memory WHERE content LIKE ?"
         params: list = [f"%{query.query}%"]
 

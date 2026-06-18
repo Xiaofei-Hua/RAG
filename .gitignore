@@ -20,7 +20,16 @@ milvus_data.db*
 *.db.lock
 
 # Data & sessions
-data/
+data/*
+# Keep version-controlled eval assets (golden dataset is source-of-truth).
+# Re-include the eval dir then re-ignore its runtime artifacts.
+!data/eval/
+data/eval/*.db
+data/eval/runs/*
+!data/eval/runs/.gitkeep
+data/eval/candidates/*
+!data/eval/candidates/.gitkeep
+data/inferences.db
 
 # Logs
 logs/

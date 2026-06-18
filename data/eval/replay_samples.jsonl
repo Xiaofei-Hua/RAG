@@ -1,0 +1,22 @@
+# Replay dataset (JSONL) — one record per line. Lines starting with '#' and
+# blank lines are ignored.
+#
+# Each record provides the (query, answer, contexts) that the judge scores.
+# Nothing here is re-generated: the answer and contexts are taken as-is, so
+# the whole eval runs offline with no agent pipeline and no network.
+#
+# Required fields:
+#   id        : stable record id (used in the report)
+#   query     : the user question
+#   answer    : the generated answer to score
+# Optional fields:
+#   contexts          : list of retrieved context strings (default: [])
+#   reference_answer  : golden answer (enables context_recall; recommended)
+#   intent            : detected intent (rule-based intent_accuracy; default: "")
+#   source_count      : number of sources (rule-based source check; default: len(contexts))
+#   tags              : free-form tags
+#
+# Contexts may be strings or {"content": "...", "source": "..."} dicts.
+{"id":"replay_01","query":"发动机振动值偏高，如何进行故障诊断？","answer":"【诊断结论】发动机振动偏高，最可能为转子不平衡。【排查步骤】1) 采集振动频谱，确认主导频率阶次；2) 判断是否 1 倍频（不平衡）；3) 检查支承刚度。","contexts":["发动机振动偏高时，应对转子进行频谱分析，1 倍频主导通常指示不平衡故障。","检查发动机支承刚度与紧固件，必要时进行现场动平衡。"],"reference_answer":"【诊断结论】发动机振动值偏高，最可能的原因为转子不平衡或支承松动。【排查步骤】1) 采集振动频谱，确认主导频率阶次；2) 判断是否为 1 倍频（不平衡）；3) 检查支承刚度与紧固件；4) 必要时进行现场动平衡。","intent":"rag_query","tags":["engine","vibration","replay"]}
+{"id":"replay_02","query":"液压系统压力不稳定，疑似存在泄漏，如何排查？","answer":"建议直接更换整个液压泵。","contexts":["液压系统压力波动多由内漏或外漏导致，应通过保压测试定位泄漏支路。"],"reference_answer":"【诊断结论】压力波动多由内漏或外漏导致。【排查步骤】1) 保压测试定位泄漏支路；2) 检查管路接头与密封圈；3) 检查作动筒内漏；4) 更换失效密封件。","intent":"rag_query","tags":["hydraulic","leak","replay"]}
+{"id":"replay_03","query":"你好，请介绍一下PHM系统能做什么？","answer":"PHM（预测与健康管理）系统用于航空地面设备的故障诊断、健康监控与维修排故，支持维修手册知识问答与结构化诊断。","contexts":[],"reference_answer":"PHM（预测与健康管理）系统用于航空地面设备的故障诊断、健康监控与维修排故，支持维修手册知识问答与结构化诊断。","intent":"general_chat","tags":["chat","capability","replay"]}

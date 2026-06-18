@@ -267,3 +267,114 @@ async def get_config():
             "max_messages": 50,
         },
     }
+
+
+# =============================================================================
+# Evaluation flywheel endpoints
+# =============================================================================
+
+@router.get("/eval/runs")
+async def eval_runs(limit: int = 20):
+    """List recent evaluation run summaries (history.jsonl)."""
+    from agent.eval import load_history
+
+    summaries = load_history(limit=limit)
+    return {"runs": [s.to_dict() for s in summaries]}
+
+
+@router.get("/eval/runs/{run_id}")
+async def eval_run_detail(run_id: str):
+    """Full per-case detail for one eval run."""
+    import json
+    from pathlib import Path
+
+    path = Path("data/eval/runs") / f"{run_id}.json"
+    if not path.exists():
+        from fastapi import HTTPException
+
+        raise HTTPException(404, f"Run not found: {run_id}")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@router.get("/eval/candidates")
+async def eval_candidates():
+    """List candidates promoted from production feedback (awaiting golden promotion)."""
+    from agent.eval import list_candidates
+
+    cands = list_candidates()
+    return {
+        "total": len(cands),
+        "candidates": [
+            {
+                "candidate_id": c.candidate_id,
+                "feedback_type": c.feedback_type,
+                "source": c.source,
+                "query": c.query,
+                "has_correction": bool(c.corrected_answer.strip()),
+                "created_at": c.created_at,
+            }
+            for c in cands
+        ],
+    }
+
+
+@router.get("/inferences")
+async def inferences(limit: int = 50, offset: int = 0):
+    """Browse sampled production inferences."""
+    from agent.eval import get_inference_store
+
+    store = get_inference_store()
+    recs = store.list_sampled(limit=limit, offset=offset)
+    stats = store.stats()
+    return {
+        "stats": stats,
+        "inferences": [
+            {
+                "trace_id": r.trace_id,
+                "message_id": r.message_id,
+                "session_id": r.session_id,
+                "query": r.query[:200],
+                "route": r.route,
+                "intent": r.intent,
+                "source_count": len(r.retrieved_docs),
+                "latency_ms": r.latency_ms,
+                "created_at": r.created_at,
+            }
+            for r in recs
+        ],
+    }
+
+
+@router.get("/inferences/{trace_id}")
+async def inference_detail(trace_id: str):
+    """Full detail (incl. retrieved docs + answer) for one inference."""
+    from agent.eval import get_inference_store
+    from fastapi import HTTPException
+
+    rec = get_inference_store().get(trace_id)
+    if rec is None:
+        raise HTTPException(404, f"Inference not found: {trace_id}")
+    return {
+        "trace_id": rec.trace_id,
+        "message_id": rec.message_id,
+        "session_id": rec.session_id,
+        "query": rec.query,
+        "retrieved_docs": rec.retrieved_docs,
+        "answer": rec.answer,
+        "reasoning": rec.reasoning,
+        "route": rec.route,
+        "prompt_profile": rec.prompt_profile,
+        "intent": rec.intent,
+        "latency_ms": rec.latency_ms,
+        "token_usage": rec.token_usage,
+        "git_commit": rec.git_commit,
+        "created_at": rec.created_at,
+    }
+
+
+@router.get("/retrieval-misses")
+async def retrieval_misses(limit: int = 50):
+    """Retrieval-miss signals for offline tuning (low-faithfulness feedback)."""
+    from agent.eval import get_retrieval_misses
+
+    return {"misses": get_retrieval_misses(limit=limit)}

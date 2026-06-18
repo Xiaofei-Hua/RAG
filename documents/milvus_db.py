@@ -45,7 +45,9 @@ class MilvusConfig:
     Configuration optimized for low-resource servers.
 
     Default values are conservative for 4GB RAM servers.
-    Uses AUTOINDEX for Milvus Lite compatibility (HNSW not supported in local mode).
+    Index type defaults to AUTOINDEX for Milvus Lite compatibility; on a
+    standalone Milvus server set ``MILVUS_INDEX_TYPE=HNSW`` (or IVF_FLAT) plus
+    ``MILVUS_INDEX_PARAMS`` / ``MILVUS_SEARCH_PARAMS`` for tunable recall.
     """
     uri: str = MILVUS_URI
     collection_name: str = COLLECTION_NAME
@@ -59,10 +61,38 @@ class MilvusConfig:
     connection_timeout: float = 60.0  # Longer timeout
     consistency_level: str = "Bounded"  # Less strict than "Strong"
 
-    # Index type: AUTOINDEX for Milvus Lite compatibility
-    # Milvus Lite only supports FLAT, IVF_FLAT, AUTOINDEX
-    index_type: str = "AUTOINDEX"
-    search_params: Optional[Dict[str, Any]] = None  # AUTOINDEX auto-tunes
+    # Index type + build/search params. AUTOINDEX auto-tunes; HNSW/IVF accept
+    # explicit params parsed from env (JSON). See _parse_index_env below.
+    index_type: str = ""
+    index_params: Optional[Dict[str, Any]] = None
+    search_params: Optional[Dict[str, Any]] = None
+
+    def __post_init__(self):
+        # Read env vars live (not from cached module constants) so runtime
+        # overrides and test monkeypatching take effect.
+        import os
+
+        if not self.index_type:
+            self.index_type = os.getenv("MILVUS_INDEX_TYPE", "AUTOINDEX") or "AUTOINDEX"
+        if self.index_params is None:
+            self.index_params = _parse_index_env(os.getenv("MILVUS_INDEX_PARAMS"))
+        if self.search_params is None:
+            self.search_params = _parse_index_env(os.getenv("MILVUS_SEARCH_PARAMS"))
+
+
+def _parse_index_env(raw: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Parse a JSON index/search params env var; None on empty/invalid."""
+    if not raw or not raw.strip():
+        return None
+    import json
+
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            return data
+    except json.JSONDecodeError:
+        log.warning(f"Invalid MILVUS_*_PARAMS JSON, ignored: {raw!r}")
+    return None
 
 
 @dataclass
@@ -278,14 +308,17 @@ class MilvusManager:
             max_length=self.config.max_metadata_length
         )
 
-        # Create index params - use AUTOINDEX for Milvus Lite compatibility
-        # HNSW is NOT supported in Milvus Lite local mode
+        # Create index params. AUTOINDEX auto-tunes (Milvus Lite compatible);
+        # HNSW / IVF_FLAT accept explicit build params from config.index_params.
         index_params = self.client.prepare_index_params()
-        index_params.add_index(
-            field_name="dense",
-            index_type=self.config.index_type,
-            metric_type=MetricType.IP,
-        )
+        index_kwargs: Dict[str, Any] = {
+            "field_name": "dense",
+            "index_type": self.config.index_type,
+            "metric_type": MetricType.IP,
+        }
+        if self.config.index_params:
+            index_kwargs.update(self.config.index_params)
+        index_params.add_index(**index_kwargs)
 
         # Create collection
         self.client.create_collection(
@@ -294,8 +327,30 @@ class MilvusManager:
             index_params=index_params
         )
 
+        # Bind the embedding model fingerprint to this collection so a later
+        # model swap (which would corrupt retrieval) is detectable.
+        try:
+            from documents.embedding_registry import get_registry
+
+            get_registry().register(
+                collection=self.config.collection_name,
+                model_name=self._embedding_model_name(),
+                dimension=self.config.dense_dim,
+            )
+        except Exception as e:  # noqa: BLE001 - non-fatal
+            log.debug(f"Embedding fingerprint registration skipped: {e}")
+
         log.info(f"Collection created: {self.config.collection_name}")
         return True
+
+    def _embedding_model_name(self) -> str:
+        """The configured embedding model identifier (for fingerprinting)."""
+        try:
+            from utils.env_utils import EMBEDDING_MODEL
+
+            return EMBEDDING_MODEL
+        except Exception:  # noqa: BLE001
+            return "unknown"
 
     def _ensure_collection_loaded(self) -> None:
         """Ensure collection exists and is loaded into memory."""
@@ -437,13 +492,24 @@ class MilvusManager:
         try:
             self._ensure_collection_loaded()
 
+            # Advisory: detect an embedding-model drift that would silently
+            # corrupt similarity scores (query vectors in a different space).
+            from documents.embedding_registry import check_collection_compatible
+
+            check_collection_compatible(
+                self.config.collection_name,
+                self._embedding_model_name(),
+                self.config.dense_dim,
+            )
+
             # Generate query embedding
             query_embedding = self.embedding_function.embed_query(query)
 
-            # Search - AUTOINDEX auto-tunes search parameters
-            search_params = self.config.search_params or {
-                "metric_type": "IP",
-            }
+            # Build search params. AUTOINDEX auto-tunes; for HNSW/IVF we merge
+            # configured ef/nprobe (from MILVUS_SEARCH_PARAMS) with metric.
+            search_params = {"metric_type": "IP"}
+            if self.config.search_params:
+                search_params.update(self.config.search_params)
 
             results = self.client.search(
                 collection_name=self.config.collection_name,

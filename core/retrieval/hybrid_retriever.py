@@ -47,6 +47,12 @@ class HybridRetrieverConfig:
     final_top_k: int = RERANKER_TOP_K if RERANKER_ENABLED else 3
     enable_reranker: bool = RERANKER_ENABLED
 
+    # MMR de-redundancy (applied after RRF, optionally after reranker).
+    # When enabled, near-duplicate chunks are removed in favour of diverse,
+    # still-relevant evidence.
+    enable_mmr: bool = True
+    mmr_lambda: float = 0.7  # 1.0 = pure relevance, 0.0 = pure diversity
+
     # Performance
     enable_parallel: bool = True
 
@@ -146,13 +152,20 @@ class HybridRetriever:
         except Exception as e:
             log.debug(f"BM25 Milvus sync skipped (collection may not exist): {e}")
 
-    def retrieve(self, query: str, top_k: Optional[int] = None) -> List[Document]:
+    def retrieve(
+        self,
+        query: str,
+        top_k: Optional[int] = None,
+        filter_expr: Optional[str] = None,
+    ) -> List[Document]:
         """
         Perform hybrid retrieval synchronously.
 
         Args:
             query: Search query
             top_k: Number of results (default from config)
+            filter_expr: optional Milvus boolean expression to pre-filter
+                dense candidates (e.g. ``source == "engine_manual"``).
 
         Returns:
             List of retrieved documents
@@ -163,9 +176,9 @@ class HybridRetriever:
         try:
             # Perform retrievals
             if self.config.enable_parallel:
-                dense_results, sparse_results = self._parallel_retrieve(query)
+                dense_results, sparse_results = self._parallel_retrieve(query, filter_expr)
             else:
-                dense_results = self._dense_retrieve(query)
+                dense_results = self._dense_retrieve(query, filter_expr)
                 sparse_results = self._sparse_retrieve(query)
 
             # Fuse results
@@ -173,6 +186,8 @@ class HybridRetriever:
 
             documents = [r.document for r in fused_results]
             documents = self._rerank(query, documents, top_k)
+            documents = self._time_decay(documents)
+            documents = self._mmr(query, documents, top_k)
 
             elapsed = (time.perf_counter() - start_time) * 1000
             log.info(
@@ -192,13 +207,19 @@ class HybridRetriever:
             except Exception:
                 return []
 
-    async def aretrieve(self, query: str, top_k: Optional[int] = None) -> List[Document]:
+    async def aretrieve(
+        self,
+        query: str,
+        top_k: Optional[int] = None,
+        filter_expr: Optional[str] = None,
+    ) -> List[Document]:
         """
         Perform hybrid retrieval asynchronously.
 
         Args:
             query: Search query
             top_k: Number of results
+            filter_expr: optional Milvus boolean expression to pre-filter.
 
         Returns:
             List of retrieved documents
@@ -209,7 +230,7 @@ class HybridRetriever:
         try:
             # Parallel async retrieval
             dense_task = asyncio.create_task(
-                self._adense_retrieve(query)
+                self._adense_retrieve(query, filter_expr)
             )
             sparse_task = asyncio.create_task(
                 self._asparse_retrieve(query)
@@ -232,6 +253,8 @@ class HybridRetriever:
 
             documents = [r.document for r in fused_results]
             documents = await self._arerank(query, documents, top_k)
+            documents = self._time_decay(documents)
+            documents = await self._ammr(query, documents, top_k)
 
             elapsed = (time.perf_counter() - start_time) * 1000
             log.info(
@@ -245,12 +268,15 @@ class HybridRetriever:
             log.error(f"Async hybrid retrieval failed: {e}")
             return []
 
-    def _dense_retrieve(self, query: str) -> List[RetrievalResult]:
-        """Perform dense (vector) retrieval."""
+    def _dense_retrieve(
+        self, query: str, filter_expr: Optional[str] = None
+    ) -> List[RetrievalResult]:
+        """Perform dense (vector) retrieval, optionally pre-filtered."""
         try:
             results = self.dense_manager.search(
                 query=query,
                 top_k=self.config.dense_top_k,
+                filter_expr=filter_expr,
             )
 
             return [
@@ -274,9 +300,13 @@ class HybridRetriever:
             log.warning(f"Sparse retrieval failed: {e}")
             return []
 
-    async def _adense_retrieve(self, query: str) -> List[RetrievalResult]:
+    async def _adense_retrieve(
+        self, query: str, filter_expr: Optional[str] = None
+    ) -> List[RetrievalResult]:
         """Async dense retrieval."""
-        return await asyncio.get_running_loop().run_in_executor(None, self._dense_retrieve, query)
+        return await asyncio.get_running_loop().run_in_executor(
+            None, self._dense_retrieve, query, filter_expr
+        )
 
     async def _asparse_retrieve(self, query: str) -> List[RetrievalResult]:
         """Async sparse retrieval."""
@@ -310,14 +340,64 @@ class HybridRetriever:
 
         return await get_reranker().arerank(query, documents, top_k=top_k)
 
+    def _time_decay(self, documents: List[Document]) -> List[Document]:
+        """Apply gentle time-decay scoring (P3.7). No-op without timestamps."""
+        if not documents:
+            return documents
+        try:
+            from core.retrieval.time_decay import apply_time_decay
+
+            return apply_time_decay(documents)
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"time-decay skipped: {e}")
+            return documents
+
+    def _mmr(
+        self,
+        query: str,
+        documents: List[Document],
+        top_k: int,
+    ) -> List[Document]:
+        """
+        Optional MMR de-redundancy stage.
+
+        Runs after RRF (and reranker if enabled). When MMR embeddings are
+        unavailable it silently returns the input unchanged so retrieval never
+        fails on this account.
+        """
+        if not self.config.enable_mmr or len(documents) <= 1:
+            return documents[:top_k]
+
+        from core.retrieval.mmr import mmr_rerank
+
+        try:
+            return mmr_rerank(
+                query, documents, top_k=top_k, lambda_=self.config.mmr_lambda
+            )
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"MMR skipped: {e}")
+            return documents[:top_k]
+
+    async def _ammr(
+        self,
+        query: str,
+        documents: List[Document],
+        top_k: int,
+    ) -> List[Document]:
+        """Async counterpart of the MMR stage (offloads to executor)."""
+        if not self.config.enable_mmr or len(documents) <= 1:
+            return documents[:top_k]
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(None, self._mmr, query, documents, top_k)
+
     # Shared thread pool for parallel retrieval
     _executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
 
     def _parallel_retrieve(
-        self, query: str
+        self, query: str, filter_expr: Optional[str] = None
     ) -> Tuple[List[RetrievalResult], List[RetrievalResult]]:
         """Perform parallel retrieval using threads."""
-        dense_future = self._executor.submit(self._dense_retrieve, query)
+        dense_future = self._executor.submit(self._dense_retrieve, query, filter_expr)
         sparse_future = self._executor.submit(self._sparse_retrieve, query)
         return dense_future.result(), sparse_future.result()
 

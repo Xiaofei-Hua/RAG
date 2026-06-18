@@ -17,6 +17,7 @@ router = APIRouter()
 class FeedbackRequest(BaseModel):
     session_id: str = Field(..., description="Session ID")
     message_id: str = Field("", description="Message ID being feedbacked on")
+    trace_id: str = Field("", description="Trace ID linking to the captured inference (for the eval flywheel)")
     feedback_type: str = Field(..., description="THUMBS_UP, THUMBS_DOWN, CORRECTION, FLAG")
     content: str = Field("", description="Feedback text")
     original_answer: str = Field("", description="Original answer (for corrections)")
@@ -64,6 +65,23 @@ async def submit_feedback(request: FeedbackRequest):
             get_memory_store().store(mem)
         except Exception as e:
             log.warning(f"Failed to store correction in memory: {e}")
+
+    # Evaluation flywheel: on negative feedback, promote the inference to the
+    # candidate pool, re-evaluate it with the judge, and record retrieval
+    # misses. Best-effort — never blocks feedback submission.
+    NEGATIVE = {FeedbackType.THUMBS_DOWN, FeedbackType.CORRECTION, FeedbackType.FLAG}
+    if ft in NEGATIVE:
+        try:
+            from agent.eval.flywheel import on_negative_feedback
+
+            on_negative_feedback(
+                trace_id=request.trace_id,
+                message_id=request.message_id,
+                feedback_type=ft.value,
+                corrected_answer=request.corrected_answer,
+            )
+        except Exception as e:
+            log.debug(f"Flywheel trigger skipped: {e}")
 
     return {"status": "ok", "id": entry_id}
 

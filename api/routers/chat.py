@@ -13,7 +13,7 @@ import time
 import uuid
 from typing import Dict, List, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
 from pydantic import BaseModel, Field
@@ -90,6 +90,58 @@ class ChatHistoryResponse(BaseModel):
 # =============================================================================
 # Helpers
 # =============================================================================
+
+def _confidence_level(confidence: Optional[float]) -> str:
+    """Map a numeric confidence to a coarse level for the UI."""
+    if confidence is None:
+        return "unknown"
+    if confidence >= 0.8:
+        return "high"
+    if confidence >= 0.5:
+        return "medium"
+    return "low"
+
+
+def _capture(
+    http_request: Request,
+    request_message: str,
+    answer: str,
+    sources: list,
+    reasoning: str,
+    route: str,
+    prompt_profile: str,
+    intent: str,
+    metadata: dict,
+    latency_ms: float,
+    trace_id: str,
+    session_id: str,
+) -> None:
+    """
+    Capture this inference for the evaluation flywheel (sampled).
+
+    Never raises — capture failures are logged but never break the chat
+    response. The sampled trace_id / message_id are written back into
+    ``metadata`` so the client can reference them when submitting feedback.
+    """
+    try:
+        from agent.eval.capture import maybe_capture_inference
+
+        maybe_capture_inference(
+            request_message=request_message,
+            answer=answer,
+            sources=sources,
+            reasoning=reasoning,
+            route=route,
+            prompt_profile=prompt_profile,
+            intent=intent,
+            metadata=metadata,
+            latency_ms=latency_ms,
+            trace_id=trace_id,
+            session_id=session_id,
+        )
+    except Exception as exc:  # noqa: BLE001 - capture must not break chat
+        log.debug(f"inference capture skipped: {exc}")
+
 
 def _extract_sources(messages: list) -> List[SourceDocument]:
     """Extract source documents from graph result messages."""
@@ -279,6 +331,7 @@ async def get_prompt_status():
 @router.post("", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
+    http_request: Request,
     background_tasks: BackgroundTasks,
     session_memory = Depends(get_session_memory),
 ):
@@ -297,6 +350,14 @@ async def chat(
     route = "general_chat"
     prompt_profile = "base"
     force_rag = False
+    # trace_id propagated by the tracing middleware; message_id minted here so
+    # feedback can later point back at this exact answer.
+    trace_id = getattr(getattr(http_request, "state", None), "trace_id", "") or str(uuid.uuid4())[:16]
+    message_id = str(uuid.uuid4())
+    # Answer trustworthiness, populated by the generate skill (RAG route).
+    gen_confidence = None
+    gen_refused = False
+    reasoning_text = ""  # initialised for general_chat / fast branches (RAG fills it)
 
     log.info(f"Chat request: session={session_id[:8]}... message={request.message[:50]}...")
 
@@ -314,21 +375,26 @@ async def chat(
                 session_id,
                 AIMessage(content=answer)
             )
+            identity_meta = {
+                "intent_confidence": 1.0,
+                "intent_reasoning": "Identity/capability shortcut",
+                "source_count": 0,
+                "diagnosis": None,
+                "route": "general_chat",
+                "prompt_profile": "phm_identity_v1",
+                "force_rag": False,
+                "message_id": message_id,
+            }
+            _capture(http_request, request.message, answer, [], "",
+                     "general_chat", "phm_identity_v1", "general_chat",
+                     identity_meta, processing_time, trace_id, session_id)
             return ChatResponse(
                 response=answer,
                 session_id=session_id,
                 intent="general_chat",
                 sources=[],
                 processing_time_ms=processing_time,
-                metadata={
-                    "intent_confidence": 1.0,
-                    "intent_reasoning": "Identity/capability shortcut",
-                    "source_count": 0,
-                    "diagnosis": None,
-                    "route": "general_chat",
-                    "prompt_profile": "phm_identity_v1",
-                    "force_rag": False,
-                }
+                metadata=identity_meta,
             )
 
         # Fast mode: skip intent classification / agent / grading, directly retrieve + generate
@@ -349,23 +415,29 @@ async def chat(
                 AIMessage(content=result.answer)
             )
 
+            fast_sources = [SourceDocument(**s) for s in result.sources]
+            fast_meta = {
+                "intent_confidence": 1.0,
+                "intent_reasoning": "Fast mode (no classification)",
+                "source_count": result.retrieval_count,
+                "diagnosis": None,
+                "route": "fast",
+                "prompt_profile": "phm_fast_v1",
+                "force_rag": False,
+                "retrieval_time_ms": result.retrieval_time_ms,
+                "generation_time_ms": result.generation_time_ms,
+                "message_id": message_id,
+            }
+            _capture(http_request, request.message, result.answer, fast_sources, "",
+                     "fast", "phm_fast_v1", "rag_query",
+                     fast_meta, processing_time, trace_id, session_id)
             return ChatResponse(
                 response=result.answer,
                 session_id=session_id,
                 intent="rag_query",
-                sources=[SourceDocument(**s) for s in result.sources],
+                sources=fast_sources,
                 processing_time_ms=processing_time,
-                metadata={
-                    "intent_confidence": 1.0,
-                    "intent_reasoning": "Fast mode (no classification)",
-                    "source_count": result.retrieval_count,
-                    "diagnosis": None,
-                    "route": "fast",
-                    "prompt_profile": "phm_fast_v1",
-                    "force_rag": False,
-                    "retrieval_time_ms": result.retrieval_time_ms,
-                    "generation_time_ms": result.generation_time_ms,
-                }
+                metadata=fast_meta,
             )
 
         # Step 1: Intent classification
@@ -412,6 +484,8 @@ async def chat(
             # Extract response and sources
             messages = result.get("messages", [])
             reasoning_text = ""
+            gen_confidence = None
+            gen_refused = False
             if messages:
                 last_message = messages[-1]
                 raw = last_message.content if hasattr(last_message, 'content') else str(last_message)
@@ -419,6 +493,8 @@ async def chat(
                 # Extract Qwen3 reasoning from generate node
                 if hasattr(last_message, 'additional_kwargs'):
                     reasoning_text = last_message.additional_kwargs.get('reasoning', '') or ''
+                    gen_confidence = last_message.additional_kwargs.get('confidence')
+                    gen_refused = bool(last_message.additional_kwargs.get('refused', False))
             else:
                 answer = "抱歉，无法生成回答。"
 
@@ -443,22 +519,32 @@ async def chat(
 
         diagnosis = _extract_phm_diagnosis(answer)
 
+        main_meta = {
+            "intent_confidence": intent_result.confidence,
+            "intent_reasoning": intent_result.reasoning,
+            "source_count": len(sources),
+            "diagnosis": diagnosis.model_dump() if diagnosis else None,
+            "route": route,
+            "prompt_profile": prompt_profile,
+            "force_rag": force_rag,
+            "reasoning": reasoning_text,
+            "message_id": message_id,
+            # Answer trustworthiness (filled by the generate skill when on the
+            # RAG route; None for general_chat which has no grounding signal).
+            "confidence": gen_confidence,
+            "confidence_level": _confidence_level(gen_confidence),
+            "refused": gen_refused,
+        }
+        _capture(http_request, request.message, answer, sources, reasoning_text,
+                 route, prompt_profile, intent_result.intent.value,
+                 main_meta, processing_time, trace_id, session_id)
         return ChatResponse(
             response=answer,
             session_id=session_id,
             intent=intent_result.intent.value,
             sources=sources,
             processing_time_ms=processing_time,
-            metadata={
-                "intent_confidence": intent_result.confidence,
-                "intent_reasoning": intent_result.reasoning,
-                "source_count": len(sources),
-                "diagnosis": diagnosis.model_dump() if diagnosis else None,
-                "route": route,
-                "prompt_profile": prompt_profile,
-                "force_rag": force_rag,
-                "reasoning": reasoning_text,
-            }
+            metadata=main_meta,
         )
 
     except Exception as e:
@@ -471,13 +557,19 @@ async def chat(
         if isinstance(e, CircuitBreakerError):
             handler = get_degradation_handler()
             degraded = handler.generate_degraded_response(request.message, str(e))
+            degraded_time = (time.perf_counter() - start_time) * 1000
+            degraded_meta = {"error": str(e), "message_id": message_id}
+            # Degraded responses are always sampled (importance sampling).
+            _capture(http_request, request.message, degraded.content, [], "",
+                     "degraded", "degraded", "degraded",
+                     degraded_meta, degraded_time, trace_id, session_id)
             return ChatResponse(
                 response=degraded.content,
                 session_id=session_id,
                 intent="degraded",
                 sources=[],
-                processing_time_ms=(time.perf_counter() - start_time) * 1000,
-                metadata={"error": str(e)}
+                processing_time_ms=degraded_time,
+                metadata=degraded_meta,
             )
 
         raise HTTPException(status_code=500, detail=str(e))

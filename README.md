@@ -532,6 +532,112 @@ Thinking 模式可通过 `--mode thinking` 测试。
 
 更多测试说明见 [tests/README.md](tests/README.md)。
 
+## 链路测评与反馈回流（评测飞轮）
+
+系统内置一套**可信评测 + 线上反馈回流**闭环，把 RAG 作为可度量、可持续优化的能力。全部基于本地 Qwen3 自研 LLM-as-judge，零外部依赖、纯内网离线可用。
+
+```
+线上  ─► chat ──采样──► InferenceStore(query, 检索上下文, answer, trace_id)
+         │                       │
+         ▼                       │ 负反馈触发晋升
+       feedback ─trace_id─► 候选池 ─curate─► golden.yaml
+                                       │
+离线                                   ▼ run_eval.py
+ golden.yaml ─► EvalRunner ─► EvalScorer ─► 本地 Qwen3 Judge
+                 │           (规则 + 可信指标)
+                 ▼
+          历史记录 ─► 回归对比 ─► CI 门禁
+```
+
+### 可信指标（全部本地 Qwen3 判定）
+
+| 指标 | 含义 |
+|------|------|
+| **Faithfulness（忠实度）** | 答案声明中被检索内容支持的比例（声明抽取 + 逐条 NLI，RAGAS 范式） |
+| **Answer Relevancy（答案相关度）** | 原问题与"由答案反推的问题"的 BGE 向量余弦 |
+| **Hallucination（幻觉）** | 硬声明（限值/步骤/结论）中缺乏检索支持的比例 |
+| **Context Precision/Recall** | 检索片段排序质量 / 参考答案被检索覆盖的比例 |
+
+### 运行离线评测
+
+评测支持**两种离线模式**，均可在内网/断网环境运行：
+
+**模式一：golden 集评测（重新跑管道生成答案再打分）**
+
+需要本地 Ollama + Milvus 在线（用于生成被评测的答案）：
+
+```bash
+# 完整评测（含 judge），结果写入 data/eval/runs/
+uv run python scripts/run_eval.py
+
+# 快速规则评测（不调 judge，CI 友好）
+uv run python scripts/run_eval.py --no-judge --concurrency 8
+
+# CI 回归门禁：与基线对比，回归则退出码 1
+uv run python scripts/run_eval.py --tag ci --fail-on-regression
+```
+
+**模式二：replay 评测（纯数据，不跑管道、不联网）**
+
+从 JSONL 读取已记录的 `(query, answer, contexts)`，直接喂给 judge 打分。
+**完全不调用 harness / 检索 / 生成，零网络依赖**——适合气隙环境、历史推理复盘、judge/prompt 变更后的重评分：
+
+```bash
+# judge 开启（需本地 Ollama + 本地 BGE）
+uv run python scripts/replay_eval.py data/eval/replay_samples.jsonl
+
+# 纯规则模式（连 LLM 都不需要，任何环境可跑）
+uv run python scripts/replay_eval.py data/eval/replay_samples.jsonl --no-judge
+
+# 回归门禁
+uv run python scripts/replay_eval.py data/eval/replay_samples.jsonl --fail-on-regression
+```
+
+JSONL 格式见 `data/eval/replay_samples.jsonl`，每行一条 `{id, query, answer, contexts, reference_answer, intent}`。
+
+评测数据集外置于 `data/eval/golden.yaml`，无需改代码即可增删用例。
+
+### 离线性声明
+
+整套自测评机制设计为零外部网络依赖：
+
+| 组件 | 离线方式 |
+|------|---------|
+| LLM judge | 本地 Ollama Qwen3（`OPENAI_BASE_URL` 默认 `http://localhost:11434/v1`） |
+| Embedding | 本地 BGE（优先从 `EMBEDDING_MODEL_PATH` 加载，路径存在即不联网） |
+| 存储 | SQLite（judge 缓存、inference、候选池全为本地文件） |
+| replay 评测 | 纯数据，不跑管道，不联网 |
+| 优雅降级 | LLM 不可达时，judge 熔断降级为规则评分（NLI 指标返回"未判定"而非误报为 0） |
+
+### 候选标注工作台
+
+用户点赞踩/纠正/标记的负反馈会自动把对应推理晋升到候选池：
+
+```bash
+uv run python scripts/curate_golden.py --list          # 查看待标注候选
+uv run python scripts/curate_golden.py --show <id>     # 查看详情
+uv run python scripts/curate_golden.py --promote <id>  # 晋升为 golden（纠正的 corrected_answer 直接成为参考答案）
+uv run python scripts/curate_golden.py --misses        # 查看检索召回不足信号
+```
+
+### 配置
+
+```dotenv
+# 线上推理日志采样率（0.1 = 10%）；降级/低置信/强制检索的请求必定采样
+EVAL_SAMPLE_RATE=0.1
+```
+
+### Admin API
+
+- `GET /api/admin/eval/runs` — 评测历史
+- `GET /api/admin/eval/runs/{run_id}` — 单次评测详情
+- `GET /api/admin/eval/candidates` — 待标注候选池
+- `GET /api/admin/inferences` — 采样推理列表
+- `GET /api/admin/inferences/{trace_id}` — 单条推理（含检索上下文 + 答案）
+- `GET /api/admin/retrieval-misses` — 检索召回不足信号
+
+更多架构细节见 [AGENTS.md](AGENTS.md) 的「Evaluation Flywheel」章节。
+
 ## 项目结构
 
 ```text

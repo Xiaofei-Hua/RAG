@@ -83,8 +83,12 @@ class RetrieveSkill(BaseSkill):
                     error="No query found in context",
                 )
 
-            # Retrieve documents
-            documents = self._retrieve(query)
+            # Retrieve documents (optional metadata filter + transform from shared_state)
+            filter_expr = self._extract_filter(context)
+            transform = self._extract_transform(context)
+            documents = self._retrieve(query, filter_expr=filter_expr, transform=transform)
+            documents = self._maybe_expand_parents(context, documents)
+            documents = self._inject_memories(context, documents)
 
             # Build result messages
             result_messages = self._build_result_messages(
@@ -97,10 +101,20 @@ class RetrieveSkill(BaseSkill):
                 f"{elapsed:.0f}ms, query='{query[:50]}...'"
             )
 
+            # Publish mean retrieval relevance + per-doc scores into shared_state
+            # so the generate node's composite confidence can consume them
+            # cross-node (previously this write was lost between nodes).
+            state_updates: dict = {}
+            mean_rel = self._mean_relevance(documents)
+            if mean_rel is not None:
+                context.shared_state["retrieval_relevance"] = mean_rel
+                state_updates["shared_state"] = {"retrieval_relevance": mean_rel}
+
             return SkillResult(
                 status=SkillStatus.SUCCESS if documents else SkillStatus.PARTIAL,
                 messages=result_messages,
                 next_action="grade",
+                state_updates=state_updates,
                 metadata={
                     "doc_count": len(documents),
                     "query": query,
@@ -138,6 +152,8 @@ class RetrieveSkill(BaseSkill):
                 )
 
             # Try MCP client first
+            filter_expr = self._extract_filter(context)
+            transform = self._extract_transform(context)
             if self._mcp_client is not None:
                 try:
                     raw_results = await self._mcp_client.call_tool(
@@ -147,13 +163,11 @@ class RetrieveSkill(BaseSkill):
                     documents = self._raw_to_documents(raw_results)
                 except Exception as e:
                     log.warning(f"MCP retrieval failed, falling back to direct: {e}")
-                    documents = await self.retriever.aretrieve(
-                        query, top_k=self._skill_config.top_k
-                    )
+                    documents = await self._aretrieve(query, filter_expr, transform)
             else:
-                documents = await self.retriever.aretrieve(
-                    query, top_k=self._skill_config.top_k
-                )
+                documents = await self._aretrieve(query, filter_expr, transform)
+            documents = self._maybe_expand_parents(context, documents)
+            documents = self._inject_memories(context, documents)
 
             # Build result messages
             result_messages = self._build_result_messages(
@@ -166,10 +180,19 @@ class RetrieveSkill(BaseSkill):
                 f"{elapsed:.0f}ms, query='{query[:50]}...'"
             )
 
+            # Publish mean retrieval relevance into shared_state (parity with
+            # the sync path) for cross-node composite confidence.
+            state_updates: dict = {}
+            mean_rel = self._mean_relevance(documents)
+            if mean_rel is not None:
+                context.shared_state["retrieval_relevance"] = mean_rel
+                state_updates["shared_state"] = {"retrieval_relevance": mean_rel}
+
             return SkillResult(
                 status=SkillStatus.SUCCESS if documents else SkillStatus.PARTIAL,
                 messages=result_messages,
                 next_action="grade",
+                state_updates=state_updates,
                 metadata={
                     "doc_count": len(documents),
                     "query": query,
@@ -191,9 +214,87 @@ class RetrieveSkill(BaseSkill):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _retrieve(self, query: str) -> List[Document]:
-        """Perform retrieval using the hybrid retriever."""
-        return self.retriever.retrieve(query, top_k=self._skill_config.top_k)
+    @staticmethod
+    def _mean_relevance(documents: List[Document]) -> Optional[float]:
+        """Mean of the retrieved documents' ``score`` metadata, if available."""
+        scores = [
+            float(d.metadata.get("score"))
+            for d in documents
+            if isinstance(d.metadata.get("score"), (int, float))
+        ]
+        if not scores:
+            return None
+        return sum(scores) / len(scores)
+
+    def _retrieve(
+        self,
+        query: str,
+        filter_expr: Optional[str] = None,
+        transform: Optional[str] = None,
+    ) -> List[Document]:
+        """Perform retrieval using the hybrid retriever (with optional transform)."""
+        try:
+            if transform == "multi_query":
+                from core.retrieval.query_transform import multi_query_retrieve
+
+                return multi_query_retrieve(
+                    query, self.retriever,
+                    top_k=self._skill_config.top_k, filter_expr=filter_expr,
+                )
+            if transform == "hyde":
+                from core.retrieval.query_transform import hyde
+
+                hyde_query = hyde(query)
+                return self.retriever.retrieve(
+                    hyde_query, top_k=self._skill_config.top_k, filter_expr=filter_expr
+                )
+        except Exception as e:  # noqa: BLE001 - transform is best-effort
+            log.debug(f"query transform '{transform}' failed, direct retrieve: {e}")
+        return self.retriever.retrieve(
+            query, top_k=self._skill_config.top_k, filter_expr=filter_expr
+        )
+
+    @staticmethod
+    def _extract_transform(context: SkillContext) -> Optional[str]:
+        """Which query transform to apply, if any (from shared_state).
+
+        Recognised values: ``"hyde"`` | ``"multi_query"`` | None.
+        """
+        shared = getattr(context, "shared_state", None)
+        if not shared:
+            return None
+        val = shared.get("query_transform")
+        if isinstance(val, str) and val.strip() in ("hyde", "multi_query"):
+            return val.strip()
+        return None
+
+    async def _aretrieve(
+        self,
+        query: str,
+        filter_expr: Optional[str] = None,
+        transform: Optional[str] = None,
+    ) -> List[Document]:
+        """Async retrieval with optional query transform."""
+        try:
+            if transform == "multi_query":
+                from core.retrieval.query_transform import amulti_query_retrieve
+
+                return await amulti_query_retrieve(
+                    query, self.retriever,
+                    top_k=self._skill_config.top_k, filter_expr=filter_expr,
+                )
+            if transform == "hyde":
+                from core.retrieval.query_transform import ahyde
+
+                hyde_query = await ahyde(query)
+                return await self.retriever.aretrieve(
+                    hyde_query, top_k=self._skill_config.top_k, filter_expr=filter_expr
+                )
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"query transform '{transform}' failed, direct retrieve: {e}")
+        return await self.retriever.aretrieve(
+            query, top_k=self._skill_config.top_k, filter_expr=filter_expr
+        )
 
     def _extract_query(self, context: SkillContext) -> str:
         """
@@ -219,6 +320,99 @@ class RetrieveSkill(BaseSkill):
 
         # Fallback to last human message
         return context.question
+
+    @staticmethod
+    def _extract_filter(context: SkillContext) -> Optional[str]:
+        """
+        Extract an optional Milvus filter expression from shared state.
+
+        Callers (e.g. the chat router) can set ``shared_state["filter_expr"]``
+        to restrict retrieval by source / model / chapter, e.g.
+        ``source == "engine_manual"``.
+        """
+        shared = getattr(context, "shared_state", None)
+        if not shared:
+            return None
+        expr = shared.get("filter_expr")
+        if isinstance(expr, str) and expr.strip():
+            return expr.strip()
+        return None
+
+    @staticmethod
+    def _maybe_expand_parents(
+        context: SkillContext, documents: List[Document]
+    ) -> List[Document]:
+        """
+        Optionally expand small-chunk hits to their parent documents.
+
+        Enabled when ``shared_state["expand_parents"]`` is truthy AND the
+        retrieved chunks carry ``parent_id`` metadata. When no chunk has a
+        parent_id, this is a no-op (backward compatible with non-parent-child
+        indexes).
+        """
+        shared = getattr(context, "shared_state", None)
+        if not shared or not shared.get("expand_parents"):
+            return documents
+        if not any(
+            isinstance(d.metadata, dict) and d.metadata.get("parent_id")
+            for d in documents
+        ):
+            return documents  # nothing to expand
+        try:
+            from documents.parent_store import expand_to_parents
+
+            return expand_to_parents(documents)
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"parent expansion skipped: {e}")
+            return documents
+
+    @staticmethod
+    def _inject_memories(
+        context: SkillContext, documents: List[Document]
+    ) -> List[Document]:
+        """
+        Prepend long-term memories (enriched by the memory hook) to the
+        retrieved documents.
+
+        The memory enrichment hook runs before the ``agent`` node and returns a
+        ``shared_state["relevant_memories"]`` increment that is persisted into
+        the graph state; this node (``retrieve``) then reads it back via its
+        own ``SkillContext``. This prepends memory entries as high-priority
+        context so correction memories (e.g. "振动限值应为 4.0 IPS") influence
+        generation.
+        """
+        shared = getattr(context, "shared_state", None)
+        if not shared:
+            return documents
+        memories = shared.get("relevant_memories")
+        if not memories:
+            return documents
+        try:
+            memory_docs = [
+                Document(
+                    page_content=m.get("content", "") if isinstance(m, dict) else str(m),
+                    metadata={
+                        "source": "agent_memory",
+                        "memory_type": (m.get("type") if isinstance(m, dict) else "fact"),
+                        "score": 1.0,  # memories are high-trust
+                        "is_memory": True,
+                    },
+                )
+                for m in memories
+                if isinstance(m, dict) and m.get("content")
+            ]
+            if not memory_docs:
+                return documents
+            # Memories first, then retrieved docs (de-duped by content prefix).
+            existing_prefixes = {d.page_content[:80] for d in documents}
+            deduped = [
+                md for md in memory_docs
+                if md.page_content[:80] not in existing_prefixes
+            ]
+            return deduped + documents
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"memory injection skipped: {e}")
+            return documents
 
     def _build_result_messages(
         self,

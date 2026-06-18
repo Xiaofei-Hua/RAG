@@ -1,0 +1,225 @@
+# Golden evaluation dataset for the aviation PHM RAG agent.
+#
+# Cases are externalised from code so they can evolve without redeployment.
+# Each case supports:
+#   - rule-based expectations (expected_sections, expected_keywords)
+#   - trustworthy fields used by the LLM-as-judge:
+#       reference_answer   : golden answer for faithfulness / relevancy
+#       expected_context_ids : chunk ids that SHOULD be retrieved (optional)
+#
+# `source` indicates provenance:
+#   seed       : hand-authored baseline
+#   feedback   : promoted from a thumbs-down / flag
+#   correction : promoted from a user correction (reference_answer = corrected)
+#   curated    : reviewed and refined
+#
+# Add new cases here. The eval CLI reads this file by default.
+
+cases:
+  # ---- Engine (5) ----
+  - id: engine_vibration_01
+    query: 发动机振动值偏高，如何进行故障诊断？
+    expected_sections: ["诊断结论", "排查步骤"]
+    expected_keywords: ["振动", "发动机", "频谱分析", "不平衡"]
+    expected_intent: rag_query
+    expected_min_sources: 1
+    difficulty: medium
+    reference_answer: |
+      【诊断结论】发动机振动值偏高，最可能的原因为转子不平衡或支承松动。
+      【排查步骤】1) 采集振动频谱，确认主导频率阶次；2) 对比基准频谱图，
+      判断是否为 1 倍频（不平衡）或 2 倍频（不对中）；3) 检查支承刚度与紧固件；
+      4) 必要时进行现场动平衡。
+    tags: [engine, vibration]
+    source: seed
+
+  - id: engine_overheat_02
+    query: 发动机温度异常升高，超过警戒阈值，请分析原因并给出处理建议。
+    expected_sections: ["诊断结论", "排查步骤"]
+    expected_keywords: ["温度", "过热", "冷却系统", "热电偶"]
+    expected_intent: rag_query
+    expected_min_sources: 1
+    difficulty: medium
+    reference_answer: |
+      【诊断结论】发动机排气温度超限，可能由燃烧室故障或冷却气流不足导致。
+      【排查步骤】1) 核对热电偶读数是否准确；2) 检查冷却系统供气与散热；
+      3) 检查燃油流量与喷嘴；4) 若持续超限则按手册执行减速停车。
+    tags: [engine, overheat]
+    source: seed
+
+  - id: engine_fault_code_03
+    query: 发动机报故障代码E-4012，是什么含义？怎么处理？
+    expected_sections: ["诊断结论", "排查步骤"]
+    expected_keywords: ["故障码", "E-4012", "传感器", "诊断"]
+    expected_intent: rag_query
+    expected_min_sources: 1
+    difficulty: easy
+    reference_answer: |
+      【诊断结论】故障码 E-4012 对应传感器信号异常。
+      【排查步骤】1) 查阅故障码手册确认具体传感器；2) 检查传感器线束与接插件；
+      3) 测量传感器输出；4) 更换故障传感器后清除代码。
+    tags: [engine, fault_code]
+    source: seed
+
+  - id: engine_oil_degradation_04
+    query: 发动机滑油金属含量超标，光谱分析结果显示铁元素浓度上升，请诊断磨损部位。
+    expected_sections: ["诊断结论", "排查步骤"]
+    expected_keywords: ["滑油", "光谱分析", "金属含量", "磨损", "铁元素"]
+    expected_intent: rag_query
+    expected_min_sources: 1
+    difficulty: hard
+    reference_answer: |
+      【诊断结论】铁元素浓度上升提示钢制部件（轴承/齿轮）异常磨损。
+      【排查步骤】1) 结合磨损元素比例判断磨损部位；2) 检查磁塞金属屑；
+      3) 复核滑油光谱历史趋势；4) 视情缩短取样周期或返厂检查。
+    tags: [engine, oil, spectrometry]
+    source: seed
+
+  - id: engine_performance_05
+    query: 发动机推力下降3%，EGT裕度减少，状态监控数据趋势分析。
+    expected_sections: ["诊断结论", "排查步骤"]
+    expected_keywords: ["推力", "EGT", "趋势分析", "性能衰退"]
+    expected_intent: rag_query
+    expected_min_sources: 1
+    difficulty: hard
+    reference_answer: |
+      【诊断结论】推力下降伴 EGT 裕度减少，表明发动机性能衰退。
+      【排查步骤】1) 调取状态监控趋势；2) 评估气路部件（涡轮/压气机）衰退；
+      3) 检查引气与可调静子；4) 按水洗或送修方案处置。
+    tags: [engine, performance]
+    source: seed
+
+  # ---- Hydraulic (3) ----
+  - id: hydraulic_leak_06
+    query: 液压系统压力不稳定，疑似存在泄漏，如何排查？
+    expected_sections: ["诊断结论", "排查步骤"]
+    expected_keywords: ["液压", "压力", "泄漏", "密封"]
+    expected_intent: rag_query
+    expected_min_sources: 1
+    difficulty: medium
+    reference_answer: |
+      【诊断结论】压力波动多由内漏或外漏导致。
+      【排查步骤】1) 保压测试定位泄漏支路；2) 检查管路接头与密封圈；
+      3) 检查作动筒内漏；4) 更换失效密封件。
+    tags: [hydraulic, leak]
+    source: seed
+
+  - id: hydraulic_pump_07
+    query: 液压泵出口压力低于正常值15%，振动加速度增大，请分析故障模式。
+    expected_sections: ["诊断结论", "排查步骤"]
+    expected_keywords: ["液压泵", "压力", "振动", "故障模式"]
+    expected_intent: rag_query
+    expected_min_sources: 1
+    difficulty: hard
+    reference_answer: |
+      【诊断结论】压力下降伴振动增大，指向液压泵柱塞或斜盘磨损。
+      【排查步骤】1) 测出口压力与流量；2) 振动频谱诊断；3) 检查油液污染度；
+      4) 视情更换液压泵。
+    tags: [hydraulic, pump]
+    source: seed
+
+  - id: hydraulic_valve_08
+    query: 液压伺服阀响应迟缓，作动筒位移偏差超标，诊断故障原因。
+    expected_sections: ["诊断结论", "排查步骤"]
+    expected_keywords: ["伺服阀", "作动筒", "响应", "位移"]
+    expected_intent: rag_query
+    expected_min_sources: 1
+    difficulty: medium
+    reference_answer: |
+      【诊断结论】伺服阀响应迟缓多由阀芯卡滞或先导污染导致。
+      【排查步骤】1) 测阶跃响应；2) 检查油液清洁度；3) 校验阀芯位移；
+      4) 清洗或更换伺服阀。
+    tags: [hydraulic, valve]
+    source: seed
+
+  # ---- Avionics (3) ----
+  - id: avionics_signal_09
+    query: 航电系统ARINC429总线信号异常，数据帧校验错误频繁。
+    expected_sections: ["诊断结论", "排查步骤"]
+    expected_keywords: ["ARINC429", "信号", "校验", "总线"]
+    expected_intent: rag_query
+    expected_min_sources: 1
+    difficulty: hard
+    reference_answer: |
+      【诊断结论】校验错误频繁提示总线干扰或收发器故障。
+      【排查步骤】1) 检查总线终端电阻与屏蔽接地；2) 抓包分析误码率；
+      3) 更换单个收发器隔离；4) 复核接线。
+    tags: [avionics, arinc429]
+    source: seed
+
+  - id: avionics_power_10
+    query: 航电设备供电电压波动超出允许范围，导致系统重启，如何诊断？
+    expected_sections: ["诊断结论", "排查步骤"]
+    expected_keywords: ["供电", "电压", "航电", "电源"]
+    expected_intent: rag_query
+    expected_min_sources: 1
+    difficulty: medium
+    reference_answer: |
+      【诊断结论】电压波动导致重启，指向电源模块或馈电异常。
+      【排查步骤】1) 测电源输出纹波与瞬态；2) 检查接插件接触；
+      3) 检查电源模块余量；4) 更换失效电源模块。
+    tags: [avionics, power]
+    source: seed
+
+  - id: avionics_display_11
+    query: 飞行显示器画面闪烁，部分参数显示为虚线，排查步骤是什么？
+    expected_sections: ["诊断结论", "排查步骤"]
+    expected_keywords: ["显示器", "闪烁", "参数", "虚线"]
+    expected_intent: rag_query
+    expected_min_sources: 1
+    difficulty: easy
+    reference_answer: |
+      【诊断结论】画面闪烁与虚线多由数据源中断或背光异常导致。
+      【排查步骤】1) 确认虚线参数的数据总线；2) 检查背光与高压板；
+      3) 重新紧固接线；4) 更换显示器。
+    tags: [avionics, display]
+    source: seed
+
+  # ---- General chat (2) ----
+  - id: chat_greeting_12
+    query: 你好，请介绍一下PHM系统能做什么？
+    expected_sections: []
+    expected_keywords: ["PHM", "健康管理"]
+    expected_intent: general_chat
+    expected_min_sources: 0
+    difficulty: easy
+    reference_answer: |
+      PHM（预测与健康管理）系统用于航空地面设备的故障诊断、健康监控与维修排故，
+      支持维修手册知识问答与结构化诊断。
+    tags: [chat, capability]
+    source: seed
+
+  - id: chat_capability_13
+    query: 你能帮我分析哪些类型的故障？支持哪些系统的诊断？
+    expected_sections: []
+    expected_keywords: ["故障", "诊断", "系统"]
+    expected_intent: general_chat
+    expected_min_sources: 0
+    difficulty: easy
+    reference_answer: |
+      支持发动机、液压、航电等系统的故障诊断，覆盖振动、过热、滑油、
+      信号、电源、显示等典型故障模式。
+    tags: [chat, capability]
+    source: seed
+
+  # ---- Edge cases (2) ----
+  - id: edge_ambiguous_14
+    query: 异常
+    expected_sections: []
+    expected_keywords: []
+    expected_intent: rag_query
+    expected_min_sources: 0
+    difficulty: hard
+    reference_answer: ""
+    tags: [edge, ambiguous]
+    source: seed
+
+  - id: edge_short_15
+    query: 振动大
+    expected_sections: ["诊断结论"]
+    expected_keywords: ["振动"]
+    expected_intent: rag_query
+    expected_min_sources: 0
+    difficulty: hard
+    reference_answer: ""
+    tags: [edge, short]
+    source: seed

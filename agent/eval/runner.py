@@ -1,47 +1,168 @@
+"""
+Evaluation runner.
+
+Runs golden cases through the live agent pipeline (retrieve -> grade ->
+generate) and scores each case with the combined rule-based + LLM-as-judge
+scorer. Supports both synchronous (legacy) and asynchronous, concurrency-
+bounded execution.
+
+Key fixes vs. the original implementation:
+  - intent / source_count are extracted from the actual graph result instead
+    of reading non-existent ``shared_state`` keys.
+  - reuses the shared agent harness singleton instead of building a new one
+    per case (which leaked checkpointer connections).
+  - captures retrieved contexts so the judge can score faithfulness /
+    hallucination / context precision.
+  - adds ``run_all_async`` with an asyncio.Semaphore for bounded concurrency.
+"""
+
 from __future__ import annotations
 
+import asyncio
 import time
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from agent.eval.scorer import EvalScorer
 from agent.eval.types import EvalCase, EvalReport, EvalResult
 from utils.log_utils import log
 
+__all__ = ["EvalRunner", "DEFAULT_PASS_THRESHOLD", "DEFAULT_CONCURRENCY"]
+
+DEFAULT_PASS_THRESHOLD = 0.6
+DEFAULT_CONCURRENCY = 4
+
+
+def _extract_contexts(messages: list) -> List[str]:
+    """Extract retrieved context strings from ToolMessages in the result."""
+    from langchain_core.messages import ToolMessage
+
+    contexts: List[str] = []
+    seen = set()
+    for msg in messages:
+        if not isinstance(msg, ToolMessage):
+            continue
+        content = msg.content
+        if isinstance(content, list):
+            content = " ".join(
+                item.get("text", "") if isinstance(item, dict) else str(item)
+                for item in content
+            )
+        if isinstance(content, str):
+            content = content.strip()
+            if content and content not in seen:
+                seen.add(content)
+                contexts.append(content)
+    return contexts
+
+
+def _count_sources(messages: list) -> int:
+    """Count distinct retrieved source documents in the result messages."""
+    return len(_extract_contexts(messages))
+
 
 class EvalRunner:
-    def __init__(self):
-        self._scorer = EvalScorer()
+    """
+    Run golden cases through the agent pipeline and score them.
+
+    The runner is stateless between runs and safe to reuse. It does NOT own a
+    harness; it resolves the shared singleton lazily so tests can swap it.
+    """
+
+    def __init__(
+        self,
+        scorer: Optional[EvalScorer] = None,
+        pass_threshold: float = DEFAULT_PASS_THRESHOLD,
+    ):
+        self._scorer = scorer or EvalScorer()
+        self.pass_threshold = pass_threshold
+
+    # ------------------------------------------------------------------ harness
+
+    def _get_harness(self, case: EvalCase):
+        """
+        Resolve the agent harness.
+
+        Uses the shared singleton via ``get_agent_harness`` with a per-case
+        thread_id so each case gets an isolated conversation in the
+        checkpointer (avoids cross-case message leakage).
+        """
+        from agent.harness import get_agent_harness
+
+        return get_agent_harness()
+
+    # ------------------------------------------------------------------ extract
+
+    @staticmethod
+    def _extract_result(result: Optional[Dict[str, Any]]):
+        """
+        Pull (answer, intent, sources, contexts) out of a graph result dict.
+
+        The graph returns keys like 'messages', '_fast_mode', '_sources'. We
+        normalise both the full-graph and fast-mode shapes here.
+        """
+        if not result:
+            return "", "", 0, []
+
+        messages = result.get("messages", []) or []
+        answer = ""
+        if messages:
+            last = messages[-1]
+            answer = getattr(last, "content", str(last)) or ""
+
+        contexts = _extract_contexts(messages)
+
+        # Fast mode attaches sources as a structured list under _sources.
+        fast_sources = result.get("_sources")
+        if isinstance(fast_sources, list):
+            sources_count = len(fast_sources)
+            # Also fold fast-mode source content into contexts for the judge.
+            for s in fast_sources:
+                if isinstance(s, dict):
+                    snippet = s.get("content") or s.get("text")
+                    if snippet and snippet not in contexts:
+                        contexts.append(snippet)
+        else:
+            sources_count = _count_sources(messages)
+
+        # Intent: the graph does not write intent into the result; fast-mode
+        # rows are rag_query by definition, otherwise unknown. We surface an
+        # empty string and let rule-based intent scoring degrade gracefully.
+        intent = result.get("_intent", "")
+        if not intent:
+            # Fast-mode rows are always rag_query.
+            if result.get("_fast_mode"):
+                intent = "rag_query"
+
+        return answer, intent, sources_count, contexts
+
+    # ------------------------------------------------------------------ sync
 
     def run_case(self, case: EvalCase) -> EvalResult:
+        """Run a single case synchronously and score it."""
         start = time.perf_counter()
         try:
-            from agent.harness.orchestrator import AgentHarness, HarnessConfig
+            harness = self._get_harness(case)
+            result = harness.invoke(case.query, thread_id=f"eval_{case.id}")
+            answer, intent, sources, contexts = self._extract_result(result)
 
-            config = HarnessConfig(session_id=f"eval_{case.id}")
-            harness = AgentHarness(config=config)
-
-            result = harness.invoke(case.query)
-
-            actual_answer = ""
-            if result and result.messages:
-                last_msg = result.messages[-1]
-                actual_answer = getattr(last_msg, "content", str(last_msg))
-
-            actual_intent = result.shared_state.get("detected_intent", "") if result else ""
-            actual_sources = result.shared_state.get("source_count", 0) if result else 0
-
-            score = self._scorer.score(case, actual_answer, actual_intent, actual_sources)
-
+            score = self._scorer.score(
+                case=case,
+                actual_answer=answer,
+                actual_intent=intent,
+                actual_sources=sources,
+                retrieved_contexts=contexts,
+            )
             elapsed_ms = (time.perf_counter() - start) * 1000
             return EvalResult(
                 case_id=case.id,
                 score=score,
-                actual_answer=actual_answer,
-                actual_intent=actual_intent,
-                actual_sources=actual_sources,
+                actual_answer=answer,
+                actual_intent=intent,
+                actual_sources=sources,
+                retrieved_contexts=contexts,
                 execution_time_ms=elapsed_ms,
             )
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001 - per-case isolation
             log.error(f"EvalRunner: case {case.id} failed: {e}")
             return EvalResult(
                 case_id=case.id,
@@ -50,32 +171,110 @@ class EvalRunner:
             )
 
     def run_all(self, cases: Optional[List[EvalCase]] = None) -> EvalReport:
+        """Run all cases synchronously (legacy entry point)."""
         if cases is None:
-            from agent.eval.cases import get_default_eval_cases
-            cases = get_default_eval_cases()
+            from agent.eval.dataset import load_dataset
+
+            cases = load_dataset()
 
         results: List[EvalResult] = []
         for case in cases:
             log.info(f"EvalRunner: running case {case.id} - {case.query[:30]}...")
-            result = self.run_case(case)
-            results.append(result)
+            results.append(self.run_case(case))
+        return self._build_report(results)
 
+    # ------------------------------------------------------------------ async
+
+    async def run_case_async(self, case: EvalCase) -> EvalResult:
+        """Run a single case asynchronously."""
+        start = time.perf_counter()
+        try:
+            harness = self._get_harness(case)
+            result = await harness.ainvoke(case.query, thread_id=f"eval_{case.id}")
+            answer, intent, sources, contexts = self._extract_result(result)
+
+            score = self._scorer.score(
+                case=case,
+                actual_answer=answer,
+                actual_intent=intent,
+                actual_sources=sources,
+                retrieved_contexts=contexts,
+            )
+            elapsed_ms = (time.perf_counter() - start) * 1000
+            return EvalResult(
+                case_id=case.id,
+                score=score,
+                actual_answer=answer,
+                actual_intent=intent,
+                actual_sources=sources,
+                retrieved_contexts=contexts,
+                execution_time_ms=elapsed_ms,
+            )
+        except Exception as e:  # noqa: BLE001
+            log.error(f"EvalRunner: case {case.id} failed (async): {e}")
+            return EvalResult(
+                case_id=case.id,
+                execution_time_ms=(time.perf_counter() - start) * 1000,
+                error=str(e),
+            )
+
+    async def run_all_async(
+        self,
+        cases: Optional[List[EvalCase]] = None,
+        concurrency: int = DEFAULT_CONCURRENCY,
+    ) -> EvalReport:
+        """Run all cases with bounded concurrency."""
+        if cases is None:
+            from agent.eval.dataset import load_dataset
+
+            cases = load_dataset()
+
+        semaphore = asyncio.Semaphore(max(1, concurrency))
+
+        async def _bounded(case: EvalCase) -> EvalResult:
+            async with semaphore:
+                log.info(f"EvalRunner: running case {case.id} - {case.query[:30]}...")
+                return await self.run_case_async(case)
+
+        tasks = [asyncio.create_task(_bounded(c)) for c in cases]
+        results = await asyncio.gather(*tasks)
+        return self._build_report(list(results))
+
+    # ------------------------------------------------------------------ report
+
+    def _build_report(self, results: List[EvalResult]) -> EvalReport:
         total = len(results)
-        passed = sum(1 for r in results if r.score.overall_score >= 0.6 and r.error is None)
+        valid = [r for r in results if r.error is None]
+        passed = sum(
+            1 for r in valid if r.score.overall_score >= self.pass_threshold
+        )
         failed = total - passed
         avg_score = (
-            sum(r.score.overall_score for r in results) / total if total > 0 else 0.0
+            sum(r.score.overall_score for r in valid) / len(valid) if valid else 0.0
         )
+
+        def _avg(attr: str) -> Optional[float]:
+            vals = [
+                getattr(r.score, attr)
+                for r in valid
+                if getattr(r.score, attr) is not None
+            ]
+            return sum(vals) / len(vals) if vals else None
 
         report = EvalReport(
             total_cases=total,
             passed=passed,
             failed=failed,
             average_score=avg_score,
+            avg_faithfulness=_avg("faithfulness"),
+            avg_answer_relevancy=_avg("answer_relevancy"),
+            avg_hallucination=_avg("hallucination_score"),
+            avg_context_precision=_avg("context_precision"),
+            avg_context_recall=_avg("context_recall"),
             results=results,
         )
-
         log.info(
-            f"EvalRunner: completed {total} cases, {passed} passed, {failed} failed, avg={avg_score:.2f}"
+            f"EvalRunner: {total} cases, {passed} passed, {failed} failed, "
+            f"avg={avg_score:.3f}"
         )
         return report

@@ -153,7 +153,10 @@ class AgentHarness:
         """
         Register all default skills.
 
-        Creates instances of all 6 skills with the current LLM.
+        Creates instances of all 6 skills with the current LLM. The AgentSkill
+        is wired to an MCPClient aggregating all registered MCP servers (retrieval
+        + any custom tools), so the agent can call multiple tools, not just
+        retrieval.
         """
         from agent.skills.agent.skill import AgentSkill
         from agent.skills.retrieve.skill import RetrieveSkill
@@ -162,15 +165,48 @@ class AgentHarness:
         from agent.skills.generate.skill import GenerateSkill
         from agent.skills.intent.skill import IntentSkill
 
-        self.register_skill(AgentSkill(llm=self.llm))
+        # Build the MCP tool client aggregating all available tool servers.
+        mcp_client = self._build_mcp_client()
+
+        self.register_skill(AgentSkill(llm=self.llm, mcp_client=mcp_client))
         self.register_skill(RetrieveSkill())
         self.register_skill(GradeSkill(llm=self.llm))
         self.register_skill(RewriteSkill(llm=self.llm))
         self.register_skill(GenerateSkill(llm=self.llm))
         self.register_skill(IntentSkill(llm=self.llm))
 
-        log.info("AgentHarness: 6 default skills registered")
+        log.info("AgentHarness: 6 default skills registered (MCP tools wired)")
         return self
+
+    def _build_mcp_client(self):
+        """
+        Build the MCPClient aggregating all tool servers.
+
+        Always includes the retrieval server; additional servers can be
+        registered via the module-level ``register_mcp_server`` hook or
+        environment configuration. Failures are non-fatal: if MCP assembly
+        fails, the AgentSkill falls back to the standalone retriever tool.
+        """
+        try:
+            from agent.mcp.client import MCPClient
+            from agent.mcp.retrieval_server import MCPRetrievalServer
+
+            client = MCPClient()
+            client.add_server(MCPRetrievalServer())
+
+            # Discover and register any extra tool servers (plugins).
+            from agent.mcp.tools_registry import get_extra_servers
+
+            for server in get_extra_servers():
+                try:
+                    client.add_server(server)
+                except Exception as e:  # noqa: BLE001
+                    log.warning(f"Failed to register MCP server {server}: {e}")
+
+            return client
+        except Exception as e:  # noqa: BLE001
+            log.warning(f"MCP client assembly failed, agent falls back to retriever: {e}")
+            return None
 
     # ------------------------------------------------------------------
     # Graph construction
@@ -257,17 +293,37 @@ class AgentHarness:
         log.info("AgentHarness: graph built successfully")
         return self._graph
 
-    def _skill_to_node(self, skill_name: str, skill: BaseSkill):
+    def _merge_state_update(
+        self,
+        result: "SkillResult",
+        before_increments: Dict[str, Any],
+    ) -> Dict[str, Any]:
         """
-        Convert a skill to a LangGraph node function.
+        Build the node's state-update dict from a SkillResult plus any
+        ``shared_state`` increments returned by before-skill hooks.
 
-        The returned function:
-        1. Converts AgentState -> SkillContext
-        2. Fires lifecycle before_skill hooks
-        3. Executes the skill
-        4. Fires lifecycle after_skill hooks
-        5. Converts SkillResult -> state update dict
+        Before-hook increments are merged *under* the skill's own
+        ``shared_state`` writes so a skill can never accidentally clobber a
+        hook's contribution (and vice-versa) — per-key, the skill's explicit
+        output wins, but untouched hook keys are preserved.
         """
+        update = result.to_state_update()
+        if before_increments:
+            hook_shared = before_increments.get("shared_state")
+            if isinstance(hook_shared, dict) and hook_shared:
+                merged_shared = dict(hook_shared)
+                skill_shared = update.get("shared_state")
+                if isinstance(skill_shared, dict):
+                    merged_shared.update(skill_shared)
+                update["shared_state"] = merged_shared
+            # Allow hooks to touch non-shared_state fields too.
+            for key, value in before_increments.items():
+                if key == "shared_state":
+                    continue
+                update.setdefault(key, value)
+        return update
+
+    def _skill_to_node(self, skill_name: str, skill: BaseSkill):
         harness = self
 
         def node_fn(state: AgentState) -> Dict[str, Any]:
@@ -277,9 +333,11 @@ class AgentHarness:
                 thread_id=harness._config.thread_id or "",
             )
 
-            # Fire before hooks (guardrails may raise GuardrailBlockError)
+            # Fire before hooks (guardrails may raise GuardrailBlockError).
+            # Hooks may return shared_state increments that must propagate to
+            # downstream nodes; merge them into the node's state update.
             try:
-                harness._lifecycle.fire_before_skill(skill_name, context)
+                before_increments = harness._lifecycle.fire_before_skill(skill_name, context)
             except Exception as guardrail_err:
                 from agent.skills.base import SkillResult, SkillStatus
                 log.warning(f"Skill '{skill_name}' blocked: {guardrail_err}")
@@ -303,7 +361,7 @@ class AgentHarness:
             # Fire after hooks
             harness._lifecycle.fire_after_skill(skill_name, context, result)
 
-            return result.to_state_update()
+            return harness._merge_state_update(result, before_increments)
 
         async def async_node_fn(state: AgentState) -> Dict[str, Any]:
             context = SkillContext.from_agent_state(
@@ -313,7 +371,7 @@ class AgentHarness:
             )
 
             try:
-                harness._lifecycle.fire_before_skill(skill_name, context)
+                before_increments = harness._lifecycle.fire_before_skill(skill_name, context)
             except Exception as guardrail_err:
                 log.warning(f"Skill '{skill_name}' blocked: {guardrail_err}")
                 return SkillResult(
@@ -344,7 +402,7 @@ class AgentHarness:
                 metadata=result.metadata,
             )
             harness._lifecycle.fire_after_skill(skill_name, context, result)
-            return result.to_state_update()
+            return harness._merge_state_update(result, before_increments)
 
         return RunnableLambda(node_fn, afunc=async_node_fn)
 
@@ -364,6 +422,11 @@ class AgentHarness:
             )
 
             harness._lifecycle.fire_before_skill(skill_name, context)
+            # NOTE: conditional (edge) functions can only return a routing key,
+            # not a state update, so any before-hook shared_state increments
+            # cannot be persisted here. No current before-hook targets the
+            # "grade" node, so this is benign; if one is added, grade must be
+            # converted from a conditional edge into a real node.
 
             trace = harness._trace_collector.begin(skill_name)
             result = skill._timed_execute(context)

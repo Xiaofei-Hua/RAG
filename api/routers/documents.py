@@ -202,9 +202,11 @@ async def upload_document(
     """
     Upload and process a document.
 
-    Supported formats: .md, .txt, .pdf
+    Supported formats: .md, .txt, .pdf, .docx, .pptx, .html, .htm
+    (DOCX/PPTX/HTML require their optional libs: python-docx, python-pptx,
+    beautifulsoup4.)
     """
-    allowed_extensions = {".md", ".txt", ".pdf"}
+    allowed_extensions = {".md", ".txt", ".pdf", ".docx", ".pptx", ".html", ".htm"}
     filename = file.filename or "unknown"
     ext = os.path.splitext(filename)[1].lower()
 
@@ -285,6 +287,18 @@ def _process_document(doc_id: str, file_path: str, filename: str, file_hash: str
 
             documents = parse_pdf_to_documents(file_path, filename)
             documents = _split_documents(documents)
+        elif ext in (".docx", ".pptx", ".html", ".htm"):
+            # Multi-format parsers (optional libs). Falls back to text on error.
+            try:
+                from documents.format_parsers import parse_by_extension
+
+                documents = parse_by_extension(file_path, source=filename)
+                documents = _split_documents(documents)
+            except RuntimeError as fmt_err:
+                log.warning(
+                    f"Multi-format parse failed ({ext}), skipping: {fmt_err}"
+                )
+                raise
         else:
             with open(file_path, "r", encoding="utf-8") as f:
                 content = f.read()

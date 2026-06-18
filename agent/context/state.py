@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field, ConfigDict
 
 from agent.skills.base import SkillContext, SkillResult, SkillStatus
 from utils.log_utils import log
+from utils.log_utils import log
 
 __all__ = [
     # From skills.base (re-exported)
@@ -28,6 +29,7 @@ __all__ = [
     "RouteDecision",
     "GraphMetadata",
     "StateManager",
+    "merge_shared_state",
     # Pydantic models
     "Grade",
     "RewrittenQuery",
@@ -58,6 +60,25 @@ class RouteDecision(str, Enum):
     END = "END"
 
 
+def merge_shared_state(left: Optional[Dict[str, Any]], right: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """
+    Reducer for the cross-node ``shared_state`` field on ``AgentState``.
+
+    LangGraph invokes this whenever a node returns a ``shared_state`` update:
+    it shallow-merges the incoming dict on top of the accumulated one (later
+    writes win per-key). This is what finally lets a ``before_skill`` hook
+    (e.g. memory enrichment) or a producing node (e.g. GenerateSkill writing
+    ``retrieved_contexts``) propagate state to a downstream consumer node.
+
+    Both sides default to ``{}`` so the field is always present after the first
+    reduction, and missing values are treated as empty (back-compatible with
+    checkpoints written before the field existed).
+    """
+    merged: Dict[str, Any] = dict(left or {})
+    merged.update(right or {})
+    return merged
+
+
 class AgentState(TypedDict):
     """
     Main state for the RAG agent graph.
@@ -66,10 +87,15 @@ class AgentState(TypedDict):
         messages: List of conversation messages (add_messages reducer)
         rewrite_count: Number of query rewrites attempted
         max_rewrites: Maximum allowed rewrites before forcing generation
+        shared_state: Cross-node scratchpad for producer/consumer data such as
+            ``retrieved_contexts``, ``sources``, ``relevant_memories``,
+            ``relevance_scores`` and ``grounding_faithfulness``. Merged across
+            nodes via :func:`merge_shared_state`.
     """
     messages: Annotated[list[BaseMessage], add_messages]
     rewrite_count: int
     max_rewrites: int
+    shared_state: Annotated[Dict[str, Any], merge_shared_state]
 
 
 class GraphMetadata(TypedDict, total=False):
@@ -137,6 +163,7 @@ class StateManager:
             "messages": [("user", message)],
             "rewrite_count": 0,
             "max_rewrites": max_rewrites,
+            "shared_state": {},
         }
 
     @staticmethod

@@ -1,0 +1,41 @@
+name: Unit & E2E Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pytest pyyaml numpy
+          # Core libs needed by the eval judge / E2E TestClient layer.
+          pip install langchain-core langchain-openai fastapi httpx
+          # Milvus Lite is imported by milvus_db at module load in E2E paths.
+          pip install pymilvus milvus-lite
+
+      - name: Run unit tests
+        run: |
+          python -m pytest tests/unit/ -q
+
+      - name: Run end-to-end tests (in-process, mocked singletons)
+        env:
+          # E2E tests mock all LLM/retriever singletons, so no Ollama/Milvus
+          # service is required — they run the real FastAPI app in-process.
+          OPENAI_BASE_URL: "http://localhost:11434/v1"
+          OPENAI_API_KEY: ollama
+        run: |
+          python -m pytest tests/e2e/ -q
