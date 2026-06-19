@@ -135,10 +135,10 @@ class TestReplayOffline:
 # ---------------------------------------------------------------------------
 
 class TestJudgeDegradation:
-    def _make_judge_with_dead_llm(self, monkeypatch):
+    def _make_judge_with_dead_llm(self, monkeypatch, tmp_path):
         from agent.eval.judge import LLMJudge
 
-        judge = LLMJudge(cache_path="./data/eval/test_degrade_cache.db")
+        judge = LLMJudge(cache_path=str(tmp_path / "test_degrade_cache.db"))
         judge._failures._tripped = False
 
         def dead_llm():
@@ -147,49 +147,64 @@ class TestJudgeDegradation:
         monkeypatch.setattr(judge, "_get_llm", dead_llm)
         return judge
 
-    def test_faithfulness_none_when_llm_down(self, monkeypatch):
-        judge = self._make_judge_with_dead_llm(monkeypatch)
-        score, note = judge.faithfulness(
-            "振动偏高需动平衡。需检查支承。",
-            ["手册说明振动高时需做动平衡。"],
-        )
-        assert score is None
-        assert "unavailable" in note or "无法判定" in note
+    def test_faithfulness_none_when_llm_down(self, monkeypatch, tmp_path):
+        judge = self._make_judge_with_dead_llm(monkeypatch, tmp_path)
+        try:
+            score, note = judge.faithfulness(
+                "振动偏高需动平衡。需检查支承。",
+                ["手册说明振动高时需做动平衡。"],
+            )
+            assert score is None
+            assert "unavailable" in note or "无法判定" in note
+        finally:
+            judge.close()
 
-    def test_hallucination_none_when_llm_down(self, monkeypatch):
-        judge = self._make_judge_with_dead_llm(monkeypatch)
-        # Hard claim (contains a value) but LLM down => None.
-        score, note = judge.hallucination_score(
-            "振动限值应为 4.0 IPS。",
-            ["context"],
-        )
-        assert score is None
+    def test_hallucination_none_when_llm_down(self, monkeypatch, tmp_path):
+        judge = self._make_judge_with_dead_llm(monkeypatch, tmp_path)
+        try:
+            # Hard claim (contains a value) but LLM down => None.
+            score, note = judge.hallucination_score(
+                "振动限值应为 4.0 IPS。",
+                ["context"],
+            )
+            assert score is None
+        finally:
+            judge.close()
 
-    def test_context_recall_none_when_llm_down(self, monkeypatch):
-        judge = self._make_judge_with_dead_llm(monkeypatch)
-        score, note = judge.context_recall(
-            "参考答案声明一。声明二。",
-            ["context"],
-        )
-        assert score is None
+    def test_context_recall_none_when_llm_down(self, monkeypatch, tmp_path):
+        judge = self._make_judge_with_dead_llm(monkeypatch, tmp_path)
+        try:
+            score, note = judge.context_recall(
+                "参考答案声明一。声明二。",
+                ["context"],
+            )
+            assert score is None
+        finally:
+            judge.close()
 
-    def test_context_precision_none_when_llm_down(self, monkeypatch):
-        judge = self._make_judge_with_dead_llm(monkeypatch)
-        score, note = judge.context_precision("q", ["c1", "c2"])
-        assert score is None
+    def test_context_precision_none_when_llm_down(self, monkeypatch, tmp_path):
+        judge = self._make_judge_with_dead_llm(monkeypatch, tmp_path)
+        try:
+            score, note = judge.context_precision("q", ["c1", "c2"])
+            assert score is None
+        finally:
+            judge.close()
 
-    def test_evaluate_returns_judge_used_false_after_circuit(self, monkeypatch):
-        judge = self._make_judge_with_dead_llm(monkeypatch)
-        # Force trips by repeated failures.
-        for _ in range(6):
-            judge._ask("p")
-        m = judge.evaluate("q", "答案为限值 4.0。", ["context"], reference_answer="ref")
-        assert m.judge_used is False
-        # answer_relevancy uses local embeddings, not the LLM — it can still
-        # produce a value even with the circuit open. The NLI metrics must be None.
-        assert m.faithfulness is None
-        assert m.hallucination_score is None
-        assert m.context_recall is None
+    def test_evaluate_returns_judge_used_false_after_circuit(self, monkeypatch, tmp_path):
+        judge = self._make_judge_with_dead_llm(monkeypatch, tmp_path)
+        try:
+            # Force trips by repeated failures.
+            for _ in range(6):
+                judge._ask("p")
+            m = judge.evaluate("q", "答案为限值 4.0。", ["context"], reference_answer="ref")
+            assert m.judge_used is False
+            # answer_relevancy uses local embeddings, not the LLM — it can still
+            # produce a value even with the circuit open. The NLI metrics must be None.
+            assert m.faithfulness is None
+            assert m.hallucination_score is None
+            assert m.context_recall is None
+        finally:
+            judge.close()
 
 
 # ---------------------------------------------------------------------------

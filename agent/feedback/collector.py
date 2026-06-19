@@ -10,11 +10,15 @@ from typing import Dict, Iterator, List, Optional
 from agent.feedback.types import FeedbackEntry, FeedbackType
 from utils.log_utils import log
 
+# Module-level path so tests/conftest.py can redirect it to tmp_path
+# (AGENTS.md §6/§10 persistence contract). Shared with MemoryStore.
+DEFAULT_DB_PATH = "./data/agent_memory.db"
+
 
 class FeedbackCollector:
-    def __init__(self, db_path: str = "./data/agent_memory.db"):
+    def __init__(self, db_path: str = DEFAULT_DB_PATH):
         self._db_path = db_path
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         # WAL + locking: this collector shares agent_memory.db with MemoryStore.
@@ -100,6 +104,18 @@ class FeedbackCollector:
             timestamp=row["timestamp"],
         )
 
+    def close(self) -> None:
+        """Close the underlying SQLite connection. Idempotent."""
+        with self._lock:
+            conn = getattr(self, "_conn", None)
+            if conn is None:
+                return
+            self._conn = None
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+
 
 _feedback_collector: Optional[FeedbackCollector] = None
 
@@ -109,3 +125,11 @@ def get_feedback_collector() -> FeedbackCollector:
     if _feedback_collector is None:
         _feedback_collector = FeedbackCollector()
     return _feedback_collector
+
+
+def reset_feedback_collector() -> None:
+    """Close and clear the shared singleton (mainly for tests)."""
+    global _feedback_collector
+    if _feedback_collector is not None:
+        _feedback_collector.close()
+    _feedback_collector = None

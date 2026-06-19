@@ -30,6 +30,43 @@ import pytest
 # Ensure project root is importable.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+# Mark the process as running under pytest BEFORE any FastAPI lifespan runs,
+# so the F05 production-unsafe-config startup guard in api/main.py skips
+# (tests intentionally use the local-dev default config).
+os.environ.setdefault("PYTEST_RUN", "1")
+
+
+# ---------------------------------------------------------------------------
+# Session teardown: close any singleton SQLite connections left open by tests
+# that did not request the tmp_data_dir redirect (e.g. tests that touch the
+# LLMJudge via a guardrail but build the skill directly). Without this the
+# connection survives until interpreter exit and surfaces as
+# ResourceWarning: unclosed database.
+# ---------------------------------------------------------------------------
+
+@pytest.fixture(autouse=True)
+def _close_sqlite_singletons_after_test():
+    yield
+    # Close any singleton SQLite connections left open by tests that did not
+    # request the tmp_data_dir redirect (e.g. tests that build a store/judge
+    # directly). Without this the connections survive until interpreter exit
+    # and surface as ResourceWarning: unclosed database.
+    for _reset in (
+        "agent.eval.judge.reset_judge",
+        "agent.memory.store.reset_memory_store",
+        "agent.feedback.collector.reset_feedback_collector",
+        "agent.feedback.escalation.reset_escalation_manager",
+        "documents.parent_store.reset_parent_store",
+        "documents.document_registry.reset_document_registry",
+    ):
+        try:
+            mod_name, fn_name = _reset.rsplit(".", 1)
+            import importlib
+
+            getattr(importlib.import_module(mod_name), fn_name)()
+        except Exception:  # noqa: BLE001
+            pass
+
 
 # ---------------------------------------------------------------------------
 # Tmp data dir: redirect ALL on-disk state so tests never touch real data/
@@ -64,6 +101,62 @@ def tmp_data_dir(tmp_path, monkeypatch):
         "agent.eval.flywheel.RETRIEVAL_MISSES_DB",
         os.path.join(root, "eval", "retrieval_misses.db"),
     )
+    # Redirect the LLMJudge verdict-cache path to tmp and reset its singleton.
+    # Without this, tests that touch the judge (grounding/PII guardrails,
+    # flywheel) write to the real ./data/eval/judge_cache.db and leak an
+    # unclosed sqlite connection until interpreter exit (ResourceWarning).
+    monkeypatch.setattr(
+        "agent.eval.judge.DEFAULT_JUDGE_CACHE_PATH",
+        os.path.join(root, "eval", "judge_cache.db"),
+    )
+    import agent.eval.judge as judge_mod
+
+    if judge_mod._judge is not None:
+        judge_mod._judge.close()
+    judge_mod._judge = None
+    # Redirect the agent-memory / feedback shared DB (agent_memory.db) to tmp
+    # and reset their singletons (same ResourceWarning class as the judge).
+    monkeypatch.setattr(
+        "agent.memory.store.DEFAULT_DB_PATH",
+        os.path.join(root, "agent_memory.db"),
+    )
+    monkeypatch.setattr(
+        "agent.feedback.collector.DEFAULT_DB_PATH",
+        os.path.join(root, "agent_memory.db"),
+    )
+    monkeypatch.setattr(
+        "agent.feedback.escalation.DEFAULT_DB_PATH",
+        os.path.join(root, "agent_memory.db"),
+    )
+    monkeypatch.setattr(
+        "documents.parent_store.DEFAULT_DB_PATH",
+        os.path.join(root, "parent_store.db"),
+    )
+    monkeypatch.setattr(
+        "documents.document_registry.DEFAULT_DB_PATH",
+        os.path.join(root, "documents.db"),
+    )
+    import agent.memory.store as mem_mod
+    import agent.feedback.collector as fc_mod
+    import agent.feedback.escalation as esc_mod
+    import documents.parent_store as ps_mod
+    import documents.document_registry as dr_mod
+
+    if mem_mod._memory_store is not None:
+        mem_mod._memory_store.close()
+    mem_mod._memory_store = None
+    if fc_mod._feedback_collector is not None:
+        fc_mod._feedback_collector.close()
+    fc_mod._feedback_collector = None
+    if esc_mod._escalation_manager is not None:
+        esc_mod._escalation_manager.close()
+    esc_mod._escalation_manager = None
+    if ps_mod._store is not None:
+        ps_mod._store.close()
+    ps_mod._store = None
+    if dr_mod._registry is not None:
+        dr_mod._registry.close()
+    dr_mod._registry = None
     # Reset the inference store singleton so it picks up the new path.
     import agent.eval.inference_store as is_mod
 

@@ -10,11 +10,15 @@ from typing import Dict, Iterator, List, Optional
 from agent.memory.types import MemoryEntry, MemoryQuery, MemoryType
 from utils.log_utils import log
 
+# Module-level path so tests/conftest.py can redirect it to tmp_path
+# (AGENTS.md §6/§10 persistence contract). Shared with FeedbackCollector.
+DEFAULT_DB_PATH = "./data/agent_memory.db"
+
 
 class MemoryStore:
-    def __init__(self, db_path: str = "./data/agent_memory.db"):
+    def __init__(self, db_path: str = DEFAULT_DB_PATH):
         self._db_path = db_path
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         # WAL improves concurrent reader/writer throughput on the shared file
@@ -218,6 +222,18 @@ class MemoryStore:
             relevance_score=row["relevance_score"],
         )
 
+    def close(self) -> None:
+        """Close the underlying SQLite connection. Idempotent."""
+        with self._lock:
+            conn = getattr(self, "_conn", None)
+            if conn is None:
+                return
+            self._conn = None
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
+
 
 _memory_store: Optional[MemoryStore] = None
 
@@ -227,3 +243,11 @@ def get_memory_store() -> MemoryStore:
     if _memory_store is None:
         _memory_store = MemoryStore()
     return _memory_store
+
+
+def reset_memory_store() -> None:
+    """Close and clear the shared singleton (mainly for tests)."""
+    global _memory_store
+    if _memory_store is not None:
+        _memory_store.close()
+    _memory_store = None

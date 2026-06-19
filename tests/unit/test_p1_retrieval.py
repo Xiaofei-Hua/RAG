@@ -165,21 +165,30 @@ class TestEmbeddingFingerprint:
         from documents.embedding_registry import EmbeddingRegistry
 
         reg = EmbeddingRegistry(str(tmp_path / "er.db"))
-        reg.register("col1", "bge-small", 512)
-        assert reg.is_compatible("col1", "bge-small", 512) is True
+        try:
+            reg.register("col1", "bge-small", 512)
+            assert reg.is_compatible("col1", "bge-small", 512) is True
+        finally:
+            reg.close()
 
     def test_registry_incompatible_on_model_change(self, tmp_path):
         from documents.embedding_registry import EmbeddingRegistry
 
         reg = EmbeddingRegistry(str(tmp_path / "er.db"))
-        reg.register("col1", "bge-small", 512)
-        assert reg.is_compatible("col1", "bge-large", 1024) is False
+        try:
+            reg.register("col1", "bge-small", 512)
+            assert reg.is_compatible("col1", "bge-large", 1024) is False
+        finally:
+            reg.close()
 
     def test_registry_unknown_collection_is_compatible(self, tmp_path):
         from documents.embedding_registry import EmbeddingRegistry
 
         reg = EmbeddingRegistry(str(tmp_path / "er.db"))
-        assert reg.is_compatible("nope", "bge", 512) is True
+        try:
+            assert reg.is_compatible("nope", "bge", 512) is True
+        finally:
+            reg.close()
 
 
 # ===========================================================================
@@ -231,19 +240,22 @@ class TestParentChild:
         store.store("p2", "父文档完整内容第二章", source="manual")
         monkeypatch.setattr(ps_mod, "get_parent_store", lambda: store)
 
-        children = [
-            Document(page_content="child1", metadata={"parent_id": "p1", "score": 0.9}),
-            Document(page_content="child2", metadata={"parent_id": "p1", "score": 0.5}),
-            Document(page_content="child3", metadata={"parent_id": "p2", "score": 0.8}),
-        ]
-        expanded = ps_mod.expand_to_parents(children)
-        # Two distinct parents, deduplicated.
-        assert len(expanded) == 2
-        # Parent text replaced child content.
-        assert all("父文档" in d.page_content for d in expanded)
-        # Best child score preserved on parent.
-        p1 = next(d for d in expanded if d.metadata["parent_id"] == "p1")
-        assert p1.metadata["score"] == 0.9
+        try:
+            children = [
+                Document(page_content="child1", metadata={"parent_id": "p1", "score": 0.9}),
+                Document(page_content="child2", metadata={"parent_id": "p1", "score": 0.5}),
+                Document(page_content="child3", metadata={"parent_id": "p2", "score": 0.8}),
+            ]
+            expanded = ps_mod.expand_to_parents(children)
+            # Two distinct parents, deduplicated.
+            assert len(expanded) == 2
+            # Parent text replaced child content.
+            assert all("父文档" in d.page_content for d in expanded)
+            # Best child score preserved on parent.
+            p1 = next(d for d in expanded if d.metadata["parent_id"] == "p1")
+            assert p1.metadata["score"] == 0.9
+        finally:
+            store.close()
 
     def test_expand_passthrough_when_no_parent_id(self, monkeypatch, tmp_path):
         from documents import parent_store as ps_mod
@@ -251,10 +263,13 @@ class TestParentChild:
         store = ps_mod.ParentStore(str(tmp_path / "ps.db"))
         monkeypatch.setattr(ps_mod, "get_parent_store", lambda: store)
 
-        children = [Document(page_content="orphan", metadata={"score": 0.3})]
-        expanded = ps_mod.expand_to_parents(children)
-        assert len(expanded) == 1
-        assert expanded[0].page_content == "orphan"
+        try:
+            children = [Document(page_content="orphan", metadata={"score": 0.3})]
+            expanded = ps_mod.expand_to_parents(children)
+            assert len(expanded) == 1
+            assert expanded[0].page_content == "orphan"
+        finally:
+            store.close()
 
 
 # ===========================================================================

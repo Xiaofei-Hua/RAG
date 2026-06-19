@@ -9,18 +9,23 @@ description = "A RAG project managed with uv"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
-    "langchain>=1.0.0",
-    "langchain-core>=1.0.0",
-    "langchain-openai>=1.0.0",
-    "langchain-huggingface>=1.0.0",
-    "langchain-community>=0.3.0",
-    "langchain-experimental>=0.3.0",
-    "langchain-text-splitters>=1.0.0",
-    "langchain-tavily>=0.2.0",
-    "langgraph>=1.0.0",
-    "langgraph-checkpoint>=4.0.0",
-    "langgraph-checkpoint-sqlite>=2.0.0",
-    "langgraph-prebuilt>=1.0.0",
+    # LangChain / LangGraph: upper-bounded to the current major. The harness
+    # relies on LangGraph propagating the per-run contextvar (_run_trace_ctx)
+    # into node tasks for trace isolation; a major bump that changes that
+    # behaviour must go through the F14 concurrent-trace-isolation guard test
+    # before being allowed.
+    "langchain>=1.0.0,<2.0.0",
+    "langchain-core>=1.0.0,<2.0.0",
+    "langchain-openai>=1.0.0,<2.0.0",
+    "langchain-huggingface>=1.0.0,<2.0.0",
+    "langchain-community>=0.3.0,<2.0.0",
+    "langchain-experimental>=0.3.0,<2.0.0",
+    "langchain-text-splitters>=1.0.0,<2.0.0",
+    "langchain-tavily>=0.2.0,<2.0.0",
+    "langgraph>=1.0.0,<2.0.0",
+    "langgraph-checkpoint>=4.0.0,<5.0.0",
+    "langgraph-checkpoint-sqlite>=2.0.0,<3.0.0",
+    "langgraph-prebuilt>=1.0.0,<2.0.0",
     "pymilvus>=2.5.0,<2.6.0",
     "milvus-lite>=2.5.0",
     "sentence-transformers>=3.0.0",
@@ -46,14 +51,18 @@ dependencies = [
     "opentelemetry-sdk>=1.42.1",
     "opentelemetry-exporter-otlp-proto-http>=1.42.1",
     "opentelemetry-instrumentation-fastapi>=0.63b1",
-    "paddlepaddle>=3.3.1",
-    "paddleocr>=3.7.0",
 ]
 
 [project.optional-dependencies]
 dev = ["pytest>=9.0.0"]
 redis = ["redis>=5.0.0"]
 ui = ["gradio>=4.0.0"]
+# OCR is opt-in: paddlepaddle/paddleocr are large and only needed when
+# PDF_OCR_ENGINE=paddleocr. A minimal CPU-only deploy that uses tesseract (or
+# no OCR) installs the base deps only; OCR-capable deploys run
+# ``uv sync --extra ocr``. deploy.sh installs the ocr extra so the standard
+# offline bundle retains OCR capability.
+ocr = ["paddlepaddle>=3.3.1", "paddleocr>=3.7.0"]
 doc = [
     "python-docx>=1.0.0",
     "python-pptx>=0.6.0",
@@ -66,7 +75,58 @@ doc = [
 package = false
 
 [tool.pytest.ini_options]
-testpaths = ["tests/unit", "tests/e2e"]
+testpaths = ["tests/unit", "tests/e2e", "tests/perf"]
+# filterwarnings = ["error"]: 让 warning 直接 fail 测试，强制处理（如 DeprecationWarning、
+# 未关闭的资源）。对 LLM/流式/异步测试尤其重要——隐藏的 warning 往往是真实 bug 的先兆。
+# 渐进式启用策略：ResourceWarning 已修复全部存量（sqlite 连接泄漏）并切换为 error；
+# 其余 warning 暂保留 default，待逐个修复后再收紧。
+filterwarnings = [
+    "error::ResourceWarning",
+    "default",
+    # 切换为完全 error 模式时，按需保留对第三方噪声的豁免，例如：
+    # "ignore::DeprecationWarning:pkg_resources",
+]
+markers = [
+    "requires_ollama: needs a live Ollama backend (skipped by default; set OLLAMA_FULL_TESTS=1 to run)",
+    "requires_backend: needs Ollama + Milvus (nightly/self-hosted only)",
+]
+
+# Coverage 配置：branch 覆盖（不只是行覆盖），fail_under=80 为全局软门禁。
+# 热路径（retrieval/grounding/judge/置信度）软目标 100%，按 AGENTS.md §5 / tests/AGENTS.md。
+# 局部跑：coverage erase && coverage run -m pytest tests/unit/test_x.py && \
+#         coverage report --include='core/x.py' --fail-under=0
+[tool.coverage.run]
+branch = true
+source = ["agent", "core", "api", "documents", "models", "utils"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+# 排除明显不可达/调试代码，避免覆盖率噪声
+exclude_lines = [
+    "pragma: no cover",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+# F = pyflakes (catches duplicate imports — F04), E/W = pycodestyle,
+# I = isort, UP = pyupgrade. Kept conservative to avoid churn.
+select = ["F", "E", "W", "I", "UP"]
+ignore = [
+    "E501",  # line length handled by formatter; we don't block on it
+    "E402",  # module-level imports after code is common in this codebase
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["F401", "E402"]
+"scripts/**" = ["E402"]
+
 
 [tool.uv.sources]
 torch = [{ index = "pytorch-cpu" }]

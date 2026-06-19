@@ -198,18 +198,21 @@ class TestFlywheel:
         import agent.eval.flywheel as fly
         monkeypatch.setattr(fly, "get_judge", lambda: _StubJudge())
 
-        result = fly.on_negative_feedback(
-            trace_id="t1", message_id="m1",
-            feedback_type="thumbs_down",
-        )
-        assert result["promoted"] is True
-        assert result["judge_run"] is True
-        assert result["miss_recorded"] is True
+        try:
+            result = fly.on_negative_feedback(
+                trace_id="t1", message_id="m1",
+                feedback_type="thumbs_down",
+            )
+            assert result["promoted"] is True
+            assert result["judge_run"] is True
+            assert result["miss_recorded"] is True
 
-        # A retrieval miss row was written.
-        misses = fly.get_retrieval_misses()
-        assert len(misses) == 1
-        assert misses[0]["faithfulness"] == 0.2
+            # A retrieval miss row was written.
+            misses = fly.get_retrieval_misses()
+            assert len(misses) == 1
+            assert misses[0]["faithfulness"] == 0.2
+        finally:
+            store.close()
 
     def test_missing_inference_returns_error(self, tmp_path, monkeypatch):
         from agent.eval import flywheel as fly
@@ -218,11 +221,14 @@ class TestFlywheel:
         store = InferenceStore(str(tmp_path / "inf.db"))
         monkeypatch.setattr(fly, "get_inference_store", lambda: store)
 
-        result = fly.on_negative_feedback(
-            trace_id="nonexistent", message_id="", feedback_type="flag"
-        )
-        assert result["promoted"] is False
-        assert "no matching inference" in (result["error"] or "")
+        try:
+            result = fly.on_negative_feedback(
+                trace_id="nonexistent", message_id="", feedback_type="flag"
+            )
+            assert result["promoted"] is False
+            assert "no matching inference" in (result["error"] or "")
+        finally:
+            store.close()
 
 
 # ---------------------------------------------------------------------------
@@ -241,22 +247,25 @@ class TestCapture:
         monkeypatch.setattr(cap_mod, "_cached_commit", lambda: "deadbeef")
 
         meta: dict = {}
-        tid = cap_mod.maybe_capture_inference(
-            request_message="q",
-            answer="a",
-            sources=[],
-            reasoning="",
-            route="rag",
-            prompt_profile="p",
-            intent="rag_query",
-            metadata=meta,
-            latency_ms=10.0,
-            trace_id="trace1",
-            session_id="s1",
-        )
-        assert tid == "trace1"
-        assert meta["trace_id"] == "trace1"
-        assert bool(meta["message_id"])
+        try:
+            tid = cap_mod.maybe_capture_inference(
+                request_message="q",
+                answer="a",
+                sources=[],
+                reasoning="",
+                route="rag",
+                prompt_profile="p",
+                intent="rag_query",
+                metadata=meta,
+                latency_ms=10.0,
+                trace_id="trace1",
+                session_id="s1",
+            )
+            assert tid == "trace1"
+            assert meta["trace_id"] == "trace1"
+            assert bool(meta["message_id"])
+        finally:
+            store.close()
 
     def test_maybe_capture_skips_when_not_sampled(self, tmp_path, monkeypatch):
         from agent.eval import capture as cap_mod
@@ -267,12 +276,15 @@ class TestCapture:
         monkeypatch.setattr(cap_mod, "should_sample", lambda *a, **k: False)
 
         meta: dict = {}
-        tid = cap_mod.maybe_capture_inference(
-            request_message="q", answer="a", sources=[], reasoning="",
-            route="rag", prompt_profile="p", intent="rag_query",
-            metadata=meta, latency_ms=1.0, trace_id="t", session_id="s",
-        )
-        assert tid is None
+        try:
+            tid = cap_mod.maybe_capture_inference(
+                request_message="q", answer="a", sources=[], reasoning="",
+                route="rag", prompt_profile="p", intent="rag_query",
+                metadata=meta, latency_ms=1.0, trace_id="t", session_id="s",
+            )
+            assert tid is None
+        finally:
+            store.close()
         # metadata untouched when not sampled.
         assert "trace_id" not in meta
 

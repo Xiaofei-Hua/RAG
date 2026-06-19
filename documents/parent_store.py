@@ -33,6 +33,10 @@ __all__ = [
     "get_parent_store",
 ]
 
+# Module-level path so tests/conftest.py can redirect it to tmp_path
+# (AGENTS.md §6/§10 persistence contract).
+DEFAULT_DB_PATH = "./data/parent_store.db"
+
 
 def make_parent_id(source: str, section_index: int) -> str:
     """Stable parent id for a (source, section index) pair."""
@@ -43,10 +47,10 @@ def make_parent_id(source: str, section_index: int) -> str:
 class ParentStore:
     """Thread-safe SQLite store of parent documents keyed by parent_id."""
 
-    def __init__(self, db_path: str = "./data/parent_store.db"):
+    def __init__(self, db_path: str = DEFAULT_DB_PATH):
         self._db_path = db_path
         self._lock = threading.RLock()
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.execute(
@@ -96,7 +100,14 @@ class ParentStore:
 
     def close(self) -> None:
         with self._lock:
-            self._conn.close()
+            conn = getattr(self, "_conn", None)
+            if conn is None:
+                return
+            self._conn = None
+            try:
+                conn.close()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 _store: Optional[ParentStore] = None
@@ -110,6 +121,14 @@ def get_parent_store() -> ParentStore:
             if _store is None:
                 _store = ParentStore()
     return _store
+
+
+def reset_parent_store() -> None:
+    """Close and clear the shared singleton (mainly for tests)."""
+    global _store
+    if _store is not None:
+        _store.close()
+    _store = None
 
 
 def expand_to_parents(

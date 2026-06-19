@@ -279,10 +279,10 @@ class TestRunnerExtraction:
 class TestStubbedJudge:
     """Stub the judge's _ask to return canned verdicts."""
 
-    def _make_judge(self, monkeypatch, responses):
+    def _make_judge(self, monkeypatch, responses, tmp_path):
         from agent.eval.judge import LLMJudge
 
-        judge = LLMJudge(cache_path="./data/eval/test_judge_cache.db")
+        judge = LLMJudge(cache_path=str(tmp_path / "test_judge_cache.db"))
         judge._failures._tripped = False  # ensure available
         calls = list(responses)
 
@@ -292,54 +292,69 @@ class TestStubbedJudge:
         monkeypatch.setattr(judge, "_ask", fake_ask)
         return judge
 
-    def test_faithfulness_all_supported(self, monkeypatch):
-        judge = self._make_judge(monkeypatch, ['{"supported": true}'])
-        score, note = judge.faithfulness(
-            "振动偏高需动平衡。",
-            ["手册说明振动高时需做动平衡。"],
-        )
-        assert score == 1.0
+    def test_faithfulness_all_supported(self, monkeypatch, tmp_path):
+        judge = self._make_judge(monkeypatch, ['{"supported": true}'], tmp_path)
+        try:
+            score, note = judge.faithfulness(
+                "振动偏高需动平衡。",
+                ["手册说明振动高时需做动平衡。"],
+            )
+            assert score == 1.0
+        finally:
+            judge.close()
 
-    def test_faithfulness_none_supported(self, monkeypatch):
+    def test_faithfulness_none_supported(self, monkeypatch, tmp_path):
         # Two claims -> two "not supported" responses.
         judge = self._make_judge(
             monkeypatch,
             ['{"supported": false}', '{"supported": false}'],
+            tmp_path,
         )
-        score, note = judge.faithfulness(
-            "振动偏高。需更换发动机。",
-            ["手册仅提到液压系统。"],
-        )
-        assert score == 0.0
+        try:
+            score, note = judge.faithfulness(
+                "振动偏高。需更换发动机。",
+                ["手册仅提到液压系统。"],
+            )
+            assert score == 0.0
+        finally:
+            judge.close()
 
-    def test_hallucination_no_hard_claims(self, monkeypatch):
-        judge = self._make_judge(monkeypatch, [])
-        # Soft claim only -> 0 hallucination without calling the LLM.
-        score, note = judge.hallucination_score(
-            "请进一步检查。",
-            ["context"],
-        )
-        assert score == 0.0
+    def test_hallucination_no_hard_claims(self, monkeypatch, tmp_path):
+        judge = self._make_judge(monkeypatch, [], tmp_path)
+        try:
+            # Soft claim only -> 0 hallucination without calling the LLM.
+            score, note = judge.hallucination_score(
+                "请进一步检查。",
+                ["context"],
+            )
+            assert score == 0.0
+        finally:
+            judge.close()
 
-    def test_circuit_breaker_trips(self, monkeypatch):
+    def test_circuit_breaker_trips(self, monkeypatch, tmp_path):
         from agent.eval.judge import LLMJudge
 
-        judge = LLMJudge(cache_path="./data/eval/test_judge_cache.db", failure_threshold=2)
+        judge = LLMJudge(
+            cache_path=str(tmp_path / "test_judge_cache.db"), failure_threshold=2
+        )
 
         def always_fail(prompt):
             raise RuntimeError("LLM down")
 
         # Force the lazy llm to raise via patching _get_llm.
         monkeypatch.setattr(judge, "_get_llm", always_fail)
-        # First failure
-        assert judge._ask("p1") is None
-        assert judge.available
-        # Second failure -> trips
-        assert judge._ask("p2") is None
-        assert not judge.available
-        # Once tripped, evaluate returns judge_used=False
-        m = judge.evaluate("q", "a", ["c"])
-        assert m.judge_used is False
+        try:
+            # First failure
+            assert judge._ask("p1") is None
+            assert judge.available
+            # Second failure -> trips
+            assert judge._ask("p2") is None
+            assert not judge.available
+            # Once tripped, evaluate returns judge_used=False
+            m = judge.evaluate("q", "a", ["c"])
+            assert m.judge_used is False
+        finally:
+            judge.close()
 
 
 # ---------------------------------------------------------------------------

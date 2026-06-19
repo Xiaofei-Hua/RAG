@@ -159,13 +159,24 @@ def _parse_bool_answer(text: str, default: Optional[bool] = None) -> Optional[bo
 # Verdict cache (SQLite)
 # =============================================================================
 
+# Module-level path so tests/conftest.py can redirect it to tmp_path
+# (AGENTS.md §6/§10 persistence contract — every on-disk path MUST live behind
+# a module-level attribute).
+DEFAULT_JUDGE_CACHE_PATH = "./data/eval/judge_cache.db"
+
+
 class _VerdictCache:
     """SQLite-backed cache for judge verdicts, keyed on (prompt_hash, model)."""
 
-    def __init__(self, db_path: str = "./data/eval/judge_cache.db"):
+    def __init__(self, db_path: Optional[str] = None):
+        # Default must come from the module-level attribute so tests/conftest.py
+        # can redirect it to a tmp dir (AGENTS.md §6/§10 persistence contract).
+        if db_path is None:
+            db_path = DEFAULT_JUDGE_CACHE_PATH
         self._db_path = db_path
         self._lock = threading.Lock()
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        self._closed = False
+        os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.execute(
             """
@@ -202,7 +213,10 @@ class _VerdictCache:
 
     def close(self) -> None:
         with self._lock:
+            if self._closed:
+                return
             self._conn.close()
+            self._closed = True
 
 
 # =============================================================================
@@ -294,7 +308,7 @@ class LLMJudge:
     def __init__(
         self,
         model_name: Optional[str] = None,
-        cache_path: str = "./data/eval/judge_cache.db",
+        cache_path: Optional[str] = None,
         failure_threshold: int = 5,
     ):
         self._model_name = model_name
@@ -501,6 +515,24 @@ class LLMJudge:
         if verdict is None:
             return None
         return JudgeVerdict(supported=verdict)
+
+    # ------------------------------------------------------------------
+    # Public entailment API (F17)
+    #
+    # Consumers outside the eval package (notably the online grounding guardrail)
+    # need single-claim NLI. They previously reached into the underscore-private
+    # ``_entail``/``_aentail``, coupling them to the judge's internals. These
+    # public methods provide a stable contract and delegate to the privates, so
+    # a future judge refactor does not silently break the guardrail.
+    # ------------------------------------------------------------------
+
+    def entail(self, claim: str, context_blob: str) -> Optional[JudgeVerdict]:
+        """Public single-claim NLI entailment check. Delegates to ``_entail``."""
+        return self._entail(claim, context_blob)
+
+    async def aentail(self, claim: str, context_blob: str) -> Optional[JudgeVerdict]:
+        """Public async single-claim NLI entailment check. Delegates to ``_aentail``."""
+        return await self._aentail(claim, context_blob)
 
     def hallucination_score(self, answer: str, contexts: List[str]) -> Tuple[Optional[float], str]:
         """

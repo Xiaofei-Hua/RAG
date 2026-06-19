@@ -128,7 +128,7 @@ class TestMemoryInjection:
         # retrieve should work (LIKE fallback if no embeddings).
         results = store.retrieve(MemoryQuery(query="振动"))
         assert len(results) >= 1
-        store._conn.close()
+        store.close()
 
 
 # ===========================================================================

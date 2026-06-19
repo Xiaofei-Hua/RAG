@@ -37,6 +37,25 @@ async def lifespan(app: FastAPI):
     log.info("Enterprise RAG Platform Starting...")
     log.info("=" * 50)
 
+    # Production hardening gate (F05): refuse to start in a wide-open
+    # configuration. Admin endpoints fall open to loopback-adjacent callers when
+    # ADMIN_API_KEY is unset, and the CORS default is localhost-only — both are
+    # fine for local dev but unsafe in production. We raise (uvicorn logs once
+    # and exits non-zero) rather than sys.exit so a misconfigured container does
+    # not restart-loop. Skipped under PYTEST_RUN=1 (set by tests/conftest.py at
+    # collection time, before this lifespan runs).
+    _DEFAULT_CORS = "http://localhost:5173,http://127.0.0.1:5173"
+    _is_test = os.getenv("PYTEST_RUN", "") == "1"
+    _admin_key_set = bool(os.getenv("ADMIN_API_KEY", "").strip())
+    _origins_default = os.getenv("ALLOWED_ORIGINS", _DEFAULT_CORS) == _DEFAULT_CORS
+    if (not _is_test) and (not _admin_key_set) and _origins_default:
+        raise RuntimeError(
+            "Refusing to start: production-unsafe configuration. "
+            "Set ADMIN_API_KEY and a production ALLOWED_ORIGINS, "
+            "or set PYTEST_RUN=1 for the test suite. "
+            "(Deploy note: use restart_policy.condition=on-failure with max-attempts.)"
+        )
+
     # Initialize core components (lazy)
     from core.memory.redis_memory import get_session_memory
     from core.fallback.circuit_breaker import get_llm_circuit, get_retriever_circuit
@@ -78,116 +97,177 @@ async def lifespan(app: FastAPI):
     from agent.harness import get_agent_harness
     await get_agent_harness().aclose()
 
+    # Release the hybrid retriever's parallel-retrieval thread pool (F11 —
+    # previously a class-level executor with no closer, leaking for the process
+    # lifetime; it is now instance-scoped and shut down here).
+    try:
+        from core.retrieval.hybrid_retriever import get_hybrid_retriever
+        get_hybrid_retriever().close()
+    except Exception as e:  # noqa: BLE001
+        log.debug(f"Hybrid retriever close skipped: {e}")
+
+    # Close the LLMJudge singleton's SQLite verdict-cache connection. The judge
+    # is lazily instantiated by the grounding guardrail / PII guardrail / eval
+    # flywheel; without this close the connection leaks on every shutdown
+    # (surfaced as ResourceWarning: unclosed database).
+    try:
+        from agent.eval.judge import reset_judge
+        reset_judge()
+    except Exception as e:  # noqa: BLE001
+        log.debug(f"Judge close skipped: {e}")
+
+    # Close the agent-memory / feedback SQLite singletons. They share
+    # agent_memory.db; without these closes their connections leak on shutdown.
+    try:
+        from agent.memory.store import reset_memory_store
+        reset_memory_store()
+    except Exception as e:  # noqa: BLE001
+        log.debug(f"Memory store close skipped: {e}")
+    try:
+        from agent.feedback.collector import reset_feedback_collector
+        reset_feedback_collector()
+    except Exception as e:  # noqa: BLE001
+        log.debug(f"Feedback collector close skipped: {e}")
+    try:
+        from agent.feedback.escalation import reset_escalation_manager
+        reset_escalation_manager()
+    except Exception as e:  # noqa: BLE001
+        log.debug(f"Escalation manager close skipped: {e}")
+    try:
+        from documents.parent_store import reset_parent_store
+        reset_parent_store()
+    except Exception as e:  # noqa: BLE001
+        log.debug(f"Parent store close skipped: {e}")
+    try:
+        from documents.document_registry import reset_document_registry
+        reset_document_registry()
+    except Exception as e:  # noqa: BLE001
+        log.debug(f"Document registry close skipped: {e}")
+
     log.info("Shutdown complete")
 
 
-# Create FastAPI application
-app = FastAPI(
-    title="Enterprise RAG Platform",
-    description="企业级RAG智能平台API",
-    version="1.0.0",
-    lifespan=lifespan,
-    root_path=os.getenv("APP_ROOT_PATH", ""),
-    docs_url="/docs",
-    redoc_url="/redoc",
-)
+def create_app() -> FastAPI:
+    """
+    Build the FastAPI application (F16 — app factory).
 
-# CORS middleware.
-#
-# ``allow_origins=["*"]`` combined with ``allow_credentials=True`` is an
-# invalid and insecure combination per the CORS spec (browsers reject it, and
-# it signals a credential leak if any auth is ever added). Origins are now
-# driven by the ``ALLOWED_ORIGINS`` env var (comma-separated). When unset, a
-# safe local-dev default is used; production deployments MUST set it
-# explicitly.
-_default_origins = "http://localhost:5173,http://127.0.0.1:5173"
-_allowed_origins = [
-    o.strip()
-    for o in os.getenv("ALLOWED_ORIGINS", _default_origins).split(",")
-    if o.strip()
-]
-# ``allow_credentials`` is only meaningful with a concrete origin list (never
-# with "*"); keep it on so cookies/auth headers work in production once set.
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_allowed_origins,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    Centralises ALL app construction — CORS, middleware, routers, OTEL
+    instrumentation, health/info routes, and the static frontend mount/SPA
+    catch-all — so tests can build the app in-process and (in a follow-up) inject
+    singletons via ``app.dependency_overrides`` instead of monkeypatching source
+    modules. The module-level ``app = create_app()`` below preserves the
+    ``uvicorn api.main:app`` entrypoint.
+    """
+    application = FastAPI(
+        title="Enterprise RAG Platform",
+        description="企业级RAG智能平台API",
+        version="1.0.0",
+        lifespan=lifespan,
+        root_path=os.getenv("APP_ROOT_PATH", ""),
+        docs_url="/docs",
+        redoc_url="/redoc",
+    )
 
-# Custom middleware
-app.add_middleware(TracingMiddleware)
-app.add_middleware(ErrorHandlerMiddleware)
+    # CORS middleware.
+    #
+    # ``allow_origins=["*"]`` combined with ``allow_credentials=True`` is an
+    # invalid and insecure combination per the CORS spec (browsers reject it,
+    # and it signals a credential leak if any auth is ever added). Origins are
+    # driven by the ``ALLOWED_ORIGINS`` env var (comma-separated). When unset, a
+    # safe local-dev default is used; production deployments MUST set it
+    # explicitly.
+    _default_origins = "http://localhost:5173,http://127.0.0.1:5173"
+    _allowed_origins = [
+        o.strip()
+        for o in os.getenv("ALLOWED_ORIGINS", _default_origins).split(",")
+        if o.strip()
+    ]
+    # ``allow_credentials`` is only meaningful with a concrete origin list
+    # (never with "*"); keep it on so cookies/auth headers work in production.
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=_allowed_origins,
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-# Include routers
-app.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
-app.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
-app.include_router(sessions.router, prefix="/api/sessions", tags=["Sessions"])
-app.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
-app.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
-app.include_router(retrieval.router, prefix="/api/retrieval", tags=["Retrieval"])
+    # Custom middleware
+    application.add_middleware(TracingMiddleware)
+    application.add_middleware(ErrorHandlerMiddleware)
 
-from core.tracing import instrument_fastapi
-instrument_fastapi(app)
+    # Include routers
+    application.include_router(chat.router, prefix="/api/chat", tags=["Chat"])
+    application.include_router(documents.router, prefix="/api/documents", tags=["Documents"])
+    application.include_router(sessions.router, prefix="/api/sessions", tags=["Sessions"])
+    application.include_router(admin.router, prefix="/api/admin", tags=["Admin"])
+    application.include_router(feedback.router, prefix="/api/feedback", tags=["Feedback"])
+    application.include_router(retrieval.router, prefix="/api/retrieval", tags=["Retrieval"])
 
+    from core.tracing import instrument_fastapi
+    instrument_fastapi(application)
 
-# Health check endpoint
-@app.get("/health", tags=["Health"])
-async def health_check():
-    """Health check endpoint."""
-    from core.fallback.circuit_breaker import get_llm_circuit, get_retriever_circuit
+    # Health check endpoint
+    @application.get("/health", tags=["Health"])
+    async def health_check():
+        """Health check endpoint."""
+        from core.fallback.circuit_breaker import get_llm_circuit, get_retriever_circuit
 
-    llm_circuit = get_llm_circuit()
-    retriever_circuit = get_retriever_circuit()
+        llm_circuit = get_llm_circuit()
+        retriever_circuit = get_retriever_circuit()
 
-    return {
-        "status": "healthy",
-        "timestamp": time.time(),
-        "circuits": {
-            "llm": llm_circuit.state.value,
-            "retriever": retriever_circuit.state.value,
+        return {
+            "status": "healthy",
+            "timestamp": time.time(),
+            "circuits": {
+                "llm": llm_circuit.state.value,
+                "retriever": retriever_circuit.state.value,
+            }
         }
-    }
+
+    # API information endpoint
+    @application.get("/api", tags=["Root"])
+    async def api_info():
+        """Return API information."""
+        return {
+            "name": "Enterprise RAG Platform",
+            "version": "1.0.0",
+            "docs": "/docs",
+            "health": "/health",
+        }
+
+    # Serve the production frontend when `npm run build` has created web/dist.
+    web_dist_dir = Path(
+        os.getenv("WEB_DIST_DIR", Path(__file__).resolve().parents[1] / "web" / "dist")
+    ).resolve()
+    web_index = web_dist_dir / "index.html"
+
+    if web_index.is_file():
+        assets_dir = web_dist_dir / "assets"
+        if assets_dir.is_dir():
+            application.mount("/assets", StaticFiles(directory=assets_dir), name="frontend-assets")
+
+        @application.get("/{full_path:path}", include_in_schema=False)
+        async def frontend(full_path: str):
+            """Serve static files and fall back to the Vue SPA entry point."""
+            if full_path == "api" or full_path.startswith("api/"):
+                raise HTTPException(status_code=404, detail="API endpoint not found")
+            requested = (web_dist_dir / full_path).resolve()
+            if requested.is_relative_to(web_dist_dir) and requested.is_file():
+                return FileResponse(requested)
+            return FileResponse(web_index)
+    else:
+        @application.get("/", tags=["Root"])
+        async def root():
+            """Return API information when the frontend has not been built."""
+            return await api_info()
+
+    return application
 
 
-# API information endpoint
-@app.get("/api", tags=["Root"])
-async def api_info():
-    """Return API information."""
-    return {
-        "name": "Enterprise RAG Platform",
-        "version": "1.0.0",
-        "docs": "/docs",
-        "health": "/health",
-    }
-
-
-# Serve the production frontend when `npm run build` has created web/dist.
-WEB_DIST_DIR = Path(
-    os.getenv("WEB_DIST_DIR", Path(__file__).resolve().parents[1] / "web" / "dist")
-).resolve()
-WEB_INDEX = WEB_DIST_DIR / "index.html"
-
-if WEB_INDEX.is_file():
-    assets_dir = WEB_DIST_DIR / "assets"
-    if assets_dir.is_dir():
-        app.mount("/assets", StaticFiles(directory=assets_dir), name="frontend-assets")
-
-    @app.get("/{full_path:path}", include_in_schema=False)
-    async def frontend(full_path: str):
-        """Serve static files and fall back to the Vue SPA entry point."""
-        if full_path == "api" or full_path.startswith("api/"):
-            raise HTTPException(status_code=404, detail="API endpoint not found")
-        requested = (WEB_DIST_DIR / full_path).resolve()
-        if requested.is_relative_to(WEB_DIST_DIR) and requested.is_file():
-            return FileResponse(requested)
-        return FileResponse(WEB_INDEX)
-else:
-    @app.get("/", tags=["Root"])
-    async def root():
-        """Return API information when the frontend has not been built."""
-        return await api_info()
+# Module-level app for `uvicorn api.main:app`. Built via the factory so the
+# in-process test client and uvicorn share one construction path.
+app = create_app()
 
 
 if __name__ == "__main__":

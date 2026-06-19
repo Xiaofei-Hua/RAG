@@ -195,11 +195,14 @@ class TestJudgeInjectionHardening:
             return '{"supported": true, "rationale": "ok"}'
 
         monkeypatch.setattr(judge, "_ask", fake_ask)
-        verdict = judge._entail("claim", "ctx")
-        assert verdict is not None
-        assert verdict.supported is True
-        assert "<<<检索内容>>>" in captured["prompt"]
-        assert "<<<声明>>>" in captured["prompt"]
+        try:
+            verdict = judge._entail("claim", "ctx")
+            assert verdict is not None
+            assert verdict.supported is True
+            assert "<<<检索内容>>>" in captured["prompt"]
+            assert "<<<声明>>>" in captured["prompt"]
+        finally:
+            judge.close()
 
 
 # (test doubles below are unused now that the judge test builds a real

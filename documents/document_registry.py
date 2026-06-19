@@ -13,6 +13,10 @@ from typing import Dict, List, Literal, Optional
 
 from utils.log_utils import log
 
+# Module-level path so tests/conftest.py can redirect it to tmp_path
+# (AGENTS.md §6/§10 persistence contract).
+DEFAULT_DB_PATH = "./data/documents.db"
+
 # 文档处理状态：上传后后台分块/向量化/索引的生命周期取值
 DocumentStatus = Literal["processing", "indexed", "failed"]
 
@@ -25,7 +29,7 @@ class DocumentRegistry:
     so that document tracking survives server restarts.
     """
 
-    def __init__(self, db_path: str = "./data/documents.db"):
+    def __init__(self, db_path: str = DEFAULT_DB_PATH):
         os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else ".", exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
@@ -105,8 +109,15 @@ class DocumentRegistry:
         return row is not None
 
     def close(self) -> None:
-        if self._conn:
-            self._conn.close()
+        """Close the underlying SQLite connection. Idempotent."""
+        conn = getattr(self, "_conn", None)
+        if conn is None:
+            return
+        self._conn = None
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
 
 
 # Module-level singleton
@@ -119,3 +130,11 @@ def get_document_registry() -> DocumentRegistry:
     if _registry is None:
         _registry = DocumentRegistry()
     return _registry
+
+
+def reset_document_registry() -> None:
+    """Close and clear the shared singleton (mainly for tests)."""
+    global _registry
+    if _registry is not None:
+        _registry.close()
+    _registry = None

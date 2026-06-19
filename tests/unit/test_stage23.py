@@ -209,12 +209,15 @@ class TestAsyncGrounding:
 
         class _StubJudge:
             available = True
-            async def _aentail(self, claim, context_blob):
+            async def aentail(self, claim, context_blob):
                 started.append(claim)
                 # Yield once so other tasks can start (proves concurrency).
                 await asyncio.sleep(0.01)
                 completed_order.append(claim)
                 return _StubVerdict(True)
+            # Back-compat alias for any caller still on the private name.
+            async def _aentail(self, claim, context_blob):
+                return await self.aentail(claim, context_blob)
 
         g = GroundingGuardrail(judge=_StubJudge())
         # An answer with 3 hard claims (values).
@@ -244,8 +247,10 @@ class TestAsyncGrounding:
 
         class _ExplodingJudge:
             available = True
-            async def _aentail(self, claim, context_blob):
+            async def aentail(self, claim, context_blob):
                 raise RuntimeError("boom")
+            async def _aentail(self, claim, context_blob):
+                return await self.aentail(claim, context_blob)
 
         g = GroundingGuardrail(judge=_ExplodingJudge())
         result = asyncio.run(g.acheck("温度应为 100°C。", ["ctx"]))
@@ -399,20 +404,26 @@ class TestSQLiteLocking:
         from agent.memory.store import MemoryStore
 
         store = MemoryStore(db_path=str(tmp_path / "mem.db"))
-        assert hasattr(store, "_lock")
-        # Reentrant lock so nested locked() calls don't deadlock.
-        with store._locked():
+        try:
+            assert hasattr(store, "_lock")
+            # Reentrant lock so nested locked() calls don't deadlock.
             with store._locked():
-                pass
+                with store._locked():
+                    pass
+        finally:
+            store.close()
 
     def test_feedback_collector_has_lock(self, tmp_path):
         from agent.feedback.collector import FeedbackCollector
 
         fc = FeedbackCollector(db_path=str(tmp_path / "fb.db"))
-        assert hasattr(fc, "_lock")
-        with fc._locked():
+        try:
+            assert hasattr(fc, "_lock")
             with fc._locked():
-                pass
+                with fc._locked():
+                    pass
+        finally:
+            fc.close()
 
     def test_memory_store_concurrent_writes_safe(self, tmp_path):
         import threading
@@ -443,8 +454,11 @@ class TestSQLiteLocking:
             t.start()
         for t in threads:
             t.join()
-        # No "database is locked" or other errors under concurrent writes.
-        assert errors == []
+        try:
+            # No "database is locked" or other errors under concurrent writes.
+            assert errors == []
+        finally:
+            store.close()
 
 
 if __name__ == "__main__":

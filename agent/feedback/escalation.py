@@ -7,11 +7,15 @@ from typing import Dict, List, Optional
 from agent.feedback.types import EscalationLevel, EscalationRecord
 from utils.log_utils import log
 
+# Module-level path so tests/conftest.py can redirect it to tmp_path
+# (AGENTS.md §6/§10 persistence contract). Shared with MemoryStore/FeedbackCollector.
+DEFAULT_DB_PATH = "./data/agent_memory.db"
+
 
 class EscalationManager:
-    def __init__(self, db_path: str = "./data/agent_memory.db"):
+    def __init__(self, db_path: str = DEFAULT_DB_PATH):
         self._db_path = db_path
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._init_table()
@@ -102,6 +106,17 @@ class EscalationManager:
             timestamp=row["timestamp"],
         )
 
+    def close(self) -> None:
+        """Close the underlying SQLite connection. Idempotent."""
+        conn = getattr(self, "_conn", None)
+        if conn is None:
+            return
+        self._conn = None
+        try:
+            conn.close()
+        except Exception:  # noqa: BLE001
+            pass
+
 
 _escalation_manager: Optional[EscalationManager] = None
 
@@ -111,3 +126,11 @@ def get_escalation_manager() -> EscalationManager:
     if _escalation_manager is None:
         _escalation_manager = EscalationManager()
     return _escalation_manager
+
+
+def reset_escalation_manager() -> None:
+    """Close and clear the shared singleton (mainly for tests)."""
+    global _escalation_manager
+    if _escalation_manager is not None:
+        _escalation_manager.close()
+    _escalation_manager = None
