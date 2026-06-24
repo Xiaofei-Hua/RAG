@@ -10,12 +10,17 @@ from __future__ import annotations
 import math
 import re
 from collections import Counter
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any
 
 from langchain_core.documents import Document
 
 from utils.log_utils import log
+
+if TYPE_CHECKING:
+    # RetrievalResult is constructed at runtime via a lazy import inside
+    # retrieve(); declared here only for the type annotation.
+    from core.retrieval.hybrid_retriever import RetrievalResult
 
 __all__ = ["BM25Retriever"]
 
@@ -23,9 +28,10 @@ __all__ = ["BM25Retriever"]
 @dataclass
 class BM25Config:
     """Configuration for BM25 retriever."""
-    k1: float = 1.5      # Term frequency saturation
-    b: float = 0.75      # Document length normalization
-    top_k: int = 5       # Number of results
+
+    k1: float = 1.5  # Term frequency saturation
+    b: float = 0.75  # Document length normalization
+    top_k: int = 5  # Number of results
     min_token_length: int = 1
 
 
@@ -42,7 +48,7 @@ class BM25Retriever:
     - Document persistence support
     """
 
-    def __init__(self, config: Optional[BM25Config] = None):
+    def __init__(self, config: BM25Config | None = None):
         """
         Initialize BM25 retriever.
 
@@ -50,17 +56,17 @@ class BM25Retriever:
             config: BM25 configuration
         """
         self.config = config or BM25Config()
-        self._documents: List[Document] = []
-        self._doc_tokens: List[List[str]] = []
-        self._doc_lengths: List[int] = []
+        self._documents: list[Document] = []
+        self._doc_tokens: list[list[str]] = []
+        self._doc_lengths: list[int] = []
         self._avgdl: float = 0.0
-        self._idf: Dict[str, float] = {}
-        self._doc_freq: Dict[str, int] = {}
+        self._idf: dict[str, float] = {}
+        self._doc_freq: dict[str, int] = {}
         self._index_built = False
 
         log.debug("BM25Retriever initialized")
 
-    def add_documents(self, documents: List[Document]):
+    def add_documents(self, documents: list[Document]):
         """
         Add documents to the BM25 index.
 
@@ -76,7 +82,7 @@ class BM25Retriever:
         self._build_index()
         log.info(f"Added {len(documents)} documents to BM25 index")
 
-    def _tokenize(self, text: str) -> List[str]:
+    def _tokenize(self, text: str) -> list[str]:
         """Tokenize text into terms."""
         if not text:
             return []
@@ -85,6 +91,7 @@ class BM25Retriever:
         # Try to use jieba for Chinese text
         try:
             import jieba
+
             tokens = list(jieba.cut(text))
         except ImportError:
             # Fallback for Chinese + English mixed text
@@ -103,8 +110,19 @@ class BM25Retriever:
     def _normalize_text(self, text: str) -> str:
         """Normalize query/document text for robust matching."""
         normalized = text.lower()
-        # Unify common ATA forms: ATA32 / ATA-32 / ata 32 -> ata32
-        normalized = re.sub(r"\bata[\s\-_:]*([0-9]{2})\b", r"ata\1", normalized)
+        # Domain-specific token normalization (e.g. ATA chapter unification for
+        # aviation). Applied only when the active profile declares such
+        # patterns — a no-op for domain-agnostic profiles.
+        from core.prompts.domain_profile import get_active_profile
+
+        for pattern in get_active_profile().query_patterns:
+            try:
+                # Normalize ATA-style "ATA 32" / "ATA-32" -> "ata32" so the
+                # token form matches across query and docs.
+                if "ata" in pattern:
+                    normalized = re.sub(r"\bata[\s\-_:]*([0-9]{2})\b", r"ata\1", normalized)
+            except re.error:
+                continue
         # Normalize repeated whitespace
         normalized = re.sub(r"\s+", " ", normalized).strip()
         return normalized
@@ -139,8 +157,8 @@ class BM25Retriever:
     def retrieve(
         self,
         query: str,
-        top_k: Optional[int] = None,
-    ) -> List["RetrievalResult"]:
+        top_k: int | None = None,
+    ) -> list[RetrievalResult]:
         """
         Retrieve documents using BM25 scoring.
 
@@ -177,20 +195,22 @@ class BM25Retriever:
         # Create retrieval results
         results = []
         for rank, (doc_idx, score) in enumerate(top_results, 1):
-            results.append(RetrievalResult(
-                document=self._documents[doc_idx],
-                score=score,
-                source="sparse",
-                rank=rank,
-            ))
+            results.append(
+                RetrievalResult(
+                    document=self._documents[doc_idx],
+                    score=score,
+                    source="sparse",
+                    rank=rank,
+                )
+            )
 
         log.debug(f"BM25 retrieved {len(results)} results for query")
         return results
 
     def _bm25_score(
         self,
-        query_tokens: List[str],
-        doc_tokens: List[str],
+        query_tokens: list[str],
+        doc_tokens: list[str],
         doc_idx: int,
     ) -> float:
         """Calculate BM25 score for a document."""
@@ -234,8 +254,7 @@ class BM25Retriever:
         if not self._documents or not source:
             return
         indices_to_remove = [
-            i for i, doc in enumerate(self._documents)
-            if doc.metadata.get("source") == source
+            i for i, doc in enumerate(self._documents) if doc.metadata.get("source") == source
         ]
         if not indices_to_remove:
             return
@@ -247,7 +266,7 @@ class BM25Retriever:
         log.info(f"BM25 removed {len(indices_to_remove)} docs for source={source}")
 
     @property
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         """Get index statistics."""
         return {
             "document_count": len(self._documents),
@@ -258,7 +277,7 @@ class BM25Retriever:
 
 
 # Module-level instance
-_bm25_retriever: Optional[BM25Retriever] = None
+_bm25_retriever: BM25Retriever | None = None
 
 
 def get_bm25_retriever() -> BM25Retriever:

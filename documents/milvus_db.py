@@ -15,10 +15,11 @@ from __future__ import annotations
 
 import gc
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import wraps
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
+from typing import Any, TypeVar
 
 from langchain_core.documents import Document
 from pymilvus import DataType, MilvusClient, MilvusException
@@ -34,6 +35,7 @@ F = TypeVar("F", bound=Callable[..., Any])
 
 class SearchMode(Enum):
     """Search mode enumeration."""
+
     DENSE_ONLY = "dense_only"
     SPARSE_ONLY = "sparse_only"
     HYBRID = "hybrid"
@@ -49,6 +51,7 @@ class MilvusConfig:
     standalone Milvus server set ``MILVUS_INDEX_TYPE=HNSW`` (or IVF_FLAT) plus
     ``MILVUS_INDEX_PARAMS`` / ``MILVUS_SEARCH_PARAMS`` for tunable recall.
     """
+
     uri: str = MILVUS_URI
     collection_name: str = COLLECTION_NAME
     dense_dim: int = EMBEDDING_DIMENSION
@@ -64,8 +67,8 @@ class MilvusConfig:
     # Index type + build/search params. AUTOINDEX auto-tunes; HNSW/IVF accept
     # explicit params parsed from env (JSON). See _parse_index_env below.
     index_type: str = ""
-    index_params: Optional[Dict[str, Any]] = None
-    search_params: Optional[Dict[str, Any]] = None
+    index_params: dict[str, Any] | None = None
+    search_params: dict[str, Any] | None = None
 
     # Extra dynamic-field metadata to return from search (alongside the base
     # text/source/title). These are written as dynamic fields at insert time
@@ -92,7 +95,7 @@ class MilvusConfig:
             self.search_params = _parse_index_env(os.getenv("MILVUS_SEARCH_PARAMS"))
 
 
-def _parse_index_env(raw: Optional[str]) -> Optional[Dict[str, Any]]:
+def _parse_index_env(raw: str | None) -> dict[str, Any] | None:
     """Parse a JSON index/search params env var; None on empty/invalid."""
     if not raw or not raw.strip():
         return None
@@ -110,44 +113,45 @@ def _parse_index_env(raw: Optional[str]) -> Optional[Dict[str, Any]]:
 @dataclass
 class SearchResult:
     """Search result container."""
+
     id: int
     text: str
     score: float
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_document(self) -> Document:
-        return Document(
-            page_content=self.text,
-            metadata={"score": self.score, **self.metadata}
-        )
+        return Document(page_content=self.text, metadata={"score": self.score, **self.metadata})
 
 
 class MilvusConnectionError(Exception):
     """Connection error."""
+
     pass
 
 
 class MilvusOperationError(Exception):
     """Operation error."""
+
     pass
 
 
 def retry_on_failure(
-    max_retries: Optional[int] = None,
-    delay: Optional[float] = None,
-    backoff: Optional[float] = None,
-    exceptions: Tuple[type, ...] = (MilvusException, ConnectionError, TimeoutError)
+    max_retries: int | None = None,
+    delay: float | None = None,
+    backoff: float | None = None,
+    exceptions: tuple[type, ...] = (MilvusException, ConnectionError, TimeoutError),
 ) -> Callable[[F], F]:
     """Retry decorator with exponential backoff."""
+
     def decorator(func: F) -> F:
         @wraps(func)
-        def wrapper(self: "MilvusManager", *args: Any, **kwargs: Any) -> Any:
+        def wrapper(self: MilvusManager, *args: Any, **kwargs: Any) -> Any:
             config = self.config
             _max_retries = max_retries or config.max_retries
             _delay = delay or config.retry_delay
             _backoff = backoff or config.retry_backoff
 
-            last_exception: Optional[Exception] = None
+            last_exception: Exception | None = None
             current_delay = _delay
 
             for attempt in range(_max_retries + 1):
@@ -170,6 +174,7 @@ def retry_on_failure(
             ) from last_exception
 
         return wrapper  # type: ignore
+
     return decorator
 
 
@@ -184,14 +189,15 @@ def _get_embedding_function():
     query embeddings (document embeddings are write-path, not cached).
     """
     from models.embedding_models import get_local_embeddings
+
     base = get_local_embeddings()
 
     import os
-    if os.getenv("RETRIEVAL_CACHE_ENABLED", "true").lower() in (
-        "1", "true", "yes", "on"
-    ):
+
+    if os.getenv("RETRIEVAL_CACHE_ENABLED", "true").lower() in ("1", "true", "yes", "on"):
         try:
             from core.retrieval.cache import cached_embedding_function
+
             return cached_embedding_function(base)
         except Exception:  # noqa: BLE001 - caching is best-effort
             return base
@@ -201,7 +207,7 @@ def _get_embedding_function():
 class MilvusManager:
     """
     Lightweight Milvus manager for low-resource servers.
-    
+
     Key optimizations:
     - No singleton pattern (works with multiprocessing)
     - Lazy embedding model loading
@@ -210,13 +216,13 @@ class MilvusManager:
     - Memory-efficient operations
     """
 
-    def __init__(self, config: Optional[MilvusConfig] = None) -> None:
+    def __init__(self, config: MilvusConfig | None = None) -> None:
         """Initialize with lazy loading."""
         self.config = config or MilvusConfig()
-        self._client: Optional[MilvusClient] = None
+        self._client: MilvusClient | None = None
         self._embedding_fn = None  # Lazy loaded
         self._collection_loaded = False
-        
+
         log.debug(f"MilvusManager created: {self.config.collection_name}")
 
     @property
@@ -239,12 +245,9 @@ class MilvusManager:
         """Connect to Milvus server."""
         if self._client is not None:
             return
-            
+
         try:
-            self._client = MilvusClient(
-                uri=self.config.uri,
-                timeout=self.config.connection_timeout
-            )
+            self._client = MilvusClient(uri=self.config.uri, timeout=self.config.connection_timeout)
             log.info(f"Connected to Milvus: {self.config.uri}")
         except Exception as e:
             raise MilvusConnectionError(f"Connection failed: {e}") from e
@@ -252,7 +255,7 @@ class MilvusManager:
     def close(self) -> None:
         """
         Explicitly close connections and free memory.
-        
+
         Call this when done to release resources.
         """
         if self._client is not None:
@@ -267,15 +270,15 @@ class MilvusManager:
             finally:
                 self._client = None
                 self._collection_loaded = False
-        
+
         # Clear embedding function to free memory
         self._embedding_fn = None
-        
+
         # Force garbage collection
         gc.collect()
         log.debug("MilvusManager resources released")
 
-    def __enter__(self) -> "MilvusManager":
+    def __enter__(self) -> MilvusManager:
         """Context manager entry."""
         return self
 
@@ -290,54 +293,47 @@ class MilvusManager:
 
         if self.config.collection_name in self.client.list_collections():
             if drop_if_exists:
-                log.info(f"Dropping existing collection")
+                log.info("Dropping existing collection")
                 try:
                     self.client.release_collection(self.config.collection_name)
                 except Exception:
                     pass
                 self.client.drop_collection(self.config.collection_name)
             else:
-                log.info(f"Collection already exists")
+                log.info("Collection already exists")
                 return True
 
         # Create schema
         schema = self.client.create_schema(auto_id=True, enable_dynamic_field=True)
 
         # Essential fields only
-        schema.add_field(
-            field_name="id",
-            datatype=DataType.INT64,
-            is_primary=True,
-            auto_id=True
-        )
+        schema.add_field(field_name="id", datatype=DataType.INT64, is_primary=True, auto_id=True)
         schema.add_field(
             field_name="text",
             datatype=DataType.VARCHAR,
             max_length=self.config.max_text_length,
             enable_analyzer=True,
-            analyzer_params={"tokenizer": "jieba"}
+            analyzer_params={"tokenizer": "jieba"},
         )
         schema.add_field(
-            field_name="dense",
-            datatype=DataType.FLOAT_VECTOR,
-            dim=self.config.dense_dim
+            field_name="dense", datatype=DataType.FLOAT_VECTOR, dim=self.config.dense_dim
         )
         # Metadata fields
         schema.add_field(
             field_name="source",
             datatype=DataType.VARCHAR,
-            max_length=self.config.max_metadata_length
+            max_length=self.config.max_metadata_length,
         )
         schema.add_field(
             field_name="title",
             datatype=DataType.VARCHAR,
-            max_length=self.config.max_metadata_length
+            max_length=self.config.max_metadata_length,
         )
 
         # Create index params. AUTOINDEX auto-tunes (Milvus Lite compatible);
         # HNSW / IVF_FLAT accept explicit build params from config.index_params.
         index_params = self.client.prepare_index_params()
-        index_kwargs: Dict[str, Any] = {
+        index_kwargs: dict[str, Any] = {
             "field_name": "dense",
             "index_type": self.config.index_type,
             "metric_type": MetricType.IP,
@@ -348,9 +344,7 @@ class MilvusManager:
 
         # Create collection
         self.client.create_collection(
-            collection_name=self.config.collection_name,
-            schema=schema,
-            index_params=index_params
+            collection_name=self.config.collection_name, schema=schema, index_params=index_params
         )
 
         # Bind the embedding model fingerprint to this collection so a later
@@ -385,7 +379,9 @@ class MilvusManager:
                 # Check if collection exists
                 collections = self.client.list_collections()
                 if self.config.collection_name not in collections:
-                    log.warning(f"Collection '{self.config.collection_name}' not found, creating...")
+                    log.warning(
+                        f"Collection '{self.config.collection_name}' not found, creating..."
+                    )
                     self.create_collection(drop_if_exists=False)
 
                 self.client.load_collection(self.config.collection_name)
@@ -416,14 +412,11 @@ class MilvusManager:
 
     @retry_on_failure()
     def add_documents(
-        self,
-        documents: List[Document],
-        batch_size: Optional[int] = None,
-        show_progress: bool = True
-    ) -> Dict[str, Any]:
+        self, documents: list[Document], batch_size: int | None = None, show_progress: bool = True
+    ) -> dict[str, Any]:
         """
         Add documents with memory-efficient batching.
-        
+
         Uses small batches and explicit cleanup to minimize memory usage.
         """
         if not documents:
@@ -444,7 +437,7 @@ class MilvusManager:
 
         # Process in small batches
         for i in range(0, total, batch_size):
-            batch = documents[i:i + batch_size]
+            batch = documents[i : i + batch_size]
             batch_num = (i // batch_size) + 1
             total_batches = (total + batch_size - 1) // batch_size
 
@@ -452,27 +445,24 @@ class MilvusManager:
                 # Generate embeddings for this batch
                 texts = [doc.page_content for doc in batch]
                 embeddings = self.embedding_function.embed_documents(texts)
-                
+
                 # Prepare data for insertion
                 data = []
                 for doc, emb in zip(batch, embeddings):
                     row = {
-                        "text": doc.page_content[:self.config.max_text_length],
+                        "text": doc.page_content[: self.config.max_text_length],
                         "dense": emb,
-                        "source": doc.metadata.get("source", "")[:self.config.max_metadata_length],
-                        "title": doc.metadata.get("title", "")[:self.config.max_metadata_length],
+                        "source": doc.metadata.get("source", "")[: self.config.max_metadata_length],
+                        "title": doc.metadata.get("title", "")[: self.config.max_metadata_length],
                     }
                     # Add additional metadata as dynamic fields
                     for k, v in doc.metadata.items():
                         if k not in row and isinstance(v, (str, int, float, bool)):
                             row[k] = v
                     data.append(row)
-                
+
                 # Insert into Milvus
-                self.client.insert(
-                    collection_name=self.config.collection_name,
-                    data=data
-                )
+                self.client.insert(collection_name=self.config.collection_name, data=data)
                 inserted += len(batch)
 
                 if show_progress:
@@ -481,7 +471,7 @@ class MilvusManager:
                 # Clean up to free memory
                 del embeddings
                 del data
-                
+
                 # Periodic garbage collection
                 if batch_num % 5 == 0:
                     gc.collect()
@@ -495,7 +485,7 @@ class MilvusManager:
             "inserted": inserted,
             "failed": failed,
             "total": total,
-            "success_rate": inserted / total if total > 0 else 0
+            "success_rate": inserted / total if total > 0 else 0,
         }
 
         log.info(f"Insertion complete: inserted={inserted}, failed={failed}")
@@ -506,11 +496,11 @@ class MilvusManager:
         self,
         query: str,
         top_k: int = 10,
-        filter_expr: Optional[str] = None,
-    ) -> List[SearchResult]:
+        filter_expr: str | None = None,
+    ) -> list[SearchResult]:
         """
         Search for similar documents.
-        
+
         Memory-efficient search with explicit cleanup.
         """
         log.debug(f"Searching: '{query[:50]}...' (top_k={top_k})")
@@ -605,33 +595,27 @@ class MilvusManager:
             raise MilvusOperationError(f"Search failed: {e}") from e
 
     def query(
-        self,
-        filter_expr: str,
-        output_fields: Optional[List[str]] = None,
-        limit: int = 100
-    ) -> List[Dict[str, Any]]:
+        self, filter_expr: str, output_fields: list[str] | None = None, limit: int = 100
+    ) -> list[dict[str, Any]]:
         """Query documents by filter expression."""
         output_fields = output_fields or ["text", "source", "title"]
-        
+
         results = self.client.query(
             collection_name=self.config.collection_name,
             filter=filter_expr,
             output_fields=output_fields,
-            limit=limit
+            limit=limit,
         )
-        
+
         return results
 
-    def delete_by_filter(self, filter_expr: str) -> Dict[str, Any]:
+    def delete_by_filter(self, filter_expr: str) -> dict[str, Any]:
         """Delete documents matching filter."""
         log.info(f"Deleting: {filter_expr}")
-        result = self.client.delete(
-            collection_name=self.config.collection_name,
-            filter=filter_expr
-        )
+        result = self.client.delete(collection_name=self.config.collection_name, filter=filter_expr)
         return {"deleted_count": result}
 
-    def get_collection_stats(self) -> Dict[str, Any]:
+    def get_collection_stats(self) -> dict[str, Any]:
         """Get collection statistics."""
         try:
             stats = self.client.get_collection_stats(self.config.collection_name)
@@ -642,13 +626,9 @@ class MilvusManager:
         except Exception as e:
             return {"error": str(e)}
 
-    def health_check(self) -> Dict[str, Any]:
+    def health_check(self) -> dict[str, Any]:
         """Check connection health. Works with both Milvus server and Milvus Lite."""
-        result = {
-            "connected": False,
-            "server_info": None,
-            "error": None
-        }
+        result = {"connected": False, "server_info": None, "error": None}
 
         try:
             # Milvus Lite (local .db) doesn't support get_server_version,
@@ -659,9 +639,7 @@ class MilvusManager:
 
             # Detect Milvus Lite from URI to avoid calling unsupported API
             uri = self.config.uri
-            is_lite = uri and (
-                uri.endswith(".db") or uri.startswith("./") or ".db" in uri
-            )
+            is_lite = uri and (uri.endswith(".db") or uri.startswith("./") or ".db" in uri)
             if is_lite:
                 result["server_info"] = {"version": "lite", "mode": "local"}
             else:
@@ -687,7 +665,7 @@ def get_milvus_manager(collection_name: str = COLLECTION_NAME) -> MilvusManager:
 def cleanup_milvus_resources():
     """
     Force cleanup of all Milvus-related resources.
-    
+
     Call this when experiencing memory issues.
     """
     gc.collect()
@@ -700,7 +678,7 @@ def cleanup_milvus_resources():
 
 if __name__ == "__main__":
     import argparse
-    
+
     parser = argparse.ArgumentParser(description="Milvus Database Manager Test")
     parser.add_argument(
         "--collection",
@@ -726,18 +704,18 @@ if __name__ == "__main__":
         action="store_true",
         help="Drop existing collection when creating",
     )
-    
+
     args = parser.parse_args()
-    
+
     # Create manager with context manager for automatic cleanup
     config = MilvusConfig(collection_name=args.collection)
-    
-    print(f"\n{'='*50}")
-    print(f"Milvus Manager Test")
+
+    print(f"\n{'=' * 50}")
+    print("Milvus Manager Test")
     print(f"Collection: {args.collection}")
     print(f"Action: {args.action}")
-    print(f"{'='*50}\n")
-    
+    print(f"{'=' * 50}\n")
+
     try:
         with MilvusManager(config) as manager:
             if args.action == "health":
@@ -748,7 +726,7 @@ if __name__ == "__main__":
                 print(f"  Collections: {result.get('collections', [])}")
                 if result.get("error"):
                     print(f"  Error: {result['error']}")
-            
+
             elif args.action == "stats":
                 result = manager.get_collection_stats()
                 print("Collection Stats:")
@@ -756,11 +734,11 @@ if __name__ == "__main__":
                 print(f"  Row Count: {result.get('row_count', 0)}")
                 if result.get("error"):
                     print(f"  Error: {result['error']}")
-            
+
             elif args.action == "create":
                 result = manager.create_collection(drop_if_exists=args.drop)
                 print(f"Collection created: {result}")
-            
+
             elif args.action == "search":
                 print(f"Searching for: '{args.query}'")
                 results = manager.search(args.query, top_k=5)
@@ -770,22 +748,22 @@ if __name__ == "__main__":
                     print(f"  Source: {r.metadata.get('source', 'N/A')}")
                     print(f"  Title: {r.metadata.get('title', 'N/A')}")
                     print(f"  Text: {r.text[:200]}...")
-            
+
             elif args.action == "insert-test":
                 # Insert a test document
                 test_docs = [
                     Document(
                         page_content="这是一个测试文档，用于验证Milvus插入功能。",
-                        metadata={"source": "test.py", "title": "测试文档"}
+                        metadata={"source": "test.py", "title": "测试文档"},
                     )
                 ]
                 result = manager.add_documents(test_docs)
                 print(f"Insert result: {result}")
-    
+
     except Exception as e:
         print(f"Error: {e}")
         raise
-    
-    print(f"\n{'='*50}")
+
+    print(f"\n{'=' * 50}")
     print("Test completed successfully")
-    print(f"{'='*50}\n")
+    print(f"{'=' * 50}\n")

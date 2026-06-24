@@ -18,7 +18,7 @@ import subprocess
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from agent.eval.types import (
     EvalReport,
@@ -47,7 +47,7 @@ HISTORY_PATH = RUNS_DIR / "history.jsonl"
 # Per-metric regression thresholds. A metric "regresses" when its delta is
 # worse than these magnitudes. For "higher is better" metrics, delta is
 # current - baseline; regression when delta <= -threshold.
-DEFAULT_THRESHOLDS: Dict[str, float] = {
+DEFAULT_THRESHOLDS: dict[str, float] = {
     "average_score": 0.05,
     "avg_faithfulness": 0.05,
     "avg_answer_relevancy": 0.05,
@@ -119,7 +119,7 @@ def _report_to_summary(
     )
 
 
-def _result_to_dict(r: EvalResult) -> Dict[str, Any]:
+def _result_to_dict(r: EvalResult) -> dict[str, Any]:
     return {
         "case_id": r.case_id,
         "score": {
@@ -149,8 +149,8 @@ def save_run(
     report: EvalReport,
     tag: str = "manual",
     dataset: str = "data/eval/golden.yaml",
-    run_id: Optional[str] = None,
-    git_commit: Optional[str] = None,
+    run_id: str | None = None,
+    git_commit: str | None = None,
 ) -> EvalRunSummary:
     """
     Persist a full run: detail JSON + append summary to history.jsonl.
@@ -194,11 +194,11 @@ def save_run(
     return summary
 
 
-def load_history(limit: Optional[int] = None) -> List[EvalRunSummary]:
+def load_history(limit: int | None = None) -> list[EvalRunSummary]:
     """Load run summaries from history.jsonl, newest last."""
     if not HISTORY_PATH.exists():
         return []
-    summaries: List[EvalRunSummary] = []
+    summaries: list[EvalRunSummary] = []
     with HISTORY_PATH.open("r", encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -214,7 +214,7 @@ def load_history(limit: Optional[int] = None) -> List[EvalRunSummary]:
     return summaries
 
 
-def latest_summary(dataset: Optional[str] = None) -> Optional[EvalRunSummary]:
+def latest_summary(dataset: str | None = None) -> EvalRunSummary | None:
     """
     Most recent summary, optionally filtered by dataset path.
 
@@ -228,9 +228,9 @@ def latest_summary(dataset: Optional[str] = None) -> Optional[EvalRunSummary]:
 
 def _metric_delta(
     metric: str,
-    baseline: Optional[float],
-    current: Optional[float],
-    thresholds: Dict[str, float],
+    baseline: float | None,
+    current: float | None,
+    thresholds: dict[str, float],
 ) -> MetricDelta:
     """Compute a single metric delta and whether it regressed."""
     threshold = thresholds.get(metric, 0.05)
@@ -261,7 +261,7 @@ def _metric_delta(
 def compare_runs(
     baseline: EvalRunSummary,
     current: EvalRunSummary,
-    thresholds: Optional[Dict[str, float]] = None,
+    thresholds: dict[str, float] | None = None,
 ) -> RegressionReport:
     """
     Compare two run summaries and produce a regression report.
@@ -280,9 +280,7 @@ def compare_runs(
         ("avg_hallucination", baseline.avg_hallucination, current.avg_hallucination),
     ]
 
-    deltas = [
-        _metric_delta(name, b, c, thresholds) for name, b, c in metric_pairs
-    ]
+    deltas = [_metric_delta(name, b, c, thresholds) for name, b, c in metric_pairs]
     regressions = [d for d in deltas if d.regressed]
     passed = len(regressions) == 0
 
@@ -290,8 +288,7 @@ def compare_runs(
         summary = "No regression: all metrics within thresholds."
     else:
         summary = "Regression detected: " + ", ".join(
-            f"{d.metric} {d.baseline}->{d.current} (Δ={d.delta:+.3f})"
-            for d in regressions
+            f"{d.metric} {d.baseline}->{d.current} (Δ={d.delta:+.3f})" for d in regressions
         )
 
     return RegressionReport(

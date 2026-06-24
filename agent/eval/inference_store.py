@@ -25,7 +25,7 @@ import threading
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from utils.log_utils import log
 
@@ -41,18 +41,19 @@ DEFAULT_DB_PATH = "./data/inferences.db"
 @dataclass
 class InferenceRecord:
     """One production inference, captured for offline analysis."""
+
     trace_id: str = ""
     message_id: str = ""
     session_id: str = ""
     query: str = ""
-    retrieved_docs: List[Dict[str, Any]] = field(default_factory=list)
+    retrieved_docs: list[dict[str, Any]] = field(default_factory=list)
     answer: str = ""
     reasoning: str = ""
-    route: str = ""              # rag | fast | general_chat | degraded
+    route: str = ""  # rag | fast | general_chat | degraded
     prompt_profile: str = ""
     intent: str = ""
     latency_ms: float = 0.0
-    token_usage: Dict[str, Any] = field(default_factory=dict)
+    token_usage: dict[str, Any] = field(default_factory=dict)
     git_commit: str = ""
     sampled: bool = True
     created_at: float = field(default_factory=time.time)
@@ -94,12 +95,10 @@ class InferenceStore:
             )
             # Indexes for the common query patterns used by the flywheel.
             self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_inference_session "
-                "ON inference(session_id)"
+                "CREATE INDEX IF NOT EXISTS idx_inference_session ON inference(session_id)"
             )
             self._conn.execute(
-                "CREATE INDEX IF NOT EXISTS idx_inference_message "
-                "ON inference(message_id)"
+                "CREATE INDEX IF NOT EXISTS idx_inference_message ON inference(message_id)"
             )
             self._conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_inference_sampled "
@@ -144,7 +143,7 @@ class InferenceStore:
         log.debug(f"InferenceStore: recorded trace={rec.trace_id[:12]}... route={rec.route}")
         return rec.trace_id
 
-    def get(self, trace_id: str) -> Optional[InferenceRecord]:
+    def get(self, trace_id: str) -> InferenceRecord | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM inference WHERE trace_id = ?",
@@ -152,7 +151,7 @@ class InferenceStore:
             ).fetchone()
         return self._row_to_record(row) if row else None
 
-    def get_by_message(self, message_id: str) -> Optional[InferenceRecord]:
+    def get_by_message(self, message_id: str) -> InferenceRecord | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM inference WHERE message_id = ? ORDER BY created_at DESC LIMIT 1",
@@ -160,16 +159,15 @@ class InferenceStore:
             ).fetchone()
         return self._row_to_record(row) if row else None
 
-    def get_by_session(self, session_id: str, limit: int = 50) -> List[InferenceRecord]:
+    def get_by_session(self, session_id: str, limit: int = 50) -> list[InferenceRecord]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM inference WHERE session_id = ? "
-                "ORDER BY created_at DESC LIMIT ?",
+                "SELECT * FROM inference WHERE session_id = ? ORDER BY created_at DESC LIMIT ?",
                 (session_id, limit),
             ).fetchall()
         return [self._row_to_record(r) for r in rows]
 
-    def list_sampled(self, limit: int = 100, offset: int = 0) -> List[InferenceRecord]:
+    def list_sampled(self, limit: int = 100, offset: int = 0) -> list[InferenceRecord]:
         """Sampled candidates for review / promotion to golden."""
         with self._lock:
             rows = self._conn.execute(
@@ -179,15 +177,13 @@ class InferenceStore:
             ).fetchall()
         return [self._row_to_record(r) for r in rows]
 
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         with self._lock:
-            total = self._conn.execute(
-                "SELECT COUNT(*) FROM inference"
-            ).fetchone()[0]
+            total = self._conn.execute("SELECT COUNT(*) FROM inference").fetchone()[0]
             sampled = self._conn.execute(
                 "SELECT COUNT(*) FROM inference WHERE sampled = 1"
             ).fetchone()[0]
-            by_route: Dict[str, int] = {}
+            by_route: dict[str, int] = {}
             for row in self._conn.execute(
                 "SELECT route, COUNT(*) AS c FROM inference GROUP BY route"
             ).fetchall():
@@ -218,7 +214,7 @@ class InferenceStore:
             self._conn.close()
 
 
-_store: Optional[InferenceStore] = None
+_store: InferenceStore | None = None
 _store_lock = threading.Lock()
 
 

@@ -11,24 +11,31 @@ import hashlib
 import os
 import time
 import uuid
-from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, BackgroundTasks
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
 from langchain_core.documents import Document
+from pydantic import BaseModel
 
-from documents.document_registry import get_document_registry, DocumentStatus
+from documents.document_registry import DocumentStatus, get_document_registry
 from utils.log_utils import log
 
 router = APIRouter()
+
+# Module-level upload temp directory (B6). Exposed so tests/conftest.py's
+# tmp_data_dir fixture can redirect it to tmp_path, keeping uploads hermetic
+# (previously hardcoded "/tmp" leaked temp files when the background cleanup
+# was mocked out). Conforms to AGENTS.md §6/§10 persistence-path contract.
+UPLOAD_TMP_DIR = "/tmp"
 
 
 # =============================================================================
 # Models
 # =============================================================================
 
+
 class DocumentInfo(BaseModel):
     """Document information model."""
+
     id: str
     filename: str
     status: DocumentStatus
@@ -40,12 +47,14 @@ class DocumentInfo(BaseModel):
 
 class DocumentListResponse(BaseModel):
     """Document list response."""
-    documents: List[DocumentInfo]
+
+    documents: list[DocumentInfo]
     total: int
 
 
 class UploadResponse(BaseModel):
     """Document upload response."""
+
     id: str
     filename: str
     status: DocumentStatus
@@ -55,6 +64,7 @@ class UploadResponse(BaseModel):
 # =============================================================================
 # Helpers
 # =============================================================================
+
 
 def _compute_file_hash(content: bytes) -> str:
     """Compute SHA256 hash of file content."""
@@ -90,7 +100,7 @@ def _escape_filter_value(value: str) -> str:
     return value.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def _split_documents(documents: List[Document]) -> List[Document]:
+def _split_documents(documents: list[Document]) -> list[Document]:
     """Split documents using semantic chunking with fallback.
 
     Mirrors MarkdownParser's two-stage strategy:
@@ -107,13 +117,15 @@ def _split_documents(documents: List[Document]) -> List[Document]:
         from langchain_text_splitters import RecursiveCharacterTextSplitter
     except ImportError:
         try:
-            from langchain.text_splitter import RecursiveCharacterTextSplitter  # type: ignore[no-redef]
+            from langchain.text_splitter import (
+                RecursiveCharacterTextSplitter,  # type: ignore[no-redef]
+            )
         except ImportError:
             RecursiveCharacterTextSplitter = None  # type: ignore
 
     # Stage 1: separate small docs (keep intact) from large docs (need splitting)
-    small: List[Document] = []
-    large: List[Document] = []
+    small: list[Document] = []
+    large: list[Document] = []
     for doc in documents:
         text = doc.page_content or ""
         if not text:
@@ -127,13 +139,14 @@ def _split_documents(documents: List[Document]) -> List[Document]:
     if not large:
         return small
 
-    result: List[Document] = list(small)
+    result: list[Document] = list(small)
 
     # Stage 2: semantic chunking for large docs
     semantic_splitter = None
     if SemanticChunker is not None:
         try:
             from models.embedding_models import get_local_embeddings
+
             embeddings = get_local_embeddings()
             semantic_splitter = SemanticChunker(
                 embeddings,
@@ -156,7 +169,22 @@ def _split_documents(documents: List[Document]) -> List[Document]:
         splitter = RecursiveCharacterTextSplitter(
             chunk_size=900,
             chunk_overlap=120,
-            separators=["\n\n", "\n", "。", "！", "？", ".", "!", "?", "；", ";", "，", ",", " ", ""],
+            separators=[
+                "\n\n",
+                "\n",
+                "。",
+                "！",
+                "？",
+                ".",
+                "!",
+                "?",
+                "；",
+                ";",
+                "，",
+                ",",
+                " ",
+                "",
+            ],
         )
         pieces = splitter.split_documents(large)
         result.extend(pieces)
@@ -167,14 +195,54 @@ def _split_documents(documents: List[Document]) -> List[Document]:
     return result
 
 
-def _check_duplicate(filename: str, file_hash: str) -> Optional[str]:
+def _recover_stale_processing(registry, filename: str, file_hash: str) -> None:
+    """
+    Flip orphaned ``processing`` rows to ``failed`` (B7).
+
+    A background indexing task that dies (process killed, exception before the
+    status update) leaves its registry row in ``processing`` forever, which
+    then blocks any re-upload of the same content. We treat a ``processing``
+    row older than the stale threshold as dead: marking it ``failed`` lets a
+    fresh upload proceed. Never raises — recovery is best-effort.
+    """
+    import time
+
+    # Stale threshold: a healthy index of a single doc completes well under a
+    # minute; anything still processing past this is almost certainly orphaned.
+    stale_seconds = 120.0
+    now = time.time()
+    for row in (registry.find_by_filename(filename), registry.find_by_file_hash(file_hash)):
+        if not row:
+            continue
+        if row.get("status") != "processing":
+            continue
+        created = row.get("created_at")
+        if isinstance(created, (int, float)) and (now - float(created)) > stale_seconds:
+            try:
+                registry.update_status(row["id"], "failed")
+                log.warning(
+                    f"Recovered stale 'processing' doc {row.get('id')} "
+                    f"(age {now - float(created):.0f}s) -> failed"
+                )
+            except Exception as e:  # noqa: BLE001
+                log.debug(f"stale-processing recovery skipped: {e}")
+
+
+def _check_duplicate(filename: str, file_hash: str) -> str | None:
     """
     Check if a file already exists in the vector database or registry.
 
-    Returns an error message if duplicate found, None otherwise.
+    Returns an error message if duplicate found, None otherwise. A registry
+    record stuck in ``processing`` for longer than the stale threshold is
+    treated as an orphaned background task (B7): it is flipped to ``failed``
+    and does NOT block re-upload, so a dead worker never wedges the doc.
     """
     # Check registry first (fast, always available)
     registry = get_document_registry()
+
+    # B7: recover orphaned "processing" rows before they block uploads.
+    _recover_stale_processing(registry, filename, file_hash)
+
     existing_by_name = registry.find_by_filename(filename)
     if existing_by_name:
         return f"文件 '{filename}' 已上传过，请勿重复上传"
@@ -186,6 +254,7 @@ def _check_duplicate(filename: str, file_hash: str) -> Optional[str]:
     # Also check Milvus (for data from previous sessions)
     try:
         from documents.milvus_db import get_milvus_manager
+
         manager = get_milvus_manager()
 
         safe_name = _escape_filter_value(filename)
@@ -218,6 +287,7 @@ def _check_duplicate(filename: str, file_hash: str) -> Optional[str]:
 # Endpoints
 # =============================================================================
 
+
 @router.post("/upload", response_model=UploadResponse)
 async def upload_document(
     background_tasks: BackgroundTasks,
@@ -236,8 +306,7 @@ async def upload_document(
 
     if ext not in allowed_extensions:
         raise HTTPException(
-            status_code=400,
-            detail=f"Unsupported file type: {ext}. Allowed: {allowed_extensions}"
+            status_code=400, detail=f"Unsupported file type: {ext}. Allowed: {allowed_extensions}"
         )
 
     doc_id = str(uuid.uuid4())[:8]
@@ -259,7 +328,7 @@ async def upload_document(
         # sanitised name is also used as the document source/registry name so
         # path fragments don't leak into chunk metadata or the listing.
         safe_name = _secure_filename(filename)
-        temp_path = f"/tmp/{doc_id}_{safe_name}"
+        temp_path = os.path.join(UPLOAD_TMP_DIR, f"{doc_id}_{safe_name}")
         with open(temp_path, "wb") as f:
             f.write(content)
 
@@ -308,6 +377,7 @@ def _process_document(doc_id: str, file_path: str, filename: str, file_hash: str
 
         if ext == ".md":
             from documents.markdown_parser import MarkdownParser
+
             parser = MarkdownParser()
             documents = parser.parse_markdown_to_documents(file_path)
         elif ext == ".pdf":
@@ -323,22 +393,17 @@ def _process_document(doc_id: str, file_path: str, filename: str, file_hash: str
                 documents = parse_by_extension(file_path, source=filename)
                 documents = _split_documents(documents)
             except RuntimeError as fmt_err:
-                log.warning(
-                    f"Multi-format parse failed ({ext}), skipping: {fmt_err}"
-                )
+                log.warning(f"Multi-format parse failed ({ext}), skipping: {fmt_err}")
                 raise
         else:
-            with open(file_path, "r", encoding="utf-8") as f:
+            with open(file_path, encoding="utf-8") as f:
                 content = f.read()
             # Split by paragraph first so the splitter can respect natural boundaries.
             documents = []
             for para in content.split("\n\n"):
                 para = para.strip()
                 if para:
-                    documents.append(Document(
-                        page_content=para,
-                        metadata={"source": filename}
-                    ))
+                    documents.append(Document(page_content=para, metadata={"source": filename}))
             documents = _split_documents(documents)
 
         # Attach file_hash to every chunk's metadata
@@ -347,14 +412,20 @@ def _process_document(doc_id: str, file_path: str, filename: str, file_hash: str
 
         # Index into Milvus
         from documents.milvus_db import get_milvus_manager
+
         manager = get_milvus_manager()
         result = manager.add_documents(documents)
 
         # Sync BM25 index
         try:
             from core.retrieval.bm25_retriever import get_bm25_retriever
+            from core.retrieval.cache import bump_retrieval_cache_version
+
             bm25 = get_bm25_retriever()
             bm25.add_documents(documents)
+            # Invalidate cached retrieval results so the new docs are visible to
+            # the read path immediately (cache key is version-scoped).
+            bump_retrieval_cache_version()
             log.info(f"BM25 index updated: +{len(documents)} docs")
         except Exception as bm25_err:
             log.warning(f"BM25 sync failed (non-critical): {bm25_err}")
@@ -406,6 +477,7 @@ async def delete_document(doc_id: str):
     # Remove from Milvus
     try:
         from documents.milvus_db import get_milvus_manager
+
         manager = get_milvus_manager()
         file_hash = doc.get("file_hash", "")
         if file_hash:
@@ -422,7 +494,11 @@ async def delete_document(doc_id: str):
     # Remove from BM25 index (incremental)
     try:
         from core.retrieval.bm25_retriever import get_bm25_retriever
+        from core.retrieval.cache import bump_retrieval_cache_version
+
         get_bm25_retriever().remove_by_source(doc["filename"])
+        # Invalidate cached retrieval results computed against the old index.
+        bump_retrieval_cache_version()
         log.info(f"BM25 index updated: removed source={doc['filename']}")
     except Exception as e:
         log.warning(f"BM25 cleanup failed: {e}")
@@ -444,11 +520,14 @@ async def reindex_all_documents(background_tasks: BackgroundTasks):
 def _reindex_all():
     """Reindex all markdown files from md/ directory."""
     import glob
+
+    from core.retrieval.bm25_retriever import get_bm25_retriever
     from documents.markdown_parser import MarkdownParser
     from documents.milvus_db import get_milvus_manager
-    from core.retrieval.bm25_retriever import get_bm25_retriever
 
-    md_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "md")
+    md_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "md"
+    )
     md_files = glob.glob(os.path.join(md_dir, "*.md"))
 
     if not md_files:
@@ -501,11 +580,16 @@ def _reindex_all():
 
     # Rebuild BM25 index from Milvus
     try:
+        from core.retrieval.cache import bump_retrieval_cache_version
+
         bm25 = get_bm25_retriever()
         bm25.clear()
-        results = manager.query(filter_expr="id > 0", output_fields=["text", "source", "title"], limit=10000)
+        results = manager.query(
+            filter_expr="id > 0", output_fields=["text", "source", "title"], limit=10000
+        )
         if results:
             from langchain_core.documents import Document as LCDoc
+
             docs = [
                 LCDoc(
                     page_content=r.get("text", ""),
@@ -517,6 +601,8 @@ def _reindex_all():
             if docs:
                 bm25.add_documents(docs)
                 log.info(f"BM25 index rebuilt: {len(docs)} docs")
+        # Full rebuild invalidates all cached retrieval results.
+        bump_retrieval_cache_version()
     except Exception as e:
         log.warning(f"BM25 rebuild failed: {e}")
 

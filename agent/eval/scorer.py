@@ -10,9 +10,8 @@ rule-based-only scoring so the eval run never hard-fails.
 from __future__ import annotations
 
 import re
-from typing import List, Optional
 
-from agent.eval.judge import LLMJudge, TrustworthyMetrics
+from agent.eval.judge import LLMJudge
 from agent.eval.types import EvalCase, EvalScore
 
 
@@ -27,12 +26,12 @@ class EvalScorer:
     W_REL = 0.15
     W_CONTEXT = 0.15
 
-    def __init__(self, judge: Optional[LLMJudge] = None, use_judge: bool = True):
+    def __init__(self, judge: LLMJudge | None = None, use_judge: bool = True):
         self._judge = judge
         self._use_judge = use_judge
 
     @property
-    def judge(self) -> Optional[LLMJudge]:
+    def judge(self) -> LLMJudge | None:
         if not self._use_judge:
             return None
         if self._judge is None:
@@ -48,7 +47,8 @@ class EvalScorer:
         actual_answer: str,
         actual_intent: str,
         actual_sources: int,
-        retrieved_contexts: Optional[List[str]] = None,
+        retrieved_contexts: list[str] | None = None,
+        retrieved_context_ids: list[str] | None = None,
     ) -> EvalScore:
         """
         Compute the full EvalScore for a case.
@@ -59,6 +59,8 @@ class EvalScorer:
             actual_intent: detected intent label
             actual_sources: number of retrieved sources
             retrieved_contexts: list of retrieved context strings (for judge)
+            retrieved_context_ids: ids of retrieved chunks (for deterministic
+                context precision/recall when ``expected_context_ids`` is set)
         """
         # --- rule-based signals (always computed) ---
         section_cov = self._section_coverage(case.expected_sections, actual_answer)
@@ -74,11 +76,20 @@ class EvalScorer:
         )
 
         rule_component = (
-            section_cov * 0.3
-            + keyword_cov * 0.3
-            + float(intent_ok) * 0.2
-            + float(source_ok) * 0.2
+            section_cov * 0.3 + keyword_cov * 0.3 + float(intent_ok) * 0.2 + float(source_ok) * 0.2
         )
+
+        # --- deterministic context precision/recall (REQ-C-003) ---
+        # Computed purely from id-set overlap — no LLM, so the two context
+        # dimensions are no longer perpetually None in rule-only (CI) runs.
+        # Only applies when the case carries expected_context_ids; cases
+        # without ground-truth ids stay None (do not pollute the metric).
+        ctx_p, ctx_r = self.score_context_ids(
+            case.expected_context_ids, retrieved_context_ids or []
+        )
+        if ctx_p is not None:
+            score.context_precision = ctx_p
+            score.context_recall = ctx_r
 
         # --- trustworthy metrics (best-effort) ---
         judge = self.judge
@@ -93,8 +104,12 @@ class EvalScorer:
             score.faithfulness = metrics.faithfulness
             score.answer_relevancy = metrics.answer_relevancy
             score.hallucination_score = metrics.hallucination_score
-            score.context_precision = metrics.context_precision
-            score.context_recall = metrics.context_recall
+            # Judge context metrics only override the deterministic ones when
+            # the judge actually produced a value (None means it didn't).
+            if metrics.context_precision is not None:
+                score.context_precision = metrics.context_precision
+            if metrics.context_recall is not None:
+                score.context_recall = metrics.context_recall
             score.judge_used = metrics.judge_used
             score.details["judge_rationale"] = metrics.rationale
 
@@ -122,7 +137,9 @@ class EvalScorer:
             faith = score.faithfulness
             rel = score.answer_relevancy if score.answer_relevancy is not None else rule_component
             # Context precision/recall averaged when present.
-            context_terms = [t for t in (score.context_precision, score.context_recall) if t is not None]
+            context_terms = [
+                t for t in (score.context_precision, score.context_recall) if t is not None
+            ]
             context = sum(context_terms) / len(context_terms) if context_terms else rule_component
             blended = (
                 rule_component * self.W_RULE
@@ -132,13 +149,37 @@ class EvalScorer:
             )
             # Penalize hallucination.
             if score.hallucination_score is not None:
-                blended *= (1.0 - 0.5 * score.hallucination_score)
+                blended *= 1.0 - 0.5 * score.hallucination_score
             return max(0.0, min(1.0, blended))
         return max(0.0, min(1.0, rule_component))
 
+    @staticmethod
+    def score_context_ids(expected_ids: list[str], retrieved_ids: list[str]) -> tuple:
+        """
+        Deterministic context precision/recall from id-set overlap (REQ-C-003).
+
+        No LLM: precision = |retrieved ∩ expected| / |retrieved|,
+        recall    = |retrieved ∩ expected| / |expected|.
+
+        Returns (precision, recall). Both are None when ``expected_ids`` is
+        empty (no ground truth to compare against — the metric is undefined,
+        not zero, so it never pollutes the composite).
+        """
+        if not expected_ids:
+            return None, None
+        expected = set(expected_ids)
+        retrieved = set(retrieved_ids)
+        if not retrieved:
+            # Nothing retrieved: precision undefined, recall is 0 (missed all).
+            return None, 0.0
+        overlap = expected & retrieved
+        precision = len(overlap) / len(retrieved)
+        recall = len(overlap) / len(expected)
+        return precision, recall
+
     # -- rule-based helpers (legacy, preserved) ----------------------------
 
-    def _section_coverage(self, expected: List[str], actual: str) -> float:
+    def _section_coverage(self, expected: list[str], actual: str) -> float:
         if not expected:
             return 1.0
         found = 0
@@ -149,7 +190,7 @@ class EvalScorer:
                 found += 1
         return found / len(expected)
 
-    def _keyword_coverage(self, expected: List[str], actual: str) -> float:
+    def _keyword_coverage(self, expected: list[str], actual: str) -> float:
         if not expected:
             return 1.0
         found = sum(1 for kw in expected if kw in actual)

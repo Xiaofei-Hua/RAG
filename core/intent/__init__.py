@@ -8,7 +8,7 @@ Analyzes user queries to determine the appropriate processing route:
 - SYSTEM_COMMAND: System administration commands
 """
 
-from core.intent.classifier import IntentClassifier, IntentType, IntentResult
+from core.intent.classifier import IntentClassifier, IntentResult, IntentType
 
 __all__ = [
     "IntentClassifier",

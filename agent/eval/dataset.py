@@ -12,9 +12,8 @@ fallback for backward compatibility.
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from agent.eval.types import EvalCase
 from utils.log_utils import log
@@ -22,7 +21,7 @@ from utils.log_utils import log
 DEFAULT_DATASET_PATH = "data/eval/golden.yaml"
 
 
-def _case_from_dict(raw: Dict[str, Any]) -> EvalCase:
+def _case_from_dict(raw: dict[str, Any]) -> EvalCase:
     """Build an EvalCase from a raw dict, tolerating missing fields."""
     return EvalCase(
         id=raw.get("id", ""),
@@ -39,7 +38,7 @@ def _case_from_dict(raw: Dict[str, Any]) -> EvalCase:
     )
 
 
-def load_dataset(path: Optional[str] = None) -> List[EvalCase]:
+def load_dataset(path: str | None = None) -> list[EvalCase]:
     """
     Load evaluation cases from a YAML or JSON file.
 
@@ -63,8 +62,7 @@ def load_dataset(path: Optional[str] = None) -> List[EvalCase]:
             import yaml  # pyyaml is a project dependency
         except ImportError:  # pragma: no cover - dependency guard
             raise RuntimeError(
-                "pyyaml is required to load YAML eval datasets; "
-                "install it or use a JSON dataset."
+                "pyyaml is required to load YAML eval datasets; install it or use a JSON dataset."
             )
         data = yaml.safe_load(text)
     elif suffix == ".json":
@@ -74,13 +72,11 @@ def load_dataset(path: Optional[str] = None) -> List[EvalCase]:
 
     cases_raw = data.get("cases", []) if isinstance(data, dict) else data
     if not isinstance(cases_raw, list):
-        raise ValueError(
-            f"Dataset {path} must contain a top-level 'cases' list"
-        )
+        raise ValueError(f"Dataset {path} must contain a top-level 'cases' list")
 
     cases = [_case_from_dict(c) for c in cases_raw if isinstance(c, dict)]
     # De-duplicate by id, keeping the last occurrence.
-    seen: Dict[str, EvalCase] = {}
+    seen: dict[str, EvalCase] = {}
     for c in cases:
         key = c.id or c.query
         seen[key] = c
@@ -90,7 +86,7 @@ def load_dataset(path: Optional[str] = None) -> List[EvalCase]:
     return cases
 
 
-def append_cases(path: str, new_cases: List[EvalCase]) -> int:
+def append_cases(path: str, new_cases: list[EvalCase]) -> int:
     """
     Append new cases to a YAML dataset file (used when promoting candidates).
 
@@ -105,9 +101,9 @@ def append_cases(path: str, new_cases: List[EvalCase]) -> int:
     # Serialize new cases as YAML dicts and append.
     import yaml
 
-    new_dicts: List[Dict[str, Any]] = []
+    new_dicts: list[dict[str, Any]] = []
     for c in to_add:
-        d: Dict[str, Any] = {
+        d: dict[str, Any] = {
             "id": c.id,
             "query": c.query,
             "expected_sections": c.expected_sections,

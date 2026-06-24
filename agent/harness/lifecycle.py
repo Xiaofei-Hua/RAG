@@ -10,9 +10,9 @@ can perform logging, tracing, metrics, or state manipulation.
 
 from __future__ import annotations
 
-import time
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from dataclasses import dataclass
+from typing import Any
 
 from agent.skills.base import SkillContext, SkillResult
 from utils.log_utils import log
@@ -26,6 +26,7 @@ __all__ = [
 
 class HookType:
     """Hook type constants."""
+
     BEFORE_SKILL = "before_skill"
     AFTER_SKILL = "after_skill"
     ON_ERROR = "on_error"
@@ -42,6 +43,7 @@ class LifecycleHook:
         callback: Callable to invoke
         priority: Lower values run first (default 100)
     """
+
     name: str
     hook_type: str
     callback: Callable
@@ -65,7 +67,7 @@ class LifecycleManager:
     """
 
     def __init__(self):
-        self._hooks: Dict[str, List[LifecycleHook]] = {
+        self._hooks: dict[str, list[LifecycleHook]] = {
             HookType.BEFORE_SKILL: [],
             HookType.AFTER_SKILL: [],
             HookType.ON_ERROR: [],
@@ -154,7 +156,7 @@ class LifecycleManager:
         self,
         skill_name: str,
         context: SkillContext,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """
         Fire all before_skill hooks.
 
@@ -168,7 +170,7 @@ class LifecycleManager:
         populate ``shared_state["relevant_memories"]`` before the ``agent``
         node so the ``retrieve`` node (a separate node invocation) can read it.
         """
-        increments: Dict[str, Any] = {}
+        increments: dict[str, Any] = {}
         for hook in self._hooks[HookType.BEFORE_SKILL]:
             try:
                 ret = hook.callback(skill_name, context)
@@ -220,9 +222,6 @@ class LifecycleManager:
         for hook_type in self._hooks:
             self._hooks[hook_type].clear()
 
-    def list_hooks(self) -> Dict[str, List[str]]:
+    def list_hooks(self) -> dict[str, list[str]]:
         """List all registered hook names by type."""
-        return {
-            hook_type: [h.name for h in hooks]
-            for hook_type, hooks in self._hooks.items()
-        }
+        return {hook_type: [h.name for h in hooks] for hook_type, hooks in self._hooks.items()}

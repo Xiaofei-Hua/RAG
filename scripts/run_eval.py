@@ -96,6 +96,9 @@ async def _run(args: argparse.Namespace) -> int:
     runner = EvalRunner(
         scorer=scorer,
         pass_threshold=args.pass_threshold,
+        # Eval cases are independent; skip the checkpointer to avoid the
+        # langgraph-checkpoint-sqlite / langgraph version serde mismatch.
+        use_checkpoint=False,
     )
 
     log.info(

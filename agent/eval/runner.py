@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from agent.eval.scorer import EvalScorer
 from agent.eval.types import EvalCase, EvalReport, EvalResult
@@ -32,11 +32,11 @@ DEFAULT_PASS_THRESHOLD = 0.6
 DEFAULT_CONCURRENCY = 4
 
 
-def _extract_contexts(messages: list) -> List[str]:
+def _extract_contexts(messages: list) -> list[str]:
     """Extract retrieved context strings from ToolMessages in the result."""
     from langchain_core.messages import ToolMessage
 
-    contexts: List[str] = []
+    contexts: list[str] = []
     seen = set()
     for msg in messages:
         if not isinstance(msg, ToolMessage):
@@ -44,8 +44,7 @@ def _extract_contexts(messages: list) -> List[str]:
         content = msg.content
         if isinstance(content, list):
             content = " ".join(
-                item.get("text", "") if isinstance(item, dict) else str(item)
-                for item in content
+                item.get("text", "") if isinstance(item, dict) else str(item) for item in content
             )
         if isinstance(content, str):
             content = content.strip()
@@ -70,11 +69,20 @@ class EvalRunner:
 
     def __init__(
         self,
-        scorer: Optional[EvalScorer] = None,
+        scorer: EvalScorer | None = None,
         pass_threshold: float = DEFAULT_PASS_THRESHOLD,
+        use_checkpoint: bool = True,
     ):
         self._scorer = scorer or EvalScorer()
         self.pass_threshold = pass_threshold
+        # When False, the harness is built WITHOUT a SQLite checkpointer. The
+        # async checkpoint path depends on a langgraph-checkpoint-sqlite /
+        # langgraph version pairing that is currently mismatched in the pinned
+        # dependency set; eval cases are independent (no cross-case state
+        # needed), so skipping the checkpointer is safe and avoids the serde
+        # AttributeError that otherwise aborts every async case.
+        self._use_checkpoint = use_checkpoint
+        self._no_checkpoint_harness = None
 
     # ------------------------------------------------------------------ harness
 
@@ -84,8 +92,20 @@ class EvalRunner:
 
         Uses the shared singleton via ``get_agent_harness`` with a per-case
         thread_id so each case gets an isolated conversation in the
-        checkpointer (avoids cross-case message leakage).
+        checkpointer (avoids cross-case message leakage). When checkpoints are
+        disabled, a single no-memory harness is built once and reused (eval
+        cases carry no conversational state between them).
         """
+        if not self._use_checkpoint:
+            if self._no_checkpoint_harness is None:
+                from agent.harness import get_agent_harness
+                from agent.harness.orchestrator import HarnessConfig
+
+                self._no_checkpoint_harness = get_agent_harness(
+                    HarnessConfig(use_memory=False)
+                )
+            return self._no_checkpoint_harness
+
         from agent.harness import get_agent_harness
 
         return get_agent_harness()
@@ -93,7 +113,7 @@ class EvalRunner:
     # ------------------------------------------------------------------ extract
 
     @staticmethod
-    def _extract_result(result: Optional[Dict[str, Any]]):
+    def _extract_result(result: dict[str, Any] | None):
         """
         Pull (answer, intent, sources, contexts) out of a graph result dict.
 
@@ -170,14 +190,14 @@ class EvalRunner:
                 error=str(e),
             )
 
-    def run_all(self, cases: Optional[List[EvalCase]] = None) -> EvalReport:
+    def run_all(self, cases: list[EvalCase] | None = None) -> EvalReport:
         """Run all cases synchronously (legacy entry point)."""
         if cases is None:
             from agent.eval.dataset import load_dataset
 
             cases = load_dataset()
 
-        results: List[EvalResult] = []
+        results: list[EvalResult] = []
         for case in cases:
             log.info(f"EvalRunner: running case {case.id} - {case.query[:30]}...")
             results.append(self.run_case(case))
@@ -220,7 +240,7 @@ class EvalRunner:
 
     async def run_all_async(
         self,
-        cases: Optional[List[EvalCase]] = None,
+        cases: list[EvalCase] | None = None,
         concurrency: int = DEFAULT_CONCURRENCY,
     ) -> EvalReport:
         """Run all cases with bounded concurrency."""
@@ -242,23 +262,15 @@ class EvalRunner:
 
     # ------------------------------------------------------------------ report
 
-    def _build_report(self, results: List[EvalResult]) -> EvalReport:
+    def _build_report(self, results: list[EvalResult]) -> EvalReport:
         total = len(results)
         valid = [r for r in results if r.error is None]
-        passed = sum(
-            1 for r in valid if r.score.overall_score >= self.pass_threshold
-        )
+        passed = sum(1 for r in valid if r.score.overall_score >= self.pass_threshold)
         failed = total - passed
-        avg_score = (
-            sum(r.score.overall_score for r in valid) / len(valid) if valid else 0.0
-        )
+        avg_score = sum(r.score.overall_score for r in valid) / len(valid) if valid else 0.0
 
-        def _avg(attr: str) -> Optional[float]:
-            vals = [
-                getattr(r.score, attr)
-                for r in valid
-                if getattr(r.score, attr) is not None
-            ]
+        def _avg(attr: str) -> float | None:
+            vals = [getattr(r.score, attr) for r in valid if getattr(r.score, attr) is not None]
             return sum(vals) / len(vals) if vals else None
 
         report = EvalReport(
@@ -274,7 +286,6 @@ class EvalRunner:
             results=results,
         )
         log.info(
-            f"EvalRunner: {total} cases, {passed} passed, {failed} failed, "
-            f"avg={avg_score:.3f}"
+            f"EvalRunner: {total} cases, {passed} passed, {failed} failed, avg={avg_score:.3f}"
         )
         return report

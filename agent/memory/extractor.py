@@ -2,39 +2,40 @@ from __future__ import annotations
 
 import re
 import uuid
-from typing import List
 
 from agent.memory.types import MemoryEntry, MemoryType
 from utils.log_utils import log
 
 
+def _fact_sections() -> list[str]:
+    """Sections to capture as long-term facts, from the active domain profile.
+
+    Defaults to the first two sections of the profile's ``section_template``
+    (conclusion + causes for aviation; empty for the general profile, which
+    has no structured output). Returns [] when the profile defines no
+    sections — free-form answers yield no section-keyed facts.
+    """
+    from core.prompts.domain_profile import get_active_profile
+
+    return list(get_active_profile().section_template[:2])
+
+
 class MemoryExtractor:
-    def extract_facts(self, question: str, answer: str) -> List[MemoryEntry]:
+    def extract_facts(self, question: str, answer: str) -> list[MemoryEntry]:
         entries = []
 
-        if "诊断结论" in answer:
-            content = self._extract_between_markers(answer, "诊断结论")
-            if content:
-                entries.append(
-                    MemoryEntry(
-                        id=str(uuid.uuid4()),
-                        memory_type=MemoryType.FACT,
-                        content=f"诊断结论: {content.strip()}",
-                        metadata={"source_query": question},
+        for section in _fact_sections():
+            if section in answer:
+                content = self._extract_between_markers(answer, section)
+                if content:
+                    entries.append(
+                        MemoryEntry(
+                            id=str(uuid.uuid4()),
+                            memory_type=MemoryType.FACT,
+                            content=f"{section}: {content.strip()}",
+                            metadata={"source_query": question},
+                        )
                     )
-                )
-
-        if "可能原因" in answer:
-            content = self._extract_between_markers(answer, "可能原因")
-            if content:
-                entries.append(
-                    MemoryEntry(
-                        id=str(uuid.uuid4()),
-                        memory_type=MemoryType.FACT,
-                        content=f"可能原因: {content.strip()}",
-                        metadata={"source_query": question},
-                    )
-                )
 
         if entries:
             log.debug(f"MemoryExtractor: extracted {len(entries)} facts from answer")

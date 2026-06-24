@@ -4,11 +4,16 @@ Embedding + query-result cache (P3.6).
 Caches:
   1. Query embeddings (BGE vectors) keyed on the query text — repeated queries
      skip the (CPU-bound) embedding call.
-  2. Full hybrid-retrieval results keyed on (query, filter_expr, top_k) —
+  2. Full hybrid-retrieval results keyed on (query, filter_expr, top_k, version) —
      repeated identical queries return cached docs instantly.
 
 Uses an LRU cache (thread-safe). Cache size is configurable via env
 ``RETRIEVAL_CACHE_SIZE`` (default 512). Hit ratio is logged for observability.
+
+Index-version invalidation: every document add/remove bumps
+``_retrieval_cache_version`` via :func:`bump_retrieval_cache_version`; the hybrid
+retriever folds the version into its cache key, so stale results from a prior
+index state are never served after a knowledge-base mutation.
 
 This wraps the embedding model and the hybrid retriever transparently —
 existing callers get caching for free.
@@ -20,11 +25,18 @@ import hashlib
 import os
 import threading
 from collections import OrderedDict
-from typing import Any, List, Optional
+from typing import Any
 
 from utils.log_utils import log
 
-__all__ = ["LRUCache", "cached_embedding_function", "cache_key", "get_retrieval_cache"]
+__all__ = [
+    "LRUCache",
+    "cached_embedding_function",
+    "cache_key",
+    "get_retrieval_cache",
+    "get_retrieval_cache_version",
+    "bump_retrieval_cache_version",
+]
 
 
 def _max_size() -> int:
@@ -44,7 +56,7 @@ class LRUCache:
         self.hits = 0
         self.misses = 0
 
-    def get(self, key: str) -> Optional[Any]:
+    def get(self, key: str) -> Any | None:
         with self._lock:
             if key in self._data:
                 self._data.move_to_end(key)
@@ -83,9 +95,40 @@ class LRUCache:
 _embedding_cache = LRUCache(maxsize=_max_size())
 _retrieval_cache = LRUCache(maxsize=_max_size())
 
+# Monotonic index-version counter. Bumped on every knowledge-base mutation
+# (document add/remove/rebuild) so that cached retrieval results computed
+# against an older index state are never re-served. Folded into the hybrid
+# retriever's cache key via get_retrieval_cache_version().
+_retrieval_cache_version = 0
+_version_lock = threading.Lock()
+
 
 def get_retrieval_cache() -> LRUCache:
     return _retrieval_cache
+
+
+def get_retrieval_cache_version() -> int:
+    """Current retrieval index version (fold into cache keys for invalidation)."""
+    with _version_lock:
+        return _retrieval_cache_version
+
+
+def bump_retrieval_cache_version() -> None:
+    """
+    Invalidate retrieval-result cache entries by advancing the index version.
+
+    Callers that mutate the knowledge base (document upload/delete/rebuild)
+    invoke this so subsequent retrievals are recomputed against the new index
+    rather than serving stale cached results. O(1); old entries age out via LRU.
+    """
+    global _retrieval_cache_version
+    with _version_lock:
+        _retrieval_cache_version += 1
+        new_version = _retrieval_cache_version
+    # Also clear outright so warm-cache hits cannot serve pre-bump results even
+    # if a caller forgot to fold the version into its key (defence in depth).
+    _retrieval_cache.clear()
+    log.debug(f"Retrieval cache version bumped to {new_version} (cache cleared)")
 
 
 def cache_key(*parts: Any) -> str:
@@ -115,7 +158,7 @@ class CachedEmbeddingFunction:
         _embedding_cache.put(key, vec)
         return vec
 
-    def embed_documents(self, texts: List[str]):
+    def embed_documents(self, texts: list[str]):
         return self._base.embed_documents(texts)
 
     @property

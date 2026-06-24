@@ -4,7 +4,6 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict
 
 
 class FeedbackType(str, Enum):
@@ -41,6 +40,6 @@ class EscalationRecord:
     level: EscalationLevel = EscalationLevel.NONE
     reason: str = ""
     answer: str = ""
-    context_snapshot: Dict = field(default_factory=dict)
+    context_snapshot: dict = field(default_factory=dict)
     resolved: bool = False
     timestamp: float = field(default_factory=time.time)

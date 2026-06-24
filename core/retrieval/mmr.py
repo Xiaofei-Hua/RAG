@@ -18,8 +18,6 @@ and returns a diversity-ordered subset.
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 import numpy as np
 from langchain_core.documents import Document
 
@@ -48,11 +46,11 @@ def _cosine_matrix(vectors: np.ndarray) -> np.ndarray:
 
 def mmr_rerank(
     query: str,
-    documents: List[Document],
+    documents: list[Document],
     top_k: int = 4,
     lambda_: float = DEFAULT_LAMBDA,
-    fetch_k: Optional[int] = None,
-) -> List[Document]:
+    fetch_k: int | None = None,
+) -> list[Document]:
     """
     Re-rank documents with Maximal Marginal Relevance.
 
@@ -101,9 +99,7 @@ def mmr_rerank(
     # Relevance = cosine(doc, query); also use metadata score when present to
     # blend with the retriever's own signal.
     q_norm = np.linalg.norm(q_vec) or 1.0
-    rel = (doc_vecs @ q_vec) / (
-        np.linalg.norm(doc_vecs, axis=1) * q_norm + 1e-9
-    )
+    rel = (doc_vecs @ q_vec) / (np.linalg.norm(doc_vecs, axis=1) * q_norm + 1e-9)
     # Blend with retrieval score if available. Scores are min-max normalised
     # *within the candidate pool* (not globally clamped): RRF scores are tiny
     # (~0.01) and reranker logits can be negative, so a global clamp to [0,1]
@@ -117,7 +113,7 @@ def mmr_rerank(
 
     sim_doc = _cosine_matrix(doc_vecs)
 
-    selected: List[int] = []
+    selected: list[int] = []
     remaining = list(range(len(pool)))
 
     # Greedy selection.

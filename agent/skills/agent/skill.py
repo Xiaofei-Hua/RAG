@@ -12,14 +12,13 @@ from __future__ import annotations
 import re
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
-from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
-from agent.skills.base import BaseSkill, SkillContext, SkillResult, SkillStatus
 from agent.skills.agent.prompts import AGENT_SYSTEM_PROMPT
+from agent.skills.base import BaseSkill, SkillContext, SkillResult, SkillStatus
 from utils.log_utils import log
 
 __all__ = ["AgentSkill", "AgentSkillConfig"]
@@ -28,9 +27,10 @@ __all__ = ["AgentSkill", "AgentSkillConfig"]
 @dataclass
 class AgentSkillConfig:
     """Configuration for AgentSkill."""
+
     max_retries: int = 2
     retry_delay: float = 1.0
-    system_prompt: Optional[str] = None
+    system_prompt: str | None = None
     message_window: int = 10
 
 
@@ -48,9 +48,9 @@ class AgentSkill(BaseSkill):
 
     def __init__(
         self,
-        config: Optional[AgentSkillConfig] = None,
-        tools: Optional[List[BaseTool]] = None,
-        mcp_client: Optional[Any] = None,
+        config: AgentSkillConfig | None = None,
+        tools: list[BaseTool] | None = None,
+        mcp_client: Any | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -60,7 +60,7 @@ class AgentSkill(BaseSkill):
         self._bound_model = None
 
     @property
-    def tools(self) -> List[BaseTool]:
+    def tools(self) -> list[BaseTool]:
         """Get tools (lazy initialization)."""
         if self._tools is None:
             if self._mcp_client is not None:
@@ -68,6 +68,7 @@ class AgentSkill(BaseSkill):
             if not self._tools:
                 # Fallback to existing retriever tool
                 from agent.mcp.retriever_tools import get_retriever_tool
+
                 self._tools = [get_retriever_tool()]
         return self._tools
 
@@ -95,10 +96,7 @@ class AgentSkill(BaseSkill):
                 messages=[AIMessage(content="请输入您的问题。")],
             )
 
-        log.info(
-            f"AgentSkill: messages={len(messages)}, "
-            f"rewrites={rewrite_count}/{max_rewrites}"
-        )
+        log.info(f"AgentSkill: messages={len(messages)}, rewrites={rewrite_count}/{max_rewrites}")
 
         # Invoke with retry
         for attempt in range(self._skill_config.max_retries + 1):
@@ -118,9 +116,7 @@ class AgentSkill(BaseSkill):
 
                 # Handle rate limiting (429)
                 if "429" in error_str or "rate limit" in error_str.lower():
-                    wait_match = re.search(
-                        r'wait[:\s]+(\d+)\s*seconds', error_str, re.IGNORECASE
-                    )
+                    wait_match = re.search(r"wait[:\s]+(\d+)\s*seconds", error_str, re.IGNORECASE)
                     wait_time = int(wait_match.group(1)) if wait_match else 60
 
                     if attempt < self._skill_config.max_retries:
@@ -143,9 +139,7 @@ class AgentSkill(BaseSkill):
                         status=SkillStatus.FAILURE,
                         skill_name=self.name,
                         error=str(e),
-                        messages=[
-                            AIMessage(content="抱歉，处理您的请求时遇到问题，请稍后重试。")
-                        ],
+                        messages=[AIMessage(content="抱歉，处理您的请求时遇到问题，请稍后重试。")],
                     )
 
         return SkillResult(
@@ -185,16 +179,14 @@ class AgentSkill(BaseSkill):
                 status=SkillStatus.FAILURE,
                 skill_name=self.name,
                 error=str(e),
-                messages=[
-                    AIMessage(content="抱歉，处理您的请求时遇到问题，请稍后重试。")
-                ],
+                messages=[AIMessage(content="抱歉，处理您的请求时遇到问题，请稍后重试。")],
             )
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
-    def _invoke_model(self, messages: List[BaseMessage]) -> AIMessage:
+    def _invoke_model(self, messages: list[BaseMessage]) -> AIMessage:
         """Invoke the model with system prompt and message window."""
         window = self._skill_config.message_window
         recent = messages[-window:] if len(messages) > window else messages
@@ -207,7 +199,7 @@ class AgentSkill(BaseSkill):
         log.debug(f"AgentSkill response type: {type(response).__name__}")
         return response
 
-    async def _ainvoke_model(self, messages: List[BaseMessage]) -> AIMessage:
+    async def _ainvoke_model(self, messages: list[BaseMessage]) -> AIMessage:
         """Async model invocation."""
         window = self._skill_config.message_window
         recent = messages[-window:] if len(messages) > window else messages

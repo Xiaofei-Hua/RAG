@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable, List, Optional
+from collections.abc import Callable
 
 from agent.guardrails.input_guardrails import InputGuardrail
 from agent.guardrails.output_guardrails import OutputGuardrail
@@ -22,7 +22,7 @@ class GuardrailManager:
       agent harness lifecycle.
     """
 
-    def __init__(self, config: Optional[GuardrailConfig] = None):
+    def __init__(self, config: GuardrailConfig | None = None):
         self._config = config or GuardrailConfig()
         self._input = InputGuardrail(self._config)
         self._output = OutputGuardrail(self._config)
@@ -38,9 +38,9 @@ class GuardrailManager:
     def check_output(
         self,
         answer: str,
-        sources: Optional[List[str]] = None,
-        contexts: Optional[List[str]] = None,
-        cached_faith: Optional[float] = None,
+        sources: list[str] | None = None,
+        contexts: list[str] | None = None,
+        cached_faith: float | None = None,
     ) -> GuardrailResult:
         """Validate an agent response.  Returns the check result.
 
@@ -49,9 +49,7 @@ class GuardrailManager:
         short-circuits the semantic grounding check so the judge is not invoked
         a second time on the hot path.
         """
-        return self._output.validate(
-            answer, sources, contexts=contexts, cached_faith=cached_faith
-        )
+        return self._output.validate(answer, sources, contexts=contexts, cached_faith=cached_faith)
 
     # ------------------------------------------------------------------
     # Harness hook factories
@@ -115,8 +113,8 @@ class GuardrailManager:
 
             # Gather sources (names) and contexts (actual chunk text) from
             # shared_state. contexts enable the semantic grounding check.
-            sources: Optional[List[str]] = None
-            contexts: Optional[List[str]] = None
+            sources: list[str] | None = None
+            contexts: list[str] | None = None
             if hasattr(context, "shared_state"):
                 sources = context.shared_state.get("sources")
                 contexts = context.shared_state.get("retrieved_contexts")
@@ -141,6 +139,12 @@ class GuardrailManager:
 
             elif guard_result.action == GuardrailAction.ESCALATE:
                 log.warning(f"GuardrailManager: escalating output - {guard_result.reason}")
+                # If the verdict also carries redacted content (e.g. an ESCALATE
+                # hallucination that contained PII), apply the redaction to the
+                # served message so raw PII is never delivered on the escalation
+                # path either. Composes with ESCALATE rather than replacing it.
+                if guard_result.sanitized_content is not None and hasattr(last_msg, "content"):
+                    last_msg.content = guard_result.sanitized_content
                 if hasattr(result, "metadata"):
                     result.metadata["guardrail_escalation"] = {
                         "reason": guard_result.reason,

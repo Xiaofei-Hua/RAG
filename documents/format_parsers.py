@@ -14,25 +14,22 @@ making the formats available wherever the libs are installed.
 
 from __future__ import annotations
 
-from typing import List
-
 from langchain_core.documents import Document
+
 from utils.log_utils import log
 
 __all__ = ["parse_docx", "parse_pptx", "parse_html", "parse_by_extension"]
 
 
-def parse_docx(file_path: str, source: str = "") -> List[Document]:
+def parse_docx(file_path: str, source: str = "") -> list[Document]:
     """Parse a .docx file into paragraph-level documents."""
     try:
         from docx import Document as _DocxDocument  # python-docx
     except ImportError as e:
-        raise RuntimeError(
-            "DOCX parsing requires python-docx: pip install python-docx"
-        ) from e
+        raise RuntimeError("DOCX parsing requires python-docx: pip install python-docx") from e
 
     doc = _DocxDocument(file_path)
-    docs: List[Document] = []
+    docs: list[Document] = []
     for para in doc.paragraphs:
         text = (para.text or "").strip()
         if len(text) < 4:
@@ -48,19 +45,17 @@ def parse_docx(file_path: str, source: str = "") -> List[Document]:
     return docs
 
 
-def parse_pptx(file_path: str, source: str = "") -> List[Document]:
+def parse_pptx(file_path: str, source: str = "") -> list[Document]:
     """Parse a .pptx file into slide-level documents."""
     try:
         from pptx import Presentation  # python-pptx
     except ImportError as e:
-        raise RuntimeError(
-            "PPTX parsing requires python-pptx: pip install python-pptx"
-        ) from e
+        raise RuntimeError("PPTX parsing requires python-pptx: pip install python-pptx") from e
 
     prs = Presentation(file_path)
-    docs: List[Document] = []
+    docs: list[Document] = []
     for idx, slide in enumerate(prs.slides, 1):
-        texts: List[str] = []
+        texts: list[str] = []
         for shape in slide.shapes:
             if shape.has_text_frame:
                 for para in shape.text_frame.paragraphs:
@@ -90,7 +85,7 @@ def parse_pptx(file_path: str, source: str = "") -> List[Document]:
     return docs
 
 
-def parse_html(file_path: str, source: str = "") -> List[Document]:
+def parse_html(file_path: str, source: str = "") -> list[Document]:
     """Parse an HTML file into section-level documents."""
     try:
         from bs4 import BeautifulSoup  # beautifulsoup4
@@ -99,17 +94,17 @@ def parse_html(file_path: str, source: str = "") -> List[Document]:
             "HTML parsing requires beautifulsoup4: pip install beautifulsoup4"
         ) from e
 
-    with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+    with open(file_path, encoding="utf-8", errors="ignore") as f:
         html = f.read()
     soup = BeautifulSoup(html, "html.parser")
     # Remove script/style noise.
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
 
-    docs: List[Document] = []
+    docs: list[Document] = []
     # Split by headings to preserve structure.
     current_title = ""
-    buffer: List[str] = []
+    buffer: list[str] = []
     headings = {"h1", "h2", "h3", "h4"}
 
     def _flush():
@@ -142,7 +137,7 @@ def parse_html(file_path: str, source: str = "") -> List[Document]:
     return docs
 
 
-def parse_by_extension(file_path: str, source: str = "") -> List[Document]:
+def parse_by_extension(file_path: str, source: str = "") -> list[Document]:
     """
     Dispatch to the right parser by file extension.
 

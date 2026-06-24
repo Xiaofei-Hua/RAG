@@ -4,8 +4,8 @@ import json
 import os
 import sqlite3
 import threading
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Dict, Iterator, List, Optional
 
 from agent.memory.types import MemoryEntry, MemoryQuery, MemoryType
 from utils.log_utils import log
@@ -73,7 +73,7 @@ class MemoryStore:
         log.debug(f"MemoryStore: stored memory {entry.id}")
         return entry.id
 
-    def retrieve(self, query: MemoryQuery) -> List[MemoryEntry]:
+    def retrieve(self, query: MemoryQuery) -> list[MemoryEntry]:
         """
         Retrieve memories matching the query.
 
@@ -91,7 +91,7 @@ class MemoryStore:
 
         return self._retrieve_like(query)
 
-    def retrieve_semantic(self, query: MemoryQuery) -> Optional[List[MemoryEntry]]:
+    def retrieve_semantic(self, query: MemoryQuery) -> list[MemoryEntry] | None:
         """
         Embedding-based semantic retrieval. Returns None when embeddings are
         unavailable (caller falls back to LIKE).
@@ -123,9 +123,7 @@ class MemoryStore:
             doc_vecs = np.asarray(emb.embed_documents(contents), dtype=np.float32)
             q_vec = np.asarray(emb.embed_query(query.query), dtype=np.float32)
             q_norm = np.linalg.norm(q_vec) or 1.0
-            sims = (doc_vecs @ q_vec) / (
-                np.linalg.norm(doc_vecs, axis=1) * q_norm + 1e-9
-            )
+            sims = (doc_vecs @ q_vec) / (np.linalg.norm(doc_vecs, axis=1) * q_norm + 1e-9)
         except Exception as e:  # noqa: BLE001
             log.debug(f"Embedding retrieval failed: {e}")
             return None  # signal fallback
@@ -145,7 +143,7 @@ class MemoryStore:
             self._conn.commit()
         return results
 
-    def _retrieve_like(self, query: MemoryQuery) -> List[MemoryEntry]:
+    def _retrieve_like(self, query: MemoryQuery) -> list[MemoryEntry]:
         """Legacy substring (LIKE) retrieval — the original implementation."""
         sql = "SELECT * FROM agent_memory WHERE content LIKE ?"
         params: list = [f"%{query.query}%"]
@@ -176,7 +174,7 @@ class MemoryStore:
             self._conn.commit()
         return results
 
-    def update(self, id: str, updates: Dict) -> bool:
+    def update(self, id: str, updates: dict) -> bool:
         if not updates:
             return False
         set_clauses = []
@@ -206,7 +204,7 @@ class MemoryStore:
             self._conn.commit()
             return cursor.rowcount > 0
 
-    def get_by_id(self, id: str) -> Optional[MemoryEntry]:
+    def get_by_id(self, id: str) -> MemoryEntry | None:
         with self._locked():
             row = self._conn.execute("SELECT * FROM agent_memory WHERE id = ?", (id,)).fetchone()
             return self._row_to_entry(row) if row else None
@@ -235,7 +233,7 @@ class MemoryStore:
                 pass
 
 
-_memory_store: Optional[MemoryStore] = None
+_memory_store: MemoryStore | None = None
 
 
 def get_memory_store() -> MemoryStore:

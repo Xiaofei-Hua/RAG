@@ -10,9 +10,8 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-from agent.skills.base import SkillContext, SkillResult, SkillStatus
 from utils.log_utils import log
 
 __all__ = [
@@ -28,19 +27,20 @@ class SkillTrace:
 
     Records timing, status, and metadata for observability.
     """
+
     skill_name: str
     start_time: float
     end_time: float = 0.0
     duration_ms: float = 0.0
     status: str = ""
-    error: Optional[str] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    error: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def finish(
         self,
         status: str,
-        error: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
+        error: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         """Finalize the trace with timing and status."""
         self.end_time = time.perf_counter()
@@ -50,7 +50,7 @@ class SkillTrace:
         if metadata:
             self.metadata.update(metadata)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert to a plain dict for serialization."""
         return {
             "skill_name": self.skill_name,
@@ -77,7 +77,7 @@ class TraceCollector:
     """
 
     def __init__(self):
-        self._traces: List[SkillTrace] = []
+        self._traces: list[SkillTrace] = []
         self._run_start: float = 0.0
         self._run_end: float = 0.0
 
@@ -117,7 +117,7 @@ class TraceCollector:
     # ------------------------------------------------------------------
 
     @property
-    def traces(self) -> List[SkillTrace]:
+    def traces(self) -> list[SkillTrace]:
         """Get all recorded traces."""
         return list(self._traces)
 
@@ -128,7 +128,7 @@ class TraceCollector:
             return (self._run_end - self._run_start) * 1000
         return 0.0
 
-    def summary(self) -> Dict[str, Any]:
+    def summary(self) -> dict[str, Any]:
         """
         Get a summary of all traces in this run.
 
@@ -146,7 +146,7 @@ class TraceCollector:
             "success": len(errors) == 0,
         }
 
-    def get_skill_trace(self, skill_name: str) -> Optional[SkillTrace]:
+    def get_skill_trace(self, skill_name: str) -> SkillTrace | None:
         """Get the last trace for a given skill name."""
         for trace in reversed(self._traces):
             if trace.skill_name == skill_name:
@@ -167,9 +167,7 @@ class TraceCollector:
         )
         for skill in s["skills"]:
             log.debug(
-                f"  {skill['skill_name']}: "
-                f"{skill['duration_ms']:.0f}ms, "
-                f"status={skill['status']}"
+                f"  {skill['skill_name']}: {skill['duration_ms']:.0f}ms, status={skill['status']}"
             )
 
 
@@ -177,7 +175,7 @@ class TraceCollector:
 # Module-level convenience
 # ------------------------------------------------------------------
 
-_global_collector: Optional[TraceCollector] = None
+_global_collector: TraceCollector | None = None
 
 
 def get_trace_collector() -> TraceCollector:

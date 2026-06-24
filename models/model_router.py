@@ -22,10 +22,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
-from typing import List, Optional
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import BaseMessage
+
 from utils.log_utils import log
 
 __all__ = [
@@ -40,19 +39,21 @@ __all__ = [
 # P2.4 Model routing by tier
 # ---------------------------------------------------------------------------
 
+
 class ModelTier:
     """Logical model tiers mapped to (possibly different) model names."""
-    GENERATE = "generate"   # full model for final answers
-    GRADE = "grade"         # cheap model for relevance grading
-    INTENT = "intent"       # cheap model for intent classification
-    REWRITE = "rewrite"     # cheap model for query rewriting
+
+    GENERATE = "generate"  # full model for final answers
+    GRADE = "grade"  # cheap model for relevance grading
+    INTENT = "intent"  # cheap model for intent classification
+    REWRITE = "rewrite"  # cheap model for query rewriting
 
 
 def _env(name: str, default: str) -> str:
     return os.getenv(name, default) or default
 
 
-def get_model_for_tier(tier: str, base_model: Optional[str] = None) -> str:
+def get_model_for_tier(tier: str, base_model: str | None = None) -> str:
     """
     Return the model name to use for a given tier.
 
@@ -83,8 +84,9 @@ def get_llm_for_tier(tier: str) -> BaseChatModel:
 
     model = get_model_for_tier(tier)
     try:
-        from models.llm_models import LLMConfig
         from langchain_openai import ChatOpenAI
+
+        from models.llm_models import LLMConfig
 
         cfg = LLMConfig(model_name=model)
         llm = ChatOpenAI(
@@ -115,6 +117,7 @@ def reset_tier_llms() -> None:
 # P2.5 Cross-provider fallback
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class FallbackProvider:
     base_url: str
@@ -122,7 +125,7 @@ class FallbackProvider:
     api_key: str = ""
 
 
-def _parse_secondary_providers() -> List[FallbackProvider]:
+def _parse_secondary_providers() -> list[FallbackProvider]:
     """Parse fallback providers from env. Supports a single or comma-list."""
     urls = os.getenv("LLM_FALLBACK_BASE_URL", "")
     models = os.getenv("LLM_FALLBACK_MODEL", "")
@@ -134,11 +137,13 @@ def _parse_secondary_providers() -> List[FallbackProvider]:
     key_list = [k.strip() for k in keys.split(",")] if keys else []
     providers = []
     for i, url in enumerate(url_list):
-        providers.append(FallbackProvider(
-            base_url=url,
-            model=model_list[i] if i < len(model_list) else "qwen3:14b",
-            api_key=key_list[i] if i < len(key_list) else "ollama",
-        ))
+        providers.append(
+            FallbackProvider(
+                base_url=url,
+                model=model_list[i] if i < len(model_list) else "qwen3:14b",
+                api_key=key_list[i] if i < len(key_list) else "ollama",
+            )
+        )
     return providers
 
 
@@ -151,7 +156,7 @@ class FallbackLLM:
     providers are configured, behaves exactly like the primary (zero overhead).
     """
 
-    def __init__(self, primary: BaseChatModel, secondaries: Optional[List[BaseChatModel]] = None):
+    def __init__(self, primary: BaseChatModel, secondaries: list[BaseChatModel] | None = None):
         self._primary = primary
         self._secondaries = secondaries or []
         self._all = [primary] + (secondaries or [])

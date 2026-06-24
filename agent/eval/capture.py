@@ -24,7 +24,7 @@ Usage in the router (right before returning the ChatResponse):
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from agent.eval.history import get_git_commit
 from agent.eval.inference_store import InferenceRecord, get_inference_store
@@ -34,7 +34,7 @@ from utils.log_utils import log
 __all__ = ["maybe_capture_inference"]
 
 # Cache the git commit for the process lifetime.
-_git_commit: Optional[str] = None
+_git_commit: str | None = None
 
 
 def _cached_commit() -> str:
@@ -44,7 +44,7 @@ def _cached_commit() -> str:
     return _git_commit
 
 
-def _sources_to_docs(sources: List[Any]) -> List[Dict[str, Any]]:
+def _sources_to_docs(sources: list[Any]) -> list[dict[str, Any]]:
     """Normalise SourceDocument-like objects into plain dicts."""
     docs = []
     for s in sources or []:
@@ -68,17 +68,17 @@ def maybe_capture_inference(
     *,
     request_message: str,
     answer: str,
-    sources: List[Any],
+    sources: list[Any],
     reasoning: str,
     route: str,
     prompt_profile: str,
     intent: str,
-    metadata: Dict[str, Any],
+    metadata: dict[str, Any],
     latency_ms: float,
     trace_id: str,
     session_id: str,
-    token_usage: Optional[Dict[str, Any]] = None,
-) -> Optional[str]:
+    token_usage: dict[str, Any] | None = None,
+) -> str | None:
     """
     Sample and persist an inference record. Returns the captured trace_id
     (also written into metadata['trace_id'] / metadata['message_id'] so the

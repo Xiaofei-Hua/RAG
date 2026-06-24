@@ -8,8 +8,8 @@ Provides advanced retrieval strategies:
 - Reranking support
 """
 
-from core.retrieval.hybrid_retriever import HybridRetriever, HybridRetrieverConfig
 from core.retrieval.bm25_retriever import BM25Retriever
+from core.retrieval.hybrid_retriever import HybridRetriever, HybridRetrieverConfig
 from core.retrieval.reranker import Reranker
 
 __all__ = [

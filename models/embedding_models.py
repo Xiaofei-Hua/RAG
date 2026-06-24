@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
 
 from langchain_huggingface import HuggingFaceEmbeddings
 
@@ -16,7 +15,7 @@ from utils.env_utils import (
 )
 from utils.log_utils import log
 
-_instance: Optional[HuggingFaceEmbeddings] = None
+_instance: HuggingFaceEmbeddings | None = None
 
 
 def is_embedding_model_cached() -> bool:
@@ -42,10 +41,7 @@ def get_local_embeddings() -> HuggingFaceEmbeddings:
     global _instance
     if _instance is None:
         model_source = get_embedding_model_source()
-        log.info(
-            f"Creating embedding model: source={model_source}, "
-            f"device={EMBEDDING_DEVICE}"
-        )
+        log.info(f"Creating embedding model: source={model_source}, device={EMBEDDING_DEVICE}")
         _instance = HuggingFaceEmbeddings(
             model_name=model_source,
             model_kwargs={"device": EMBEDDING_DEVICE},

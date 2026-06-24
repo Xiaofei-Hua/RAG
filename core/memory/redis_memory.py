@@ -12,10 +12,10 @@ from __future__ import annotations
 import json
 import threading
 import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any
 
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 
 from utils.log_utils import log
 
@@ -28,8 +28,9 @@ __all__ = [
 @dataclass
 class SessionConfig:
     """Configuration for session memory."""
+
     redis_url: str = "redis://localhost:6379/0"
-    max_messages: int = 50   # Max messages per session
+    max_messages: int = 50  # Max messages per session
     key_prefix: str = "rag:session:"
     connection_pool_size: int = 5
 
@@ -46,8 +47,8 @@ class RedisSessionMemory:
 
     def __init__(
         self,
-        config: Optional[SessionConfig] = None,
-        redis_client: Optional[Any] = None,
+        config: SessionConfig | None = None,
+        redis_client: Any | None = None,
     ):
         self.config = config or SessionConfig()
         self._redis = redis_client
@@ -59,6 +60,7 @@ class RedisSessionMemory:
         if self._redis is None:
             try:
                 import redis.asyncio as aioredis
+
                 self._redis = aioredis.from_url(
                     self.config.redis_url,
                     max_connections=self.config.connection_pool_size,
@@ -120,8 +122,8 @@ class RedisSessionMemory:
     async def get_messages(
         self,
         session_id: str,
-        limit: Optional[int] = None,
-    ) -> List[BaseMessage]:
+        limit: int | None = None,
+    ) -> list[BaseMessage]:
         """Get messages from session history (newest first)."""
         limit = limit or self.config.max_messages
 
@@ -182,7 +184,7 @@ class RedisSessionMemory:
         except Exception:
             return False
 
-    async def get_session_info(self, session_id: str) -> Dict[str, Any]:
+    async def get_session_info(self, session_id: str) -> dict[str, Any]:
         """Get session metadata."""
         try:
             key = self._session_key(session_id)
@@ -196,7 +198,7 @@ class RedisSessionMemory:
         except Exception as e:
             return {"session_id": session_id, "error": str(e)}
 
-    def _serialize_message(self, message: BaseMessage) -> Dict[str, Any]:
+    def _serialize_message(self, message: BaseMessage) -> dict[str, Any]:
         """Serialize a message to JSON-compatible dict."""
         msg_type = type(message).__name__
         kwargs = dict(getattr(message, "additional_kwargs", {}) or {})
@@ -207,7 +209,7 @@ class RedisSessionMemory:
             "additional_kwargs": kwargs,
         }
 
-    def _deserialize_message(self, data: Dict[str, Any]) -> Optional[BaseMessage]:
+    def _deserialize_message(self, data: dict[str, Any]) -> BaseMessage | None:
         """Deserialize a message from dict."""
         msg_type = data.get("type", "HumanMessage")
         content = data.get("content", "")
@@ -237,8 +239,8 @@ class _SQLiteStore:
     """
 
     def __init__(self, db_path: str = "./data/sessions.db"):
-        import sqlite3
         import os
+        import sqlite3
 
         os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else ".", exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -268,16 +270,14 @@ class _SQLiteStore:
 
     async def lpush(self, key: str, value: str):
         with self._lock:
-            self._conn.execute(
-                "UPDATE sessions SET idx = idx + 1 WHERE key = ?", (key,)
-            )
+            self._conn.execute("UPDATE sessions SET idx = idx + 1 WHERE key = ?", (key,))
             self._conn.execute(
                 "INSERT INTO sessions (key, idx, value) VALUES (?, 0, ?)",
                 (key, value),
             )
             self._conn.commit()
 
-    async def lrange(self, key: str, start: int, end: int) -> List[str]:
+    async def lrange(self, key: str, start: int, end: int) -> list[str]:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT value FROM sessions WHERE key = ? ORDER BY idx LIMIT ? OFFSET ?",
@@ -346,16 +346,14 @@ class _SQLiteStore:
                 )
             self._conn.commit()
 
-    async def list_sessions(self, skip: int = 0, limit: int = 20) -> List[Dict[str, Any]]:
+    async def list_sessions(self, skip: int = 0, limit: int = 20) -> list[dict[str, Any]]:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT session_id, created_at, last_active, title FROM session_meta "
                 "ORDER BY last_active DESC LIMIT ? OFFSET ?",
                 (limit, skip),
             ).fetchall()
-            total = self._conn.execute(
-                "SELECT COUNT(*) FROM session_meta"
-            ).fetchone()[0]
+            total = self._conn.execute("SELECT COUNT(*) FROM session_meta").fetchone()[0]
 
         results = []
         for session_id, created_at, last_active, title in rows:
@@ -365,20 +363,20 @@ class _SQLiteStore:
                     "SELECT COUNT(*) FROM sessions WHERE key = ?", (key,)
                 ).fetchone()[0]
 
-            results.append({
-                "session_id": session_id,
-                "message_count": msg_count,
-                "created_at": created_at,
-                "last_active": last_active,
-                "title": title,
-            })
+            results.append(
+                {
+                    "session_id": session_id,
+                    "message_count": msg_count,
+                    "created_at": created_at,
+                    "last_active": last_active,
+                    "title": title,
+                }
+            )
         return results, total
 
     async def unregister_session(self, session_id: str):
         with self._lock:
-            self._conn.execute(
-                "DELETE FROM session_meta WHERE session_id = ?", (session_id,)
-            )
+            self._conn.execute("DELETE FROM session_meta WHERE session_id = ?", (session_id,))
             self._conn.commit()
 
     async def close(self):
@@ -387,10 +385,10 @@ class _SQLiteStore:
 
 
 # Module-level instance (lazy loaded)
-_memory_instance: Optional[RedisSessionMemory] = None
+_memory_instance: RedisSessionMemory | None = None
 
 
-def get_session_memory(config: Optional[SessionConfig] = None) -> RedisSessionMemory:
+def get_session_memory(config: SessionConfig | None = None) -> RedisSessionMemory:
     """Get or create session memory instance."""
     global _memory_instance
 

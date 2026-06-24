@@ -13,35 +13,35 @@ Public API:
     save_run / compare_runs — eval history + CI regression gate
 """
 
+from agent.eval.candidates import (
+    CandidateRecord,
+    list_candidates,
+    promote_candidate_to_golden,
+    promote_to_candidate,
+)
+from agent.eval.dataset import append_cases, load_dataset
+from agent.eval.flywheel import get_retrieval_misses, on_negative_feedback
+from agent.eval.history import (
+    DEFAULT_THRESHOLDS,
+    compare_runs,
+    latest_summary,
+    load_history,
+    save_run,
+)
+from agent.eval.inference_store import InferenceRecord, InferenceStore, get_inference_store
+from agent.eval.judge import LLMJudge, TrustworthyMetrics, get_judge
+from agent.eval.runner import EvalRunner
+from agent.eval.sampler import should_sample
+from agent.eval.scorer import EvalScorer
 from agent.eval.types import (
     EvalCase,
-    EvalScore,
-    EvalResult,
     EvalReport,
+    EvalResult,
     EvalRunSummary,
+    EvalScore,
     MetricDelta,
     RegressionReport,
 )
-from agent.eval.scorer import EvalScorer
-from agent.eval.runner import EvalRunner
-from agent.eval.judge import LLMJudge, TrustworthyMetrics, get_judge
-from agent.eval.dataset import load_dataset, append_cases
-from agent.eval.history import (
-    save_run,
-    load_history,
-    latest_summary,
-    compare_runs,
-    DEFAULT_THRESHOLDS,
-)
-from agent.eval.inference_store import InferenceRecord, InferenceStore, get_inference_store
-from agent.eval.sampler import should_sample
-from agent.eval.candidates import (
-    CandidateRecord,
-    promote_to_candidate,
-    list_candidates,
-    promote_candidate_to_golden,
-)
-from agent.eval.flywheel import on_negative_feedback, get_retrieval_misses
 
 __all__ = [
     # types

@@ -21,14 +21,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from typing import Dict, List, Optional
 
 from utils.log_utils import log
 
 __all__ = ["assign_variant", "record_variant", "variant_stats"]
 
 
-def _parse_variants() -> Dict[str, List[str]]:
+def _parse_variants() -> dict[str, list[str]]:
     """Parse PROMPT_AB_VARIANTS env into {profile: [variant_ids]}."""
     raw = os.getenv("PROMPT_AB_VARIANTS", "")
     if not raw:
@@ -67,30 +66,36 @@ def assign_variant(profile: str, session_id: str) -> str:
     bucket = (h % 1000) / 1000.0
     if bucket < ratio:
         return variants[0]
-    return variants[min(int((bucket - ratio) / ((1 - ratio) / (len(variants) - 1))) + 1, len(variants) - 1)]
+    return variants[
+        min(int((bucket - ratio) / ((1 - ratio) / (len(variants) - 1))) + 1, len(variants) - 1)
+    ]
 
 
 # In-memory log of variant assignments (small; for stats + testability).
-_assignment_log: List[Dict] = []
+_assignment_log: list[dict] = []
 
 
 def record_variant(profile: str, session_id: str, variant: str, trace_id: str = "") -> None:
     """Record which variant was used for an answer (for later quality analysis)."""
-    _assignment_log.append({
-        "profile": profile, "session_id": session_id,
-        "variant": variant, "trace_id": trace_id,
-    })
+    _assignment_log.append(
+        {
+            "profile": profile,
+            "session_id": session_id,
+            "variant": variant,
+            "trace_id": trace_id,
+        }
+    )
     if len(_assignment_log) > 10000:
         del _assignment_log[:5000]  # cap memory
 
 
-def variant_stats(profile: Optional[str] = None) -> Dict[str, Dict[str, int]]:
+def variant_stats(profile: str | None = None) -> dict[str, dict[str, int]]:
     """
     Aggregate variant assignment counts.
 
     Returns {variant: {"count": N}} optionally filtered by profile.
     """
-    counts: Dict[str, Dict[str, int]] = {}
+    counts: dict[str, dict[str, int]] = {}
     for rec in _assignment_log:
         if profile and rec["profile"] != profile:
             continue

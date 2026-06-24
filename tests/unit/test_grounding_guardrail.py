@@ -39,10 +39,13 @@ class TestGroundingGuardrail:
 
         class _StubJudge:
             available = True
-            def _entail(self, claim, context_blob):
+            def entail(self, claim, context_blob):
                 if responses:
                     return _StubVerdict(responses.pop(0))
                 return _StubVerdict(True)
+            # Back-compat alias for any caller still on the private name.
+            def _entail(self, claim, context_blob):
+                return self.entail(claim, context_blob)
 
         return GroundingGuardrail(judge=_StubJudge())
 
@@ -81,8 +84,10 @@ class TestGroundingGuardrail:
 
         class _ExplodingJudge:
             available = True
-            def _entail(self, *a, **k):
+            def entail(self, *a, **k):
                 raise RuntimeError("boom")
+            def _entail(self, *a, **k):
+                return self.entail(*a, **k)
         g = GroundingGuardrail(judge=_ExplodingJudge())
         result = g.check("振动限值 4.0。", ["ctx"])
         assert not result.available  # degraded, not raised

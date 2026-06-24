@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from agent.feedback.escalation import get_escalation_manager
 from agent.feedback.types import EscalationLevel
@@ -40,9 +40,7 @@ def create_escalation_hook() -> Callable:
 
                     last_msg = result.messages[-1]
                     if isinstance(last_msg, AIMessage):
-                        result.messages[-1] = AIMessage(
-                            content=last_msg.content + warning
-                        )
+                        result.messages[-1] = AIMessage(content=last_msg.content + warning)
         except Exception as e:
             log.warning(f"Escalation hook failed: {e}")
 

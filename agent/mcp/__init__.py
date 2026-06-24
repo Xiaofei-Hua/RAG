@@ -9,9 +9,9 @@ Provides MCP (Model Context Protocol) integration for the agent system:
 - retriever_tools: RetrieverManager, MilvusRetriever, get_retriever_tool
 """
 
-from agent.mcp.server import MCPServer, InProcessMCPServer
-from agent.mcp.retrieval_server import MCPRetrievalServer
 from agent.mcp.client import MCPClient
+from agent.mcp.retrieval_server import MCPRetrievalServer
+from agent.mcp.server import InProcessMCPServer, MCPServer
 
 __all__ = [
     "MCPServer",

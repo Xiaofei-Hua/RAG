@@ -8,15 +8,13 @@ graph/graph_state.py and graph/get_human_message.py.
 from __future__ import annotations
 
 from enum import Enum
-from typing import Annotated, Any, Dict, List, Optional, Type, TypeVar, TypedDict
+from typing import Annotated, Any, TypedDict, TypeVar
 
-from langchain_core.messages import BaseMessage, HumanMessage, AIMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langgraph.graph import add_messages
-from pydantic import BaseModel, Field, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from agent.skills.base import SkillContext, SkillResult, SkillStatus
-from utils.log_utils import log
-from utils.log_utils import log
 
 __all__ = [
     # From skills.base (re-exported)
@@ -45,6 +43,7 @@ __all__ = [
 # Graph State
 # =============================================================================
 
+
 class NodeType(str, Enum):
     AGENT = "agent"
     RETRIEVE = "retrieve"
@@ -60,7 +59,7 @@ class RouteDecision(str, Enum):
     END = "END"
 
 
-def merge_shared_state(left: Optional[Dict[str, Any]], right: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+def merge_shared_state(left: dict[str, Any] | None, right: dict[str, Any] | None) -> dict[str, Any]:
     """
     Reducer for the cross-node ``shared_state`` field on ``AgentState``.
 
@@ -74,7 +73,7 @@ def merge_shared_state(left: Optional[Dict[str, Any]], right: Optional[Dict[str,
     reduction, and missing values are treated as empty (back-compatible with
     checkpoints written before the field existed).
     """
-    merged: Dict[str, Any] = dict(left or {})
+    merged: dict[str, Any] = dict(left or {})
     merged.update(right or {})
     return merged
 
@@ -92,33 +91,33 @@ class AgentState(TypedDict):
             ``relevance_scores`` and ``grounding_faithfulness``. Merged across
             nodes via :func:`merge_shared_state`.
     """
+
     messages: Annotated[list[BaseMessage], add_messages]
     rewrite_count: int
     max_rewrites: int
-    shared_state: Annotated[Dict[str, Any], merge_shared_state]
+    shared_state: Annotated[dict[str, Any], merge_shared_state]
 
 
 class GraphMetadata(TypedDict, total=False):
     session_id: str
-    user_id: Optional[str]
+    user_id: str | None
     start_time: float
-    node_visits: Dict[str, int]
+    node_visits: dict[str, int]
 
 
 # =============================================================================
 # Pydantic Models for Structured Output
 # =============================================================================
 
+
 class Grade(BaseModel):
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
     binary_score: str = Field(
-        default="yes",
-        description="相关性评分: 'yes' 表示文档与问题相关，'no' 表示不相关"
+        default="yes", description="相关性评分: 'yes' 表示文档与问题相关，'no' 表示不相关"
     )
-    answer: Optional[str] = Field(
-        default=None,
-        description="备选字段，部分模型（如Qwen3）可能使用此字段返回yes/no"
+    answer: str | None = Field(
+        default=None, description="备选字段，部分模型（如Qwen3）可能使用此字段返回yes/no"
     )
 
     @property
@@ -132,20 +131,21 @@ class RewrittenQuery(BaseModel):
 
     original_query: str = Field(description="原始用户查询")
     rewritten_query: str = Field(description="改进后的查询")
-    reasoning: Optional[str] = Field(default=None, description="重写推理过程")
+    reasoning: str | None = Field(default=None, description="重写推理过程")
 
 
 class GeneratedAnswer(BaseModel):
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
 
     answer: str = Field(description="生成的回答内容")
-    confidence: Optional[float] = Field(default=None, ge=0.0, le=1.0)
-    sources: Optional[List[str]] = Field(default=None, description="引用来源")
+    confidence: float | None = Field(default=None, ge=0.0, le=1.0)
+    sources: list[str] | None = Field(default=None, description="引用来源")
 
 
 # =============================================================================
 # State Manager
 # =============================================================================
+
 
 class StateManager:
     @staticmethod
@@ -153,7 +153,7 @@ class StateManager:
         return len(state.get("messages", []))
 
     @staticmethod
-    def get_last_message(state: AgentState) -> Optional[BaseMessage]:
+    def get_last_message(state: AgentState) -> BaseMessage | None:
         messages = state.get("messages", [])
         return messages[-1] if messages else None
 
@@ -189,18 +189,19 @@ class StateManager:
 # Message Utilities
 # =============================================================================
 
+
 class MessageNotFoundError(Exception):
     pass
 
 
-def get_last_human_message(messages: List[BaseMessage]) -> HumanMessage:
+def get_last_human_message(messages: list[BaseMessage]) -> HumanMessage:
     for message in reversed(messages):
         if isinstance(message, HumanMessage):
             return message
     raise MessageNotFoundError("No HumanMessage found in the messages list")
 
 
-def get_last_ai_message(messages: List[BaseMessage]) -> Optional[AIMessage]:
+def get_last_ai_message(messages: list[BaseMessage]) -> AIMessage | None:
     for message in reversed(messages):
         if isinstance(message, AIMessage):
             return message
@@ -211,11 +212,11 @@ T = TypeVar("T", bound=BaseMessage)
 
 
 class MessageExtractor:
-    def __init__(self, messages: List[BaseMessage]):
+    def __init__(self, messages: list[BaseMessage]):
         self.messages = messages
 
     def get_last_human_message(self) -> HumanMessage:
         return get_last_human_message(self.messages)
 
-    def get_last_ai_message(self) -> Optional[AIMessage]:
+    def get_last_ai_message(self) -> AIMessage | None:
         return get_last_ai_message(self.messages)

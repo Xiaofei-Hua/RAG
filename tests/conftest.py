@@ -136,11 +136,24 @@ def tmp_data_dir(tmp_path, monkeypatch):
         "documents.document_registry.DEFAULT_DB_PATH",
         os.path.join(root, "documents.db"),
     )
-    import agent.memory.store as mem_mod
+    # Redirect the session checkpoint DB to tmp and clear the process-wide
+    # harness singleton so the next get_agent_harness() picks up the new path.
+    # Without this, any test that drives the real LangGraph checkpointer writes
+    # to ./data/checkpoints.db (AGENTS.md §10 persistence contract).
+    monkeypatch.setattr(
+        "agent.harness.orchestrator.DEFAULT_CHECKPOINT_PATH",
+        os.path.join(root, "checkpoints.db"),
+    )
+    import agent.harness as harness_pkg
+
+    if harness_pkg._harness is not None:
+        harness_pkg._harness.close()
+    harness_pkg._harness = None
     import agent.feedback.collector as fc_mod
     import agent.feedback.escalation as esc_mod
-    import documents.parent_store as ps_mod
+    import agent.memory.store as mem_mod
     import documents.document_registry as dr_mod
+    import documents.parent_store as ps_mod
 
     if mem_mod._memory_store is not None:
         mem_mod._memory_store.close()
@@ -163,6 +176,14 @@ def tmp_data_dir(tmp_path, monkeypatch):
     if is_mod._store is not None:
         is_mod._store.close()
     is_mod._store = None
+
+    # Redirect the documents upload temp dir (B6) so uploaded files land in
+    # tmp_path instead of the real /tmp, keeping uploads hermetic.
+    upload_tmp = os.path.join(root, "uploads")
+    os.makedirs(upload_tmp, exist_ok=True)
+    import api.routers.documents as docs_mod
+
+    monkeypatch.setattr(docs_mod, "UPLOAD_TMP_DIR", upload_tmp)
     return root
 
 
@@ -333,7 +354,7 @@ def fake_session_memory():
             self._store.setdefault(session_id, []).append(message)
 
         async def get_messages(self, session_id, limit=50):
-            from langchain_core.messages import HumanMessage, AIMessage
+            from langchain_core.messages import AIMessage, HumanMessage
 
             msgs = self._store.get(session_id, [])
             # Return as langchain messages with a timestamp in additional_kwargs.
@@ -367,6 +388,17 @@ def fake_session_memory():
 
         async def clear_session(self, session_id):
             self._store.pop(session_id, None)
+
+        async def session_exists(self, session_id):
+            # Match the real RedisSessionMemory contract: a session "exists"
+            # once at least one message has been recorded against it.
+            return session_id in self._store
+
+        async def register_session(self, session_id, title=""):
+            # The real impl refreshes last-active; for the in-memory fake we
+            # only need to ensure the session is present so session_exists()
+            # returns True after an extend call on an empty session.
+            self._store.setdefault(session_id, [])
 
         def close(self):
             pass

@@ -1,165 +1,69 @@
 """
-Aircraft Domain Prompts - Centralized Prompt Management
+Domain Prompts — 领域自适应 Prompt 单一来源(向后兼容入口)
 
-All domain-specific prompts are defined here as a single source of truth.
-Every module that needs domain prompts should import from this file.
+历史上这里是航空 PHM 的硬编码 prompt 单一事实来源。现已重构为领域自适应:
+所有常量从 active ``DomainProfile``(env ``DOMAIN_PROFILE`` 选择,默认 aviation_phm)
+派生。**常量名保持不变**,故所有 ``from core.prompts.aircraft_prompts import X``
+继续工作,默认 profile 下行为零变化。
 
-Skill-level prompts.py files re-export from here for self-containment.
+切换领域:``DOMAIN_PROFILE=general``(或其他 data/profiles/<name>.yaml)。
+新增领域:在 data/profiles/ 下新增 yaml 即可,无需改代码。
+
+事实来源:``core/prompts/domain_profile.py`` 的 ``DomainProfile`` +
+``data/profiles/<name>.yaml``。
 """
 
-# =============================================================================
-# Generate Node Prompts
-# =============================================================================
+from __future__ import annotations
 
-GENERAL_CHAT_SYSTEM_PROMPT = """你是地面健康管理（PHM）平台的智能助手。
+from core.prompts.domain_profile import get_active_profile
 
-即使是普通问答，也要保持 PHM 场景身份，不要自称通用AI聊天机器人。
-回答时请优先围绕以下能力：
-1. 故障诊断与排故引导
-2. 维修手册/故障代码/ATA章节查询
-3. 基于状态监测与趋势信息的维护建议
-4. 知识库检索依据与信息缺口提示
-
-当用户询问"你是谁/你能做什么"时，需明确介绍你是 PHM 平台助手，并给出上述能力边界。"""
-
-PHM_IDENTITY_RESPONSE = """我是地面健康管理（PHM）平台的智能诊断助手，不是通用闲聊机器人。
-
-我主要支持这些功能：
-1. 故障诊断：根据告警现象、故障代码、ATA 章节给出可能原因和诊断结论
-2. 排故引导：提供分步骤的检查流程、维修建议和复检要点
-3. 知识库问答：基于已上传手册/技术通报进行检索并给出依据来源
-4. 维护决策支持：围绕状态监测与预测性维护给出风险提示和信息缺口建议
-
-你可以直接告诉我：机型/系统、故障现象、故障码（如有）、发生工况，我会按 PHM 方式给你可执行建议。"""
-
-GENERATE_SYSTEM_PROMPT = """你是PHM平台的航空故障诊断助手。基于提供的上下文回答，不得编造。
-
-规则：
-1. 只用上下文信息，优先引用故障代码、ATA章节、参数阈值、排故步骤
-2. 每条依据标注来源
-3. 有安全风险时给出风险提示
-4. 信息不足时列出缺失数据
-
-输出结构：
-【诊断结论】
-...
-【可能原因】
-1. ...
-【排查步骤】
-1. ...
-【风险与安全提示】
-...
-【依据来源】
-1. 来源:... | 标题:... | 证据:...
-【信息缺口】
-..."""
-
-GENERATE_HUMAN_PROMPT = """请基于以下上下文回答问题，并严格遵循约定的输出结构。
-
-上下文：
-{context}
-
-问题：{question}
-
-请输出可执行的PHM诊断建议："""
+__all__ = [
+    "GENERAL_CHAT_SYSTEM_PROMPT",
+    "PHM_IDENTITY_RESPONSE",
+    "GENERATE_SYSTEM_PROMPT",
+    "GENERATE_HUMAN_PROMPT",
+    "REWRITE_PROMPT",
+    "GRADE_SYSTEM_PROMPT",
+    "GRADE_HUMAN_PROMPT",
+    "INTENT_CLASSIFICATION_PROMPT",
+    "AGENT_SYSTEM_PROMPT",
+    "RETRIEVER_TOOL_NAME",
+    "RETRIEVER_TOOL_DESCRIPTION",
+    "DEGRADATION_HELP_TEXT",
+]
 
 
-# =============================================================================
-# Rewrite Node Prompts
-# =============================================================================
-
-REWRITE_PROMPT = """你是PHM检索查询优化专家，负责把用户问题改写为更适合知识库检索的技术查询。
-
-改写原则：
-1. 保留原始问题意图，不改变用户想解决的问题
-2. 优先补全可检索要素：系统/部件、故障现象、故障代码、ATA章节、运行工况
-3. 若用户问题过于笼统，显式加入"故障诊断、排查步骤、处置建议、风险提示"等检索意图词
-4. 不要输出解释，只输出一条改写后的查询句
-
-原始问题：
-{original_question}
-"""
-
-
-# =============================================================================
-# Grade Node Prompts
-# =============================================================================
-
-GRADE_SYSTEM_PROMPT = """你是PHM检索评估器，负责判断检索文档是否足以支持故障诊断回答。
-
-判定标准：
-- 文档包含相关系统/部件、故障现象、故障代码、ATA章节、排故流程之一，判定为相关
-- 文档仅泛泛描述且无法支持诊断步骤，判定为不相关
-
-只返回二元评分：'yes' 或 'no'。"""
-
-GRADE_HUMAN_PROMPT = """检索到的文档：
-{context}
-
-用户的问题：
-{question}
-
-请判断文档是否与问题相关，回答 'yes' 或 'no'。"""
-
-
-# =============================================================================
-# Intent Classification Prompt
-# =============================================================================
-
-INTENT_CLASSIFICATION_PROMPT = """你是PHM平台意图分类专家，负责分析用户输入并判断其意图类型。
-
-## 意图类型（只允许返回以下值之一）：
-1. rag_query: 用户需要查询知识库中的专业信息，涉及飞机故障分析、排故程序、维修技术、故障代码、健康状态评估、预测性维护等技术问题
-2. general_chat: 普通对话，如问候、闲聊、一般性问题
-3. doc_upload: 用户想要上传文档，如"帮我上传文件"、"添加新文档"
-4. system_cmd: 系统管理命令，如"清除缓存"、"查看状态"、"帮助"
-
-## 分类规则：
-- 如果问题涉及故障代码、ATA章节、排故步骤、维修手册、状态监测、寿命预测等技术问题 → rag_query
-- 如果是问候、闲聊、非专业问题 → general_chat
-- 如果明确提到上传/添加文档 → doc_upload
-- 如果是系统操作或帮助请求 → system_cmd
-
-## 用户输入：
-{query}
-
-请严格返回JSON格式：{{"intent": "rag_query或general_chat或doc_upload或system_cmd", "confidence": 0.0到1.0之间的数字, "reasoning": "简要原因"}}"""
-
-
-# =============================================================================
-# Agent Node Prompt
-# =============================================================================
-
-AGENT_SYSTEM_PROMPT = """你是PHM平台的航空故障诊断助手。面对用户的任何问题，你必须先调用 rag_retriever 工具搜索知识库，基于检索到的文档再回答。
-
-规则：
-1. 无论问题看起来简单还是复杂，都必须调用 rag_retriever 工具检索相关文档
-2. 不要凭自身知识直接回答，所有回答必须基于检索结果
-3. 如果检索结果为空或不足以回答，如实说明
-4. 每次只调用一次检索工具"""
-
-
-# =============================================================================
-# Retriever Tool Description
-# =============================================================================
-
+# 工具名是领域无关的常量(不随 profile 变)。
 RETRIEVER_TOOL_NAME = "rag_retriever"
 
-RETRIEVER_TOOL_DESCRIPTION = (
-    "搜索并返回关于飞机故障分析、排故程序、维修手册、故障代码的信息, "
-    "内容涵盖：飞机各系统（发动机、液压、航电、结构等）的故障诊断、"
-    "排故流程、维修方案和技术通报"
-)
+
+def _p():
+    """Active profile accessor (kept tiny so each constant re-reads the
+    cached profile — cheap, and lets tests that reset_active_profile() see
+    the new profile without re-importing this module)."""
+    return get_active_profile()
 
 
-# =============================================================================
-# Degradation Fallback Prompts
-# =============================================================================
+# ---------------------------------------------------------------------------
+# 所有 prompt 常量从 active profile 派生(属性访问,每次取最新 active profile)。
+# 用 module-level __getattr__ (PEP 562) 让 `from ... import GENERATE_SYSTEM_PROMPT`
+# 在 import 时求值一次(向后兼容);运行时读取请用 get_active_profile() 直接访问。
+# ---------------------------------------------------------------------------
 
-DEGRADATION_HELP_TEXT = (
-    "我可以帮助您：\n"
-    "1. 回答关于飞机排故和故障分析的技术问题\n"
-    "2. 查询维修手册和排故程序\n"
-    "3. 提供故障代码和ATA章节相关建议\n\n"
-    "请描述您的问题，我会尽力帮助您。"
-)
+# 注意:模块级常量在 import 时求值。对于测试中切换 profile 的场景,应直接用
+# get_active_profile() 而非这些常量。下面在 import 时用 active profile 求值,
+# 覆盖默认(aviation_phm)启动路径的向后兼容。
+
+_profile = _p()
+
+GENERAL_CHAT_SYSTEM_PROMPT = _profile.prompts["general_chat_system"]
+PHM_IDENTITY_RESPONSE = _profile.identity_response
+GENERATE_SYSTEM_PROMPT = _profile.prompts["generate_system"]
+GENERATE_HUMAN_PROMPT = _profile.prompts["generate_human"]
+REWRITE_PROMPT = _profile.prompts["rewrite"]
+GRADE_SYSTEM_PROMPT = _profile.prompts["grade_system"]
+GRADE_HUMAN_PROMPT = _profile.prompts["grade_human"]
+INTENT_CLASSIFICATION_PROMPT = _profile.prompts["intent"]
+AGENT_SYSTEM_PROMPT = _profile.prompts["agent_system"]
+RETRIEVER_TOOL_DESCRIPTION = _profile.retriever_tool_description
+DEGRADATION_HELP_TEXT = _profile.degradation_help

@@ -18,10 +18,8 @@ from __future__ import annotations
 import math
 import os
 import time
-from typing import List, Optional
 
 from langchain_core.documents import Document
-from utils.log_utils import log
 
 __all__ = ["apply_time_decay", "DEFAULT_HALF_LIFE_DAYS"]
 
@@ -51,10 +49,10 @@ def _decay_factor(doc_age_days: float, half_life: float) -> float:
 
 
 def apply_time_decay(
-    documents: List[Document],
-    half_life_days: Optional[float] = None,
-    now: Optional[float] = None,
-) -> List[Document]:
+    documents: list[Document],
+    half_life_days: float | None = None,
+    now: float | None = None,
+) -> list[Document]:
     """
     Apply gentle time-decay to retrieval scores.
 
@@ -68,7 +66,7 @@ def apply_time_decay(
     half_life = half_life_days if half_life_days is not None else _half_life_days()
     now_ts = now if now is not None else time.time()
 
-    decayed: List[Document] = []
+    decayed: list[Document] = []
     for doc in documents:
         meta = doc.metadata if isinstance(doc.metadata, dict) else {}
         ts = meta.get("created_at") or meta.get("timestamp")

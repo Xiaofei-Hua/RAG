@@ -13,7 +13,7 @@ and tools.retriever_tools.RetrieverManager.
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from langchain_core.documents import Document
 
@@ -34,7 +34,7 @@ class MCPRetrievalServer(InProcessMCPServer):
     def __init__(
         self,
         default_top_k: int = 4,
-        config: Optional[MCPServerConfig] = None,
+        config: MCPServerConfig | None = None,
     ):
         server_config = config or MCPServerConfig(
             name="rag-retrieval-server",
@@ -52,13 +52,11 @@ class MCPRetrievalServer(InProcessMCPServer):
         """Register all retrieval tools on this server."""
 
         # --- rag_retrieve: hybrid retrieval ---
+        from core.prompts.domain_profile import get_active_profile
+
         self.register_tool(
             name="rag_retrieve",
-            description=(
-                "搜索并返回关于飞机故障分析、排故程序、维修手册、故障代码的信息, "
-                "内容涵盖：飞机各系统（发动机、液压、航电、结构等）的故障诊断、"
-                "排故流程、维修方案和技术通报"
-            ),
+            description=get_active_profile().retriever_tool_description,
             input_schema={
                 "type": "object",
                 "properties": {
@@ -75,14 +73,12 @@ class MCPRetrievalServer(InProcessMCPServer):
                         "type": "string",
                         "description": (
                             "Optional Milvus boolean expression to pre-filter "
-                            "dense candidates, e.g. source == \"engine_manual\""
+                            'dense candidates, e.g. source == "engine_manual"'
                         ),
                     },
                     "transform": {
                         "type": "string",
-                        "description": (
-                            "Optional query transform: 'hyde' or 'multi_query'"
-                        ),
+                        "description": ("Optional query transform: 'hyde' or 'multi_query'"),
                     },
                 },
                 "required": ["query"],
@@ -149,10 +145,10 @@ class MCPRetrievalServer(InProcessMCPServer):
     def _hybrid_retrieve(
         self,
         query: str,
-        top_k: Optional[int] = None,
-        filter_expr: Optional[str] = None,
-        transform: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
+        top_k: int | None = None,
+        filter_expr: str | None = None,
+        transform: str | None = None,
+    ) -> list[dict[str, Any]]:
         """
         Hybrid retrieval using dense + BM25 via HybridRetriever.
 
@@ -165,22 +161,21 @@ class MCPRetrievalServer(InProcessMCPServer):
         start = time.perf_counter()
         try:
             from core.retrieval.hybrid_retriever import get_hybrid_retriever
+
             retriever = get_hybrid_retriever()
             if transform == "multi_query":
                 from core.retrieval.query_transform import multi_query_retrieve
+
                 documents = multi_query_retrieve(
                     query, retriever, top_k=top_k, filter_expr=filter_expr
                 )
             elif transform == "hyde":
                 from core.retrieval.query_transform import hyde
+
                 hyde_query = hyde(query)
-                documents = retriever.retrieve(
-                    hyde_query, top_k=top_k, filter_expr=filter_expr
-                )
+                documents = retriever.retrieve(hyde_query, top_k=top_k, filter_expr=filter_expr)
             else:
-                documents = retriever.retrieve(
-                    query, top_k=top_k, filter_expr=filter_expr
-                )
+                documents = retriever.retrieve(query, top_k=top_k, filter_expr=filter_expr)
             elapsed_ms = (time.perf_counter() - start) * 1000
 
             log.info(
@@ -196,13 +191,14 @@ class MCPRetrievalServer(InProcessMCPServer):
             log.error(f"MCP rag_retrieve failed ({elapsed_ms:.0f}ms): {e}")
             raise
 
-    def _dense_search(self, query: str, top_k: Optional[int] = None) -> List[Dict[str, Any]]:
+    def _dense_search(self, query: str, top_k: int | None = None) -> list[dict[str, Any]]:
         """Dense-only retrieval via MilvusManager."""
         top_k = top_k or self._default_top_k
 
         start = time.perf_counter()
         try:
-            from agent.mcp.retriever_tools import RetrieverManager, RetrieverConfig
+            from agent.mcp.retriever_tools import RetrieverConfig, RetrieverManager
+
             config = RetrieverConfig(top_k=top_k, use_hybrid=False)
             with RetrieverManager(config) as manager:
                 documents = manager.search(query, top_k=top_k)
@@ -219,7 +215,7 @@ class MCPRetrievalServer(InProcessMCPServer):
             log.error(f"MCP rag_search_dense failed ({elapsed_ms:.0f}ms): {e}")
             raise
 
-    def _sparse_search(self, query: str, top_k: Optional[int] = None) -> List[Dict[str, Any]]:
+    def _sparse_search(self, query: str, top_k: int | None = None) -> list[dict[str, Any]]:
         """Sparse-only BM25 retrieval.
 
         Uses the hybrid retriever's shared BM25 index (which is auto-synced
@@ -232,6 +228,7 @@ class MCPRetrievalServer(InProcessMCPServer):
         start = time.perf_counter()
         try:
             from core.retrieval.hybrid_retriever import get_hybrid_retriever
+
             retriever = get_hybrid_retriever()
             results = retriever.sparse_retriever.retrieve(query, top_k=top_k)
             documents = [r.document for r in results]
@@ -253,23 +250,25 @@ class MCPRetrievalServer(InProcessMCPServer):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _format_documents(documents: List[Document]) -> List[Dict[str, Any]]:
+    def _format_documents(documents: list[Document]) -> list[dict[str, Any]]:
         """Convert LangChain Documents to MCP-friendly dicts."""
         results = []
         for idx, doc in enumerate(documents, 1):
             meta = getattr(doc, "metadata", None) or {}
             content = doc.page_content if hasattr(doc, "page_content") else str(doc)
-            results.append({
-                "index": idx,
-                "content": content,
-                "source": meta.get("source", "unknown"),
-                "title": meta.get("title", "unknown"),
-                "score": meta.get("score", 0.0),
-            })
+            results.append(
+                {
+                    "index": idx,
+                    "content": content,
+                    "source": meta.get("source", "unknown"),
+                    "title": meta.get("title", "unknown"),
+                    "score": meta.get("score", 0.0),
+                }
+            )
         return results
 
     @staticmethod
-    def documents_to_tool_content(documents: List[Document]) -> str:
+    def documents_to_tool_content(documents: list[Document]) -> str:
         """
         Format documents into the content string that the ToolMessage
         node expects (mirrors the format used by LangChain's ToolNode).
@@ -284,7 +283,5 @@ class MCPRetrievalServer(InProcessMCPServer):
             title = meta.get("title", "unknown")
             score = meta.get("score")
             score_text = f"{float(score):.4f}" if isinstance(score, (int, float)) else "N/A"
-            parts.append(
-                f"[证据{idx}] 来源={source} | 标题={title} | 相关度={score_text}\n{text}"
-            )
+            parts.append(f"[证据{idx}] 来源={source} | 标题={title} | 相关度={score_text}\n{text}")
         return "\n\n".join(parts)

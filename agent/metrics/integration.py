@@ -8,7 +8,7 @@ from skill results and feed them into the MetricsCollector.
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from langchain_core.messages import AIMessage
 
@@ -74,6 +74,7 @@ def create_token_tracking_hook(
 
         # Try to get model name from metadata or usage
         from utils.env_utils import LLM_MODEL
+
         model_name = metadata.get("model_name", LLM_MODEL)
 
         usage = TokenUsage(
@@ -95,10 +96,7 @@ def create_token_tracking_hook(
         )
         _collector.record_cost(cost_record)
 
-        log.debug(
-            f"TokenTracking: {skill_name} recorded "
-            f"{total_tokens} tokens, ${cost_usd:.6f}"
-        )
+        log.debug(f"TokenTracking: {skill_name} recorded {total_tokens} tokens, ${cost_usd:.6f}")
 
     return token_tracking_hook
 

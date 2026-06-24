@@ -8,9 +8,9 @@ is absent or malformed.
 
 from __future__ import annotations
 
-from dataclasses import asdict, fields
+from dataclasses import asdict
 from pathlib import Path
-from typing import Any, Dict, Optional, Type, TypeVar
+from typing import Any, TypeVar
 
 from utils.log_utils import log
 
@@ -19,7 +19,7 @@ __all__ = ["load_skill_config"]
 T = TypeVar("T")
 
 
-def load_skill_config(skill_dir: str | Path, config_cls: Type[T]) -> T:
+def load_skill_config(skill_dir: str | Path, config_cls: type[T]) -> T:
     """
     Load skill configuration from config.yaml, merging onto dataclass defaults.
 
@@ -41,8 +41,8 @@ def load_skill_config(skill_dir: str | Path, config_cls: Type[T]) -> T:
         return config_cls()
 
     try:
-        with open(yaml_path, "r", encoding="utf-8") as f:
-            overrides: Dict[str, Any] = yaml.safe_load(f) or {}
+        with open(yaml_path, encoding="utf-8") as f:
+            overrides: dict[str, Any] = yaml.safe_load(f) or {}
 
         defaults = asdict(config_cls())
         for key in overrides:

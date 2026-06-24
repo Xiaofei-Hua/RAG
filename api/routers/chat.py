@@ -11,79 +11,100 @@ import json
 import re
 import time
 import uuid
-from typing import Dict, List, Literal, Optional
+from typing import Literal
 
-from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
-from langchain_core.messages import HumanMessage, AIMessage, ToolMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from pydantic import BaseModel, Field
 
+from core.prompts.aircraft_prompts import (
+    GENERAL_CHAT_SYSTEM_PROMPT,
+    GENERATE_SYSTEM_PROMPT,
+)
 from utils.log_utils import log
 from utils.think_tag_utils import strip_think_tags
-from core.prompts.aircraft_prompts import (
-    GENERATE_SYSTEM_PROMPT,
-    GENERAL_CHAT_SYSTEM_PROMPT,
-    PHM_IDENTITY_RESPONSE,
-)
 
 router = APIRouter()
+
+
+def _profile():
+    """Active domain profile accessor (cached in domain_profile module).
+
+    Used to derive the prompt_profile label strings (``<label>_diagnosis_v1``
+    etc.) and identity/section behaviour from the configured domain instead
+    of hardcoding the aviation ``phm_*`` labels.
+    """
+    from core.prompts.domain_profile import get_active_profile
+
+    return get_active_profile()
 
 
 # =============================================================================
 # Request/Response Models
 # =============================================================================
 
+
 class ChatMessage(BaseModel):
     """Single chat message."""
+
     role: str = Field(..., description="Message role: user, assistant, or system")
     content: str = Field(..., description="Message content")
-    timestamp: Optional[float] = Field(None, description="Unix timestamp when message was saved")
+    timestamp: float | None = Field(None, description="Unix timestamp when message was saved")
 
 
 class ChatRequest(BaseModel):
     """Chat request model."""
+
     message: str = Field(..., description="User message", min_length=1)
-    session_id: Optional[str] = Field(None, description="Session ID for conversation continuity")
+    session_id: str | None = Field(None, description="Session ID for conversation continuity")
     stream: bool = Field(False, description="Enable streaming response")
     include_sources: bool = Field(True, description="Include source documents in response")
-    mode: Literal["thinking", "fast"] = Field("thinking", description="Response mode: 'thinking' uses full graph pipeline, 'fast' uses direct retrieval + generation")
+    mode: Literal["thinking", "fast"] = Field(
+        "thinking",
+        description="Response mode: 'thinking' uses full graph pipeline, 'fast' uses direct retrieval + generation",
+    )
 
 
 class SourceDocument(BaseModel):
     """Source document in response."""
+
     content: str
-    source: Optional[str] = None
-    title: Optional[str] = None
+    source: str | None = None
+    title: str | None = None
     score: float = 0.0
-    retrieval_score: Optional[float] = None
-    rerank_score: Optional[float] = None
+    retrieval_score: float | None = None
+    rerank_score: float | None = None
     rerank_applied: bool = False
 
 
 class ChatResponse(BaseModel):
     """Chat response model."""
+
     response: str = Field(..., description="Assistant response")
     session_id: str = Field(..., description="Session ID")
     intent: str = Field(..., description="Detected intent")
-    sources: List[SourceDocument] = Field(default_factory=list, description="Source documents")
+    sources: list[SourceDocument] = Field(default_factory=list, description="Source documents")
     processing_time_ms: float = Field(..., description="Processing time in milliseconds")
     metadata: dict = Field(default_factory=dict, description="Additional metadata")
 
 
 class PHMDiagnosis(BaseModel):
     """Structured PHM diagnosis extracted from model response."""
+
     conclusion: str = ""
-    possible_causes: List[str] = Field(default_factory=list)
-    troubleshooting_steps: List[str] = Field(default_factory=list)
+    possible_causes: list[str] = Field(default_factory=list)
+    troubleshooting_steps: list[str] = Field(default_factory=list)
     safety_risks: str = ""
-    evidence_sources: List[str] = Field(default_factory=list)
+    evidence_sources: list[str] = Field(default_factory=list)
     info_gaps: str = ""
 
 
 class ChatHistoryResponse(BaseModel):
     """Chat history response."""
+
     session_id: str
-    messages: List[ChatMessage]
+    messages: list[ChatMessage]
     total_messages: int
 
 
@@ -91,7 +112,8 @@ class ChatHistoryResponse(BaseModel):
 # Helpers
 # =============================================================================
 
-def _confidence_level(confidence: Optional[float]) -> str:
+
+def _confidence_level(confidence: float | None) -> str:
     """Map a numeric confidence to a coarse level for the UI."""
     if confidence is None:
         return "unknown"
@@ -143,7 +165,7 @@ def _capture(
         log.debug(f"inference capture skipped: {exc}")
 
 
-def _extract_sources(messages: list) -> List[SourceDocument]:
+def _extract_sources(messages: list) -> list[SourceDocument]:
     """Extract source documents from graph result messages."""
     sources = []
     seen = set()
@@ -175,16 +197,18 @@ def _extract_sources(messages: list) -> List[SourceDocument]:
                         score = float(parsed_score)
                     except ValueError:
                         pass
-                sources.append(SourceDocument(
-                    content=content[:500],
-                    source=source,
-                    title=title,
-                    score=score,
-                ))
+                sources.append(
+                    SourceDocument(
+                        content=content[:500],
+                        source=source,
+                        title=title,
+                        score=score,
+                    )
+                )
     return sources
 
 
-def _extract_line_value(text: str, key: str) -> Optional[str]:
+def _extract_line_value(text: str, key: str) -> str | None:
     """Extract a value from a line like `Key: value`."""
     pattern = rf"(?im)^\s*{re.escape(key)}\s*:\s*(.+?)\s*$"
     match = re.search(pattern, text)
@@ -194,8 +218,8 @@ def _extract_line_value(text: str, key: str) -> Optional[str]:
     return None
 
 
-def _extract_section(text: str, title: str, next_titles: List[str]) -> str:
-    """Extract section content from PHM structured answer."""
+def _extract_section(text: str, title: str, next_titles: list[str]) -> str:
+    """Extract section content from a structured answer (【title】...)."""
     marker = f"【{title}】"
     start = text.find(marker)
     if start < 0:
@@ -210,7 +234,7 @@ def _extract_section(text: str, title: str, next_titles: List[str]) -> str:
     return text[start:end].strip()
 
 
-def _extract_numbered_items(text: str) -> List[str]:
+def _extract_numbered_items(text: str) -> list[str]:
     """Parse numbered items from a section."""
     if not text:
         return []
@@ -221,49 +245,84 @@ def _extract_numbered_items(text: str) -> List[str]:
     return [line.strip("- ").strip() for line in text.splitlines() if line.strip()]
 
 
-def _extract_phm_diagnosis(answer: str) -> Optional[PHMDiagnosis]:
-    """Extract PHM diagnosis blocks from generated answer."""
-    section_order = [
-        "诊断结论",
-        "可能原因",
-        "排查步骤",
-        "风险与安全提示",
-        "依据来源",
-        "信息缺口",
-    ]
-    extracted: Dict[str, str] = {}
+def _active_sections() -> list[str]:
+    """Section template from the active domain profile (empty for general)."""
+    from core.prompts.domain_profile import get_active_profile
+
+    return list(get_active_profile().section_template)
+
+
+def _extract_phm_diagnosis(answer: str) -> PHMDiagnosis | None:
+    """
+    Extract structured diagnosis blocks from a generated answer.
+
+    The section order is sourced from the active domain profile's
+    ``section_template``. When the profile defines no sections (e.g. the
+    general profile), this returns None — the answer is treated as free-form.
+    """
+    section_order = _active_sections()
+    if not section_order:
+        return None
+
+    extracted: dict[str, str] = {}
     for idx, section in enumerate(section_order):
         extracted[section] = _extract_section(answer, section, section_order[idx + 1 :])
 
     if not any(extracted.values()):
         return None
 
+    # Map extracted sections into the PHMDiagnosis schema. Field names are
+    # generic; aviation section labels fill them positionally (conclusion,
+    # causes, steps, safety, sources, gaps). Non-aviation profiles with fewer
+    # sections simply leave later fields empty.
+    vals = list(extracted.values())
+
+    def _at(i: int) -> str:
+        return vals[i] if i < len(vals) else ""
+
     return PHMDiagnosis(
-        conclusion=extracted["诊断结论"],
-        possible_causes=_extract_numbered_items(extracted["可能原因"]),
-        troubleshooting_steps=_extract_numbered_items(extracted["排查步骤"]),
-        safety_risks=extracted["风险与安全提示"],
-        evidence_sources=_extract_numbered_items(extracted["依据来源"]),
-        info_gaps=extracted["信息缺口"],
+        conclusion=_at(0),
+        possible_causes=_extract_numbered_items(_at(1)),
+        troubleshooting_steps=_extract_numbered_items(_at(2)),
+        safety_risks=_at(3),
+        evidence_sources=_extract_numbered_items(_at(4)),
+        info_gaps=_at(5),
     )
 
 
 def _looks_like_phm_query(message: str) -> bool:
-    """Heuristic PHM query detection to prevent misrouting."""
+    """
+    Heuristic domain-query detection to prevent misrouting.
+
+    Keywords and regex patterns are sourced from the active domain profile,
+    so this fast-path matches the configured domain (aviation by default).
+    The general profile has no domain keywords/patterns, so this returns
+    False and lets the intent classifier decide.
+    """
+    from core.prompts.domain_profile import get_active_profile
+
     text = (message or "").lower()
     if not text:
         return False
 
-    keywords = [
-        "故障", "排故", "诊断", "维修", "机务", "航材", "工卡", "手册", "状态监测",
-        "预测性维护", "健康管理", "振动", "液压", "发动机", "航电", "告警", "故障码",
-        "troubleshoot", "fault", "ata", "fws", "ecam", "eicas", "maintenance",
-    ]
+    profile = get_active_profile()
+    # Use domain-specific vocabulary (not the classifier's rag_keywords, which
+    # include generic question words like 如何/什么 that would route nearly
+    # every query to RAG).
+    domain_kws = profile.domain_keywords or profile.rag_keywords
+    keywords = [kw.lower() for kw in domain_kws]
     if any(k in text for k in keywords):
         return True
 
-    # ATA chapter pattern
-    return bool(re.search(r"\bata[\s\-_:]*\d{2}\b", text, flags=re.IGNORECASE))
+    # Domain-specific query patterns (e.g. ATA chapter numbers for aviation).
+    for pattern in profile.query_patterns:
+        try:
+            if re.search(pattern, text, flags=re.IGNORECASE):
+                return True
+        except re.error:
+            continue
+
+    return False
 
 
 def _is_identity_capability_query(message: str) -> bool:
@@ -294,21 +353,25 @@ def _sse(event: dict) -> str:
 # Dependencies
 # =============================================================================
 
+
 async def get_session_memory():
     """Get session memory instance."""
     from core.memory.redis_memory import get_session_memory
+
     return get_session_memory()
 
 
 async def get_intent_classifier():
     """Get intent classifier instance."""
     from core.intent.classifier import get_intent_classifier
+
     return get_intent_classifier()
 
 
 async def get_rag_graph():
     """Get agent harness instance."""
     from agent.harness import get_agent_harness
+
     return get_agent_harness()
 
 
@@ -318,7 +381,7 @@ async def get_prompt_status():
     signature = hashlib.sha1(GENERATE_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
     return {
         "loaded": True,
-        "prompt_profile": "phm_diagnosis_v1",
+        "prompt_profile": _profile().prompt_profile_generate,
         "generate_prompt_signature": signature,
         "generate_prompt_preview": GENERATE_SYSTEM_PROMPT[:120],
     }
@@ -328,12 +391,13 @@ async def get_prompt_status():
 # Endpoints
 # =============================================================================
 
+
 @router.post("", response_model=ChatResponse)
 async def chat(
     request: ChatRequest,
     http_request: Request,
     background_tasks: BackgroundTasks,
-    session_memory = Depends(get_session_memory),
+    session_memory=Depends(get_session_memory),
 ):
     """
     Send a message and get a response.
@@ -352,7 +416,9 @@ async def chat(
     force_rag = False
     # trace_id propagated by the tracing middleware; message_id minted here so
     # feedback can later point back at this exact answer.
-    trace_id = getattr(getattr(http_request, "state", None), "trace_id", "") or str(uuid.uuid4())[:16]
+    trace_id = (
+        getattr(getattr(http_request, "state", None), "trace_id", "") or str(uuid.uuid4())[:16]
+    )
     message_id = str(uuid.uuid4())
     # Answer trustworthiness, populated by the generate skill (RAG route).
     gen_confidence = None
@@ -363,17 +429,13 @@ async def chat(
 
     try:
         if _is_identity_capability_query(request.message):
-            answer = PHM_IDENTITY_RESPONSE
+            answer = _profile().identity_response
             processing_time = (time.perf_counter() - start_time) * 1000
             background_tasks.add_task(
-                session_memory.save_message,
-                session_id,
-                HumanMessage(content=request.message)
+                session_memory.save_message, session_id, HumanMessage(content=request.message)
             )
             background_tasks.add_task(
-                session_memory.save_message,
-                session_id,
-                AIMessage(content=answer)
+                session_memory.save_message, session_id, AIMessage(content=answer)
             )
             identity_meta = {
                 "intent_confidence": 1.0,
@@ -381,13 +443,24 @@ async def chat(
                 "source_count": 0,
                 "diagnosis": None,
                 "route": "general_chat",
-                "prompt_profile": "phm_identity_v1",
+                "prompt_profile": _profile().prompt_profile_identity,
                 "force_rag": False,
                 "message_id": message_id,
             }
-            _capture(http_request, request.message, answer, [], "",
-                     "general_chat", "phm_identity_v1", "general_chat",
-                     identity_meta, processing_time, trace_id, session_id)
+            _capture(
+                http_request,
+                request.message,
+                answer,
+                [],
+                "",
+                "general_chat",
+                _profile().prompt_profile_identity,
+                "general_chat",
+                identity_meta,
+                processing_time,
+                trace_id,
+                session_id,
+            )
             return ChatResponse(
                 response=answer,
                 session_id=session_id,
@@ -405,14 +478,10 @@ async def chat(
             processing_time = (time.perf_counter() - start_time) * 1000
 
             background_tasks.add_task(
-                session_memory.save_message,
-                session_id,
-                HumanMessage(content=request.message)
+                session_memory.save_message, session_id, HumanMessage(content=request.message)
             )
             background_tasks.add_task(
-                session_memory.save_message,
-                session_id,
-                AIMessage(content=result.answer)
+                session_memory.save_message, session_id, AIMessage(content=result.answer)
             )
 
             fast_sources = [SourceDocument(**s) for s in result.sources]
@@ -422,15 +491,26 @@ async def chat(
                 "source_count": result.retrieval_count,
                 "diagnosis": None,
                 "route": "fast",
-                "prompt_profile": "phm_fast_v1",
+                "prompt_profile": _profile().prompt_profile_fast,
                 "force_rag": False,
                 "retrieval_time_ms": result.retrieval_time_ms,
                 "generation_time_ms": result.generation_time_ms,
                 "message_id": message_id,
             }
-            _capture(http_request, request.message, result.answer, fast_sources, "",
-                     "fast", "phm_fast_v1", "rag_query",
-                     fast_meta, processing_time, trace_id, session_id)
+            _capture(
+                http_request,
+                request.message,
+                result.answer,
+                fast_sources,
+                "",
+                "fast",
+                _profile().prompt_profile_fast,
+                "rag_query",
+                fast_meta,
+                processing_time,
+                trace_id,
+                session_id,
+            )
             return ChatResponse(
                 response=result.answer,
                 session_id=session_id,
@@ -442,6 +522,7 @@ async def chat(
 
         # Step 1: Intent classification
         from core.intent.classifier import get_intent_classifier
+
         intent_classifier = get_intent_classifier()
         intent_result = await intent_classifier.aclassify(request.message)
 
@@ -457,6 +538,7 @@ async def chat(
         if not use_rag:
             # Direct LLM response without retrieval
             from models.llm_models import get_llm
+
             llm = get_llm()
 
             # Load conversation history for multi-turn context
@@ -472,11 +554,12 @@ async def chat(
             answer = strip_think_tags(response.content)
             sources = []
             route = "general_chat"
-            prompt_profile = "phm_general_v1"
+            prompt_profile = _profile().prompt_profile_general
 
         else:
             # RAG pipeline with retrieval
             from agent.harness import get_agent_harness
+
             harness = get_agent_harness()
 
             result = await harness.ainvoke(request.message, thread_id=session_id)
@@ -488,33 +571,31 @@ async def chat(
             gen_refused = False
             if messages:
                 last_message = messages[-1]
-                raw = last_message.content if hasattr(last_message, 'content') else str(last_message)
+                raw = (
+                    last_message.content if hasattr(last_message, "content") else str(last_message)
+                )
                 answer = strip_think_tags(raw)
                 # Extract Qwen3 reasoning from generate node
-                if hasattr(last_message, 'additional_kwargs'):
-                    reasoning_text = last_message.additional_kwargs.get('reasoning', '') or ''
-                    gen_confidence = last_message.additional_kwargs.get('confidence')
-                    gen_refused = bool(last_message.additional_kwargs.get('refused', False))
+                if hasattr(last_message, "additional_kwargs"):
+                    reasoning_text = last_message.additional_kwargs.get("reasoning", "") or ""
+                    gen_confidence = last_message.additional_kwargs.get("confidence")
+                    gen_refused = bool(last_message.additional_kwargs.get("refused", False))
             else:
                 answer = "抱歉，无法生成回答。"
 
             sources = _extract_sources(messages)
             route = "rag"
-            prompt_profile = "phm_diagnosis_v1"
+            prompt_profile = _profile().prompt_profile_generate
 
         # Calculate processing time
         processing_time = (time.perf_counter() - start_time) * 1000
 
         # Save to session memory (background task)
         background_tasks.add_task(
-            session_memory.save_message,
-            session_id,
-            HumanMessage(content=request.message)
+            session_memory.save_message, session_id, HumanMessage(content=request.message)
         )
         background_tasks.add_task(
-            session_memory.save_message,
-            session_id,
-            AIMessage(content=answer)
+            session_memory.save_message, session_id, AIMessage(content=answer)
         )
 
         diagnosis = _extract_phm_diagnosis(answer)
@@ -535,9 +616,20 @@ async def chat(
             "confidence_level": _confidence_level(gen_confidence),
             "refused": gen_refused,
         }
-        _capture(http_request, request.message, answer, sources, reasoning_text,
-                 route, prompt_profile, intent_result.intent.value,
-                 main_meta, processing_time, trace_id, session_id)
+        _capture(
+            http_request,
+            request.message,
+            answer,
+            sources,
+            reasoning_text,
+            route,
+            prompt_profile,
+            intent_result.intent.value,
+            main_meta,
+            processing_time,
+            trace_id,
+            session_id,
+        )
         return ChatResponse(
             response=answer,
             session_id=session_id,
@@ -558,11 +650,22 @@ async def chat(
             handler = get_degradation_handler()
             degraded = handler.generate_degraded_response(request.message, str(e))
             degraded_time = (time.perf_counter() - start_time) * 1000
-            degraded_meta = {"error": str(e), "message_id": message_id}
+            degraded_meta = {"error": str(e), "message_id": message_id, "route": "degraded"}
             # Degraded responses are always sampled (importance sampling).
-            _capture(http_request, request.message, degraded.content, [], "",
-                     "degraded", "degraded", "degraded",
-                     degraded_meta, degraded_time, trace_id, session_id)
+            _capture(
+                http_request,
+                request.message,
+                degraded.content,
+                [],
+                "",
+                "degraded",
+                "degraded",
+                "degraded",
+                degraded_meta,
+                degraded_time,
+                trace_id,
+                session_id,
+            )
             return ChatResponse(
                 response=degraded.content,
                 session_id=session_id,
@@ -579,7 +682,7 @@ async def chat(
 async def get_chat_history(
     session_id: str,
     limit: int = 20,
-    session_memory = Depends(get_session_memory),
+    session_memory=Depends(get_session_memory),
 ):
     """Get chat history for a session."""
     try:
@@ -592,11 +695,13 @@ async def get_chat_history(
         for msg in messages:
             role = "user" if msg.type == "human" else "assistant"
             ts = (msg.additional_kwargs or {}).pop("_timestamp", None)
-            chat_messages.append(ChatMessage(
-                role=role,
-                content=msg.content,
-                timestamp=ts,
-            ))
+            chat_messages.append(
+                ChatMessage(
+                    role=role,
+                    content=msg.content,
+                    timestamp=ts,
+                )
+            )
 
         return ChatHistoryResponse(
             session_id=session_id,
@@ -612,7 +717,7 @@ async def get_chat_history(
 @router.delete("/session/{session_id}")
 async def clear_session(
     session_id: str,
-    session_memory = Depends(get_session_memory),
+    session_memory=Depends(get_session_memory),
 ):
     """Clear a chat session."""
     try:
@@ -626,7 +731,7 @@ async def clear_session(
 @router.post("/stream")
 async def chat_stream(
     request: ChatRequest,
-    session_memory = Depends(get_session_memory),
+    session_memory=Depends(get_session_memory),
 ):
     """
     Streaming chat endpoint using RAGGraph.
@@ -649,34 +754,52 @@ async def chat_stream(
             yield _sse({"type": "session", "session_id": session_id})
 
             if _is_identity_capability_query(request.message):
-                answer = PHM_IDENTITY_RESPONSE
-                yield _sse({"type": "intent", "intent": "general_chat", "confidence": 1.0, "route": "general_chat", "force_rag": False})
+                answer = _profile().identity_response
+                yield _sse(
+                    {
+                        "type": "intent",
+                        "intent": "general_chat",
+                        "confidence": 1.0,
+                        "route": "general_chat",
+                        "force_rag": False,
+                    }
+                )
                 yield _sse({"type": "status", "message": "正在返回平台能力说明..."})
                 yield _sse({"type": "token", "content": answer})
                 await session_memory.save_message(session_id, HumanMessage(content=request.message))
                 await session_memory.save_message(session_id, AIMessage(content=answer))
-                yield _sse({
-                    "type": "done",
-                    "full_response": answer,
-                    "sources": [],
-                    "processing_time_ms": (time.perf_counter() - start_time) * 1000,
-                    "metadata": {
-                        "intent_confidence": 1.0,
-                        "intent_reasoning": "Identity/capability shortcut",
-                        "source_count": 0,
-                        "diagnosis": None,
-                        "route": "general_chat",
-                        "prompt_profile": "phm_identity_v1",
-                        "force_rag": False,
-                    },
-                })
+                yield _sse(
+                    {
+                        "type": "done",
+                        "full_response": answer,
+                        "sources": [],
+                        "processing_time_ms": (time.perf_counter() - start_time) * 1000,
+                        "metadata": {
+                            "intent_confidence": 1.0,
+                            "intent_reasoning": "Identity/capability shortcut",
+                            "source_count": 0,
+                            "diagnosis": None,
+                            "route": "general_chat",
+                            "prompt_profile": _profile().prompt_profile_identity,
+                            "force_rag": False,
+                        },
+                    }
+                )
                 return
 
             # Fast mode: direct retrieve + stream generate
             if request.mode == "fast":
                 from core.fast_mode import fast_generate_stream
 
-                yield _sse({"type": "intent", "intent": "rag_query", "confidence": 1.0, "route": "fast", "force_rag": False})
+                yield _sse(
+                    {
+                        "type": "intent",
+                        "intent": "rag_query",
+                        "confidence": 1.0,
+                        "route": "fast",
+                        "force_rag": False,
+                    }
+                )
                 yield _sse({"type": "status", "message": "正在检索知识库..."})
 
                 full_response = ""
@@ -695,27 +818,30 @@ async def chat_stream(
                 await session_memory.save_message(session_id, AIMessage(content=full_response))
 
                 diagnosis = _extract_phm_diagnosis(full_response)
-                yield _sse({
-                    "type": "done",
-                    "full_response": full_response,
-                    "sources": sources_data,
-                    "processing_time_ms": (time.perf_counter() - start_time) * 1000,
-                    "metadata": {
-                        "intent_confidence": 1.0,
-                        "intent_reasoning": "Fast mode (no classification)",
-                        "source_count": len(sources_data),
-                        "diagnosis": diagnosis.model_dump() if diagnosis else None,
-                        "route": "fast",
-                        "prompt_profile": "phm_fast_v1",
-                        "force_rag": False,
-                    },
-                })
+                yield _sse(
+                    {
+                        "type": "done",
+                        "full_response": full_response,
+                        "sources": sources_data,
+                        "processing_time_ms": (time.perf_counter() - start_time) * 1000,
+                        "metadata": {
+                            "intent_confidence": 1.0,
+                            "intent_reasoning": "Fast mode (no classification)",
+                            "source_count": len(sources_data),
+                            "diagnosis": diagnosis.model_dump() if diagnosis else None,
+                            "route": "fast",
+                            "prompt_profile": _profile().prompt_profile_fast,
+                            "force_rag": False,
+                        },
+                    }
+                )
                 return
 
             # Step 1: Intent classification
             yield _sse({"type": "status", "message": "正在分析意图..."})
 
             from core.intent.classifier import get_intent_classifier
+
             intent_classifier = get_intent_classifier()
             intent_result = await intent_classifier.aclassify(request.message)
             use_rag = intent_result.intent.value != "general_chat"
@@ -723,15 +849,17 @@ async def chat_stream(
             if not use_rag and _looks_like_phm_query(request.message):
                 use_rag = True
                 force_rag = True
-                yield _sse({"type": "status", "message": "检测为PHM技术问题，已切换知识库诊断模式..."})
+                yield _sse({"type": "status", "message": "检测为专业问题，已切换知识库检索模式..."})
 
-            yield _sse({
-                "type": "intent",
-                "intent": intent_result.intent.value,
-                "confidence": intent_result.confidence,
-                "route": "rag" if use_rag else "general_chat",
-                "force_rag": force_rag,
-            })
+            yield _sse(
+                {
+                    "type": "intent",
+                    "intent": intent_result.intent.value,
+                    "confidence": intent_result.confidence,
+                    "route": "rag" if use_rag else "general_chat",
+                    "force_rag": force_rag,
+                }
+            )
 
             # Step 2: Route based on intent
             if not use_rag:
@@ -739,6 +867,7 @@ async def chat_stream(
                 yield _sse({"type": "status", "message": "正在生成回答..."})
 
                 from models.llm_models import get_llm
+
                 llm = get_llm()
 
                 # Load conversation history for multi-turn context
@@ -752,7 +881,7 @@ async def chat_stream(
 
                 full_response = ""
                 async for chunk in llm.astream(history_msgs):
-                    if hasattr(chunk, 'content') and chunk.content:
+                    if hasattr(chunk, "content") and chunk.content:
                         full_response += chunk.content
                         yield _sse({"type": "token", "content": chunk.content})
 
@@ -774,7 +903,7 @@ async def chat_stream(
                         "source_count": 0,
                         "diagnosis": diagnosis.model_dump() if diagnosis else None,
                         "route": "general_chat",
-                        "prompt_profile": "phm_general_v1",
+                        "prompt_profile": _profile().prompt_profile_general,
                         "force_rag": force_rag,
                     },
                 }
@@ -782,21 +911,22 @@ async def chat_stream(
             else:
                 # RAG pipeline via graph streaming
                 from agent.harness import get_agent_harness
+
                 harness = get_agent_harness()
 
                 full_response = ""
                 collected_messages = []
+                # Answer trustworthiness, captured from the generate node's
+                # additional_kwargs (parity with the non-streaming path).
+                gen_confidence = None
+                gen_refused = False
 
                 async for event in harness.astream(
                     request.message,
                     thread_id=session_id,
                     stream_mode=["updates", "custom"],
                 ):
-                    if (
-                        isinstance(event, tuple)
-                        and len(event) == 2
-                        and event[0] == "custom"
-                    ):
+                    if isinstance(event, tuple) and len(event) == 2 and event[0] == "custom":
                         custom_event = event[1]
                         if custom_event.get("type") == "token":
                             token = custom_event.get("content", "")
@@ -810,15 +940,21 @@ async def chat_stream(
                     if isinstance(event, tuple) and len(event) == 2:
                         _, event = event
 
+                    # B2: a combined stream_mode can yield a non-dict payload
+                    # for some modes; guard so .items() never raises and
+                    # aborts the stream mid-generation.
+                    if not isinstance(event, dict):
+                        continue
+
                     for node_name, node_output in event.items():
                         if node_name == "agent":
                             messages = node_output.get("messages", [])
                             if messages:
                                 msg = messages[-1]
-                                if hasattr(msg, 'tool_calls') and msg.tool_calls:
+                                if hasattr(msg, "tool_calls") and msg.tool_calls:
                                     yield _sse({"type": "node", "name": "retrieve"})
                                     yield _sse({"type": "status", "message": "正在检索知识库..."})
-                                elif hasattr(msg, 'content') and msg.content:
+                                elif hasattr(msg, "content") and msg.content:
                                     full_response = msg.content
                                     yield _sse({"type": "status", "message": "正在生成回答..."})
                                     yield _sse({"type": "token", "content": full_response})
@@ -838,12 +974,19 @@ async def chat_stream(
                             yield _sse({"type": "status", "message": "正在生成回答..."})
                             messages = node_output.get("messages", [])
                             if messages:
-                                answer = strip_think_tags(messages[-1].content)
+                                gen_msg = messages[-1]
+                                answer = strip_think_tags(gen_msg.content)
+                                # Capture answer trustworthiness (B4).
+                                ak = getattr(gen_msg, "additional_kwargs", {}) or {}
+                                if ak.get("confidence") is not None:
+                                    gen_confidence = ak.get("confidence")
+                                if ak.get("refused"):
+                                    gen_refused = True
                                 if not full_response:
                                     full_response = answer
                                     yield _sse({"type": "token", "content": answer})
                                 elif answer.startswith(full_response):
-                                    suffix = answer[len(full_response):]
+                                    suffix = answer[len(full_response) :]
                                     if suffix:
                                         full_response = answer
                                         yield _sse({"type": "token", "content": suffix})
@@ -867,8 +1010,13 @@ async def chat_stream(
                         "source_count": len(sources),
                         "diagnosis": diagnosis.model_dump() if diagnosis else None,
                         "route": "rag",
-                        "prompt_profile": "phm_diagnosis_v1",
+                        "prompt_profile": _profile().prompt_profile_generate,
                         "force_rag": force_rag,
+                        # Answer trustworthiness, parity with the non-streaming
+                        # chat() response metadata (B4).
+                        "confidence": gen_confidence,
+                        "confidence_level": _confidence_level(gen_confidence),
+                        "refused": gen_refused,
                     },
                 }
 
@@ -886,5 +1034,5 @@ async def chat_stream(
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
-        }
+        },
     )

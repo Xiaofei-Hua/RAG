@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import os
 import random
-from typing import Any, Dict
+from typing import Any
 
 __all__ = ["should_sample", "DEFAULT_SAMPLE_RATE"]
 
@@ -42,7 +42,7 @@ _rng = random.Random()
 
 
 def should_sample(
-    metadata: Dict[str, Any],
+    metadata: dict[str, Any],
     route: str,
     sample_rate: float = DEFAULT_SAMPLE_RATE,
 ) -> bool:

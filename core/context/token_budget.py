@@ -18,8 +18,6 @@ overhead (default: 25% of the model window).
 
 from __future__ import annotations
 
-from typing import List, Optional, Tuple
-
 from langchain_core.documents import Document
 
 from utils.log_utils import log
@@ -64,11 +62,11 @@ def _model_window() -> int:
 
 
 def build_context_within_budget(
-    documents: List[Document],
+    documents: list[Document],
     question: str = "",
-    context_token_budget: Optional[int] = None,
+    context_token_budget: int | None = None,
     reserve_fraction: float = DEFAULT_CONTEXT_RESERVE_FRACTION,
-) -> Tuple[str, List[Document]]:
+) -> tuple[str, list[Document]]:
     """
     Pack retrieved documents into a context string that fits the token budget.
 
@@ -108,7 +106,7 @@ def build_context_within_budget(
 
     ordered = sorted(documents, key=_score, reverse=True)
 
-    kept: List[Document] = []
+    kept: list[Document] = []
     used = 0
     for doc in ordered:
         chunk = doc.page_content

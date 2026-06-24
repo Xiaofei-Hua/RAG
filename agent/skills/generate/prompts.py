@@ -1,2 +1,5 @@
 """Generate skill prompts (re-exported from core)."""
-from core.prompts.aircraft_prompts import GENERATE_SYSTEM_PROMPT, GENERATE_HUMAN_PROMPT
+
+from core.prompts.aircraft_prompts import GENERATE_HUMAN_PROMPT, GENERATE_SYSTEM_PROMPT
+
+__all__ = ["GENERATE_SYSTEM_PROMPT", "GENERATE_HUMAN_PROMPT"]

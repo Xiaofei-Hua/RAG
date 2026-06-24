@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import sqlite3
-from typing import Dict, List, Optional
 
 from agent.feedback.types import EscalationLevel, EscalationRecord
 from utils.log_utils import log
@@ -34,7 +33,7 @@ class EscalationManager:
         """)
         self._conn.commit()
 
-    def assess_confidence(self, metadata: Dict) -> EscalationLevel:
+    def assess_confidence(self, metadata: dict) -> EscalationLevel:
         has_reasoning = metadata.get("has_reasoning", True)
         answer_length = metadata.get("answer_length", 200)
         has_sources = metadata.get("has_sources", True)
@@ -53,10 +52,9 @@ class EscalationManager:
         level: EscalationLevel,
         session_id: str,
         answer: str = "",
-        context: Dict = None,
+        context: dict = None,
     ) -> EscalationRecord:
         import uuid
-        import json
 
         record = EscalationRecord(
             id=str(uuid.uuid4()),
@@ -82,16 +80,14 @@ class EscalationManager:
         log.warning(f"EscalationManager: created {level.value} escalation {record.id}")
         return record
 
-    def get_pending(self) -> List[EscalationRecord]:
+    def get_pending(self) -> list[EscalationRecord]:
         rows = self._conn.execute(
             "SELECT * FROM escalations WHERE resolved = 0 ORDER BY timestamp DESC"
         ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
     def resolve(self, id: str, resolution: str) -> bool:
-        cursor = self._conn.execute(
-            "UPDATE escalations SET resolved = 1 WHERE id = ?", (id,)
-        )
+        cursor = self._conn.execute("UPDATE escalations SET resolved = 1 WHERE id = ?", (id,))
         self._conn.commit()
         return cursor.rowcount > 0
 
@@ -118,7 +114,7 @@ class EscalationManager:
             pass
 
 
-_escalation_manager: Optional[EscalationManager] = None
+_escalation_manager: EscalationManager | None = None
 
 
 def get_escalation_manager() -> EscalationManager:

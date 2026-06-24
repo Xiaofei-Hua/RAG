@@ -8,9 +8,8 @@ Uses LLM-based structured output for accurate classification.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
@@ -21,30 +20,25 @@ from utils.log_utils import log
 
 class IntentType(str, Enum):
     """User intent classification types."""
-    RAG_QUERY = "rag_query"           # Requires knowledge base retrieval
-    GENERAL_CHAT = "general_chat"     # General conversation
-    DOCUMENT_UPLOAD = "doc_upload"    # Document upload request
-    SYSTEM_COMMAND = "system_cmd"     # System administration
+
+    RAG_QUERY = "rag_query"  # Requires knowledge base retrieval
+    GENERAL_CHAT = "general_chat"  # General conversation
+    DOCUMENT_UPLOAD = "doc_upload"  # Document upload request
+    SYSTEM_COMMAND = "system_cmd"  # System administration
 
 
 class IntentResult(BaseModel):
     """Structured intent classification result."""
-    intent: IntentType = Field(
-        description="Classified intent type"
-    )
+
+    intent: IntentType = Field(description="Classified intent type")
     confidence: float = Field(
-        default=1.0,
-        ge=0.0,
-        le=1.0,
-        description="Classification confidence (0-1)"
+        default=1.0, ge=0.0, le=1.0, description="Classification confidence (0-1)"
     )
-    reasoning: Optional[str] = Field(
-        default=None,
-        description="Brief explanation of the classification"
+    reasoning: str | None = Field(
+        default=None, description="Brief explanation of the classification"
     )
-    suggested_action: Optional[str] = Field(
-        default=None,
-        description="Suggested next action based on intent"
+    suggested_action: str | None = Field(
+        default=None, description="Suggested next action based on intent"
     )
 
     @property
@@ -60,6 +54,7 @@ from core.prompts.aircraft_prompts import INTENT_CLASSIFICATION_PROMPT
 @dataclass
 class IntentClassifierConfig:
     """Configuration for IntentClassifier."""
+
     max_retries: int = 2
     retry_delay: float = 0.5
     timeout: float = 10.0
@@ -80,7 +75,7 @@ class IntentClassifier:
     def __init__(
         self,
         llm: BaseChatModel,
-        config: Optional[IntentClassifierConfig] = None,
+        config: IntentClassifierConfig | None = None,
     ):
         """
         Initialize the intent classifier.
@@ -104,25 +99,23 @@ class IntentClassifier:
             self._chain = prompt | structured_llm
         return self._chain
 
-    # Keyword patterns for fast intent routing (skip LLM)
-    _RAG_KEYWORDS = frozenset([
-        "故障", "排故", "诊断", "维修", "机务", "航材", "工卡", "手册", "告警",
-        "故障码", "振动", "液压", "发动机", "航电", "超限", "温度", "压力",
-        "起落架", "飞控", "空调", "供电", "燃油", "润滑", "密封", "腐蚀",
-        "寿命", "磨损", "裂纹", "泄漏", "异常", "失效", "损伤", "磨损",
-        "检查", "更换", "测试", "排故", "ATA", "ATA章节", "MEL", "工卡",
-        "预测性维护", "健康管理", "状态监测", "趋势", "传感器", "阈值",
-        "排查", "原因", "处理", "如何", "怎么", "什么", "为什么", "哪些",
-        "标准", "参数", "规定", "要求", "程序", "步骤", "流程",
-        "troubleshoot", "fault", "maintenance", "inspection",
-    ])
+    # Keyword patterns for fast intent routing (skip LLM). Sourced from the
+    # active domain profile so the fast-path matches the configured domain
+    # (aviation_phm by default; empty for the general profile, which routes
+    # everything to the LLM classifier instead of a domain keyword match).
+    @property
+    def _RAG_KEYWORDS(self) -> frozenset[str]:
+        from core.prompts.domain_profile import get_active_profile
 
-    _CHAT_KEYWORDS = frozenset([
-        "你好", "谢谢", "再见", "你是谁", "你能做什么", "帮我",
-        "hello", "hi", "thanks", "bye",
-    ])
+        return frozenset(get_active_profile().rag_keywords)
 
-    def _keyword_classify(self, query: str) -> Optional[IntentResult]:
+    @property
+    def _CHAT_KEYWORDS(self) -> frozenset[str]:
+        from core.prompts.domain_profile import get_active_profile
+
+        return frozenset(get_active_profile().chat_keywords)
+
+    def _keyword_classify(self, query: str) -> IntentResult | None:
         """Classify intent via keywords. Returns None if uncertain (fall through to LLM)."""
         text = query.lower()
         if any(kw in text for kw in self._RAG_KEYWORDS):
@@ -173,12 +166,14 @@ class IntentClassifier:
                 if attempt < self.config.max_retries:
                     time.sleep(self.config.retry_delay * (attempt + 1))
                 else:
-                    log.error(f"Intent classification failed, using fallback: {self.config.fallback_intent}")
+                    log.error(
+                        f"Intent classification failed, using fallback: {self.config.fallback_intent}"
+                    )
                     return IntentResult(
                         intent=self.config.fallback_intent,
                         confidence=0.0,
                         reasoning=f"Classification failed: {str(e)}",
-                        suggested_action="Proceed with fallback handling"
+                        suggested_action="Proceed with fallback handling",
                     )
 
         return IntentResult(intent=self.config.fallback_intent, confidence=0.0)
@@ -219,21 +214,24 @@ class IntentClassifier:
 
                 if attempt < self.config.max_retries:
                     import asyncio
+
                     await asyncio.sleep(self.config.retry_delay * (attempt + 1))
                 else:
-                    log.error(f"Intent classification failed, using fallback: {self.config.fallback_intent}")
+                    log.error(
+                        f"Intent classification failed, using fallback: {self.config.fallback_intent}"
+                    )
                     return IntentResult(
                         intent=self.config.fallback_intent,
                         confidence=0.0,
                         reasoning=f"Classification failed: {str(e)}",
-                        suggested_action="Proceed with fallback handling"
+                        suggested_action="Proceed with fallback handling",
                     )
 
         return IntentResult(intent=self.config.fallback_intent, confidence=0.0)
 
 
 # Module-level classifier instance (lazy loaded)
-_classifier_instance: Optional[IntentClassifier] = None
+_classifier_instance: IntentClassifier | None = None
 
 
 def get_intent_classifier() -> IntentClassifier:
@@ -242,6 +240,7 @@ def get_intent_classifier() -> IntentClassifier:
 
     if _classifier_instance is None:
         from models.llm_models import get_llm
+
         _classifier_instance = IntentClassifier(llm=get_llm())
         log.debug("Created new IntentClassifier instance")
 

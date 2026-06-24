@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from langchain_core.documents import Document
 from langchain_core.messages import AIMessage, BaseMessage, ToolMessage
@@ -27,6 +27,7 @@ __all__ = ["RetrieveSkill", "RetrieveSkillConfig"]
 @dataclass
 class RetrieveSkillConfig:
     """Configuration for RetrieveSkill."""
+
     top_k: int = 4
     use_hybrid: bool = True
     max_context_length: int = 2500
@@ -47,8 +48,8 @@ class RetrieveSkill(BaseSkill):
 
     def __init__(
         self,
-        config: Optional[RetrieveSkillConfig] = None,
-        mcp_client: Optional[Any] = None,
+        config: RetrieveSkillConfig | None = None,
+        mcp_client: Any | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -61,6 +62,7 @@ class RetrieveSkill(BaseSkill):
         """Lazy-load the hybrid retriever."""
         if self._retriever is None:
             from core.retrieval.hybrid_retriever import get_hybrid_retriever
+
             self._retriever = get_hybrid_retriever()
         return self._retriever
 
@@ -91,14 +93,11 @@ class RetrieveSkill(BaseSkill):
             documents = self._inject_memories(context, documents)
 
             # Build result messages
-            result_messages = self._build_result_messages(
-                documents, messages, context
-            )
+            result_messages = self._build_result_messages(documents, messages, context)
 
             elapsed = (time.perf_counter() - start) * 1000
             log.info(
-                f"RetrieveSkill: {len(documents)} docs, "
-                f"{elapsed:.0f}ms, query='{query[:50]}...'"
+                f"RetrieveSkill: {len(documents)} docs, {elapsed:.0f}ms, query='{query[:50]}...'"
             )
 
             # Publish mean retrieval relevance + per-doc scores into shared_state
@@ -178,9 +177,7 @@ class RetrieveSkill(BaseSkill):
             documents = self._inject_memories(context, documents)
 
             # Build result messages
-            result_messages = self._build_result_messages(
-                documents, messages, context
-            )
+            result_messages = self._build_result_messages(documents, messages, context)
 
             elapsed = (time.perf_counter() - start) * 1000
             log.info(
@@ -223,7 +220,7 @@ class RetrieveSkill(BaseSkill):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _mean_relevance(documents: List[Document]) -> Optional[float]:
+    def _mean_relevance(documents: list[Document]) -> float | None:
         """Mean of the retrieved documents' ``score`` metadata, if available."""
         scores = [
             float(d.metadata.get("score"))
@@ -237,17 +234,19 @@ class RetrieveSkill(BaseSkill):
     def _retrieve(
         self,
         query: str,
-        filter_expr: Optional[str] = None,
-        transform: Optional[str] = None,
-    ) -> List[Document]:
+        filter_expr: str | None = None,
+        transform: str | None = None,
+    ) -> list[Document]:
         """Perform retrieval using the hybrid retriever (with optional transform)."""
         try:
             if transform == "multi_query":
                 from core.retrieval.query_transform import multi_query_retrieve
 
                 return multi_query_retrieve(
-                    query, self.retriever,
-                    top_k=self._skill_config.top_k, filter_expr=filter_expr,
+                    query,
+                    self.retriever,
+                    top_k=self._skill_config.top_k,
+                    filter_expr=filter_expr,
                 )
             if transform == "hyde":
                 from core.retrieval.query_transform import hyde
@@ -263,7 +262,7 @@ class RetrieveSkill(BaseSkill):
         )
 
     @staticmethod
-    def _extract_transform(context: SkillContext) -> Optional[str]:
+    def _extract_transform(context: SkillContext) -> str | None:
         """Which query transform to apply, if any (from shared_state).
 
         Recognised values: ``"hyde"`` | ``"multi_query"`` | None.
@@ -279,17 +278,19 @@ class RetrieveSkill(BaseSkill):
     async def _aretrieve(
         self,
         query: str,
-        filter_expr: Optional[str] = None,
-        transform: Optional[str] = None,
-    ) -> List[Document]:
+        filter_expr: str | None = None,
+        transform: str | None = None,
+    ) -> list[Document]:
         """Async retrieval with optional query transform."""
         try:
             if transform == "multi_query":
                 from core.retrieval.query_transform import amulti_query_retrieve
 
                 return await amulti_query_retrieve(
-                    query, self.retriever,
-                    top_k=self._skill_config.top_k, filter_expr=filter_expr,
+                    query,
+                    self.retriever,
+                    top_k=self._skill_config.top_k,
+                    filter_expr=filter_expr,
                 )
             if transform == "hyde":
                 from core.retrieval.query_transform import ahyde
@@ -316,6 +317,7 @@ class RetrieveSkill(BaseSkill):
 
         # Check last AI message for tool calls
         from langchain_core.messages import AIMessage
+
         for msg in reversed(messages):
             if isinstance(msg, AIMessage):
                 tool_calls = getattr(msg, "tool_calls", None)
@@ -330,7 +332,7 @@ class RetrieveSkill(BaseSkill):
         return context.question
 
     @staticmethod
-    def _extract_filter(context: SkillContext) -> Optional[str]:
+    def _extract_filter(context: SkillContext) -> str | None:
         """
         Extract an optional Milvus filter expression from shared state.
 
@@ -347,9 +349,7 @@ class RetrieveSkill(BaseSkill):
         return None
 
     @staticmethod
-    def _maybe_expand_parents(
-        context: SkillContext, documents: List[Document]
-    ) -> List[Document]:
+    def _maybe_expand_parents(context: SkillContext, documents: list[Document]) -> list[Document]:
         """
         Optionally expand small-chunk hits to their parent documents.
 
@@ -361,10 +361,7 @@ class RetrieveSkill(BaseSkill):
         shared = getattr(context, "shared_state", None)
         if not shared or not shared.get("expand_parents"):
             return documents
-        if not any(
-            isinstance(d.metadata, dict) and d.metadata.get("parent_id")
-            for d in documents
-        ):
+        if not any(isinstance(d.metadata, dict) and d.metadata.get("parent_id") for d in documents):
             return documents  # nothing to expand
         try:
             from documents.parent_store import expand_to_parents
@@ -375,9 +372,7 @@ class RetrieveSkill(BaseSkill):
             return documents
 
     @staticmethod
-    def _inject_memories(
-        context: SkillContext, documents: List[Document]
-    ) -> List[Document]:
+    def _inject_memories(context: SkillContext, documents: list[Document]) -> list[Document]:
         """
         Prepend long-term memories (enriched by the memory hook) to the
         retrieved documents.
@@ -413,10 +408,7 @@ class RetrieveSkill(BaseSkill):
                 return documents
             # Memories first, then retrieved docs (de-duped by content prefix).
             existing_prefixes = {d.page_content[:80] for d in documents}
-            deduped = [
-                md for md in memory_docs
-                if md.page_content[:80] not in existing_prefixes
-            ]
+            deduped = [md for md in memory_docs if md.page_content[:80] not in existing_prefixes]
             return deduped + documents
         except Exception as e:  # noqa: BLE001
             log.debug(f"memory injection skipped: {e}")
@@ -424,10 +416,10 @@ class RetrieveSkill(BaseSkill):
 
     def _build_result_messages(
         self,
-        documents: List[Document],
-        messages: List[BaseMessage],
+        documents: list[Document],
+        messages: list[BaseMessage],
         context: SkillContext,
-    ) -> List[BaseMessage]:
+    ) -> list[BaseMessage]:
         """
         Build result messages in the format expected by the graph.
 
@@ -440,7 +432,6 @@ class RetrieveSkill(BaseSkill):
             return [AIMessage(content=content)]
 
         # Find the tool_call_id from the last AI message with tool_calls
-        from langchain_core.messages import AIMessage
         tool_call_id = None
         for msg in reversed(messages):
             if isinstance(msg, AIMessage):
@@ -461,7 +452,7 @@ class RetrieveSkill(BaseSkill):
         ]
 
     @staticmethod
-    def _format_documents(documents: List[Document]) -> str:
+    def _format_documents(documents: list[Document]) -> str:
         """
         Format documents into the context string used by GenerateNode.
 
@@ -475,7 +466,7 @@ class RetrieveSkill(BaseSkill):
         return context
 
     @staticmethod
-    def _raw_to_documents(raw_results: list) -> List[Document]:
+    def _raw_to_documents(raw_results: list) -> list[Document]:
         """Convert MCP raw result dicts back to Document objects."""
         documents = []
         for item in raw_results:
@@ -493,7 +484,7 @@ class RetrieveSkill(BaseSkill):
                 documents.append(item)
         return documents
 
-    def health_check(self) -> Dict[str, Any]:
+    def health_check(self) -> dict[str, Any]:
         """Check if retriever is healthy."""
         try:
             retriever = self.retriever

@@ -21,9 +21,9 @@ import hashlib
 import os
 import sqlite3
 import threading
-from typing import Dict, List, Optional
 
 from langchain_core.documents import Document
+
 from utils.log_utils import log
 
 __all__ = [
@@ -79,7 +79,7 @@ class ParentStore:
             )
             self._conn.commit()
 
-    def get(self, parent_id: str) -> Optional[Dict]:
+    def get(self, parent_id: str) -> dict | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM parents WHERE parent_id = ?",
@@ -87,7 +87,7 @@ class ParentStore:
             ).fetchone()
         return dict(row) if row else None
 
-    def get_many(self, parent_ids: List[str]) -> Dict[str, Dict]:
+    def get_many(self, parent_ids: list[str]) -> dict[str, dict]:
         if not parent_ids:
             return {}
         placeholders = ",".join("?" for _ in parent_ids)
@@ -110,7 +110,7 @@ class ParentStore:
                 pass
 
 
-_store: Optional[ParentStore] = None
+_store: ParentStore | None = None
 _store_lock = threading.Lock()
 
 
@@ -132,9 +132,9 @@ def reset_parent_store() -> None:
 
 
 def expand_to_parents(
-    children: List[Document],
-    top_k: Optional[int] = None,
-) -> List[Document]:
+    children: list[Document],
+    top_k: int | None = None,
+) -> list[Document]:
     """
     Expand small-chunk hits to their parent documents.
 
@@ -153,9 +153,9 @@ def expand_to_parents(
         return []
 
     # Group children by parent_id; track the best (max) score per parent.
-    parent_best: Dict[str, float] = {}
-    parent_first: Dict[str, Document] = {}
-    orphans: List[Document] = []
+    parent_best: dict[str, float] = {}
+    parent_first: dict[str, Document] = {}
+    orphans: list[Document] = []
 
     for child in children:
         pid = None
@@ -182,7 +182,7 @@ def expand_to_parents(
 
     # Build parent Documents, sorted by best child score desc.
     ordered_pids = sorted(parent_best, key=lambda p: parent_best[p], reverse=True)
-    expanded: List[Document] = []
+    expanded: list[Document] = []
     for pid in ordered_pids:
         parent = parents.get(pid)
         if not parent:
@@ -193,9 +193,7 @@ def expand_to_parents(
         child_meta["score"] = parent_best[pid]
         child_meta["parent_id"] = pid
         child_meta["expanded_from_child"] = True
-        expanded.append(
-            Document(page_content=parent["content"], metadata=child_meta)
-        )
+        expanded.append(Document(page_content=parent["content"], metadata=child_meta))
 
     # Append orphans (children without parent_id) after parents.
     expanded.extend(orphans)

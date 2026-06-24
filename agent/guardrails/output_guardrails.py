@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from typing import List, Optional
 
 from agent.guardrails.prompts import SAFETY_DISCLAIMER
 from agent.guardrails.types import GuardrailAction, GuardrailConfig, GuardrailResult
@@ -11,7 +10,7 @@ from utils.log_utils import log
 class OutputGuardrail:
     """Validates and post-processes agent responses before they reach the user."""
 
-    def __init__(self, config: Optional[GuardrailConfig] = None):
+    def __init__(self, config: GuardrailConfig | None = None):
         self._config = config or GuardrailConfig()
 
     # ------------------------------------------------------------------
@@ -38,36 +37,50 @@ class OutputGuardrail:
     def _check_structure(self, answer: str) -> GuardrailResult:
         """
         Check that substantive answers (> 50 chars) follow the expected
-        PHM structured format (diagnosis conclusion / troubleshooting steps).
+        structured format for the active domain.
+
+        The expected section markers come from the domain profile's
+        ``section_template``; when the profile defines no sections (e.g. the
+        general profile), this check is a no-op (free-form answers are fine).
         """
         if not self._config.enable_structure_check:
+            return GuardrailResult(action=GuardrailAction.ALLOW)
+
+        from core.prompts.domain_profile import get_active_profile
+
+        profile = get_active_profile()
+        sections = profile.section_template
+        # No section template -> do not enforce structure (general profile).
+        if not sections:
             return GuardrailResult(action=GuardrailAction.ALLOW)
 
         if len(answer) <= 50:
             return GuardrailResult(action=GuardrailAction.ALLOW)
 
-        has_conclusion = "诊断结论" in answer or "排查步骤" in answer or "分析结论" in answer
+        # An answer is "structured" if it contains any expected section marker.
+        has_conclusion = any(f"【{s}】" in answer or s in answer for s in sections[:2])
 
         if has_conclusion:
             return GuardrailResult(action=GuardrailAction.ALLOW)
 
-        # Short / unstructured answer -- append a quality note.
-        quality_note = (
-            "\n\n> 💡 提示: 本回答未包含结构化诊断结论，如需详细排查步骤请进一步描述故障现象。"
-        )
+        # Short / unstructured answer -- append the profile's structure hint
+        # (empty hint => no append, just allow).
+        hint = profile.structure_hint
+        if not hint:
+            return GuardrailResult(action=GuardrailAction.ALLOW)
         return GuardrailResult(
             action=GuardrailAction.SANITIZE,
-            reason="回答缺少结构化诊断内容",
-            sanitized_content=answer + quality_note,
+            reason="回答缺少结构化内容",
+            sanitized_content=answer + hint,
             confidence=0.8,
         )
 
     def _check_hallucination(
         self,
         answer: str,
-        sources: Optional[List[str]] = None,
-        contexts: Optional[List[str]] = None,
-        cached_faith: Optional[float] = None,
+        sources: list[str] | None = None,
+        contexts: list[str] | None = None,
+        cached_faith: float | None = None,
     ) -> GuardrailResult:
         """
         Verify the answer is grounded in the retrieved evidence.
@@ -107,30 +120,21 @@ class OutputGuardrail:
 
                 if faith <= self._config.grounding_escalate_threshold:
                     # Fully unsupported hard claims — escalate.
-                    detail = (
-                        f" ({supported}/{total} grounded)" if supported is not None else ""
-                    )
+                    detail = f" ({supported}/{total} grounded)" if supported is not None else ""
                     return GuardrailResult(
                         action=GuardrailAction.ESCALATE,
-                        reason=(
-                            f"答案硬声明未经检索内容支持 "
-                            f"(faithfulness={faith:.2f}{detail})"
-                        ),
+                        reason=(f"答案硬声明未经检索内容支持 (faithfulness={faith:.2f}{detail})"),
                         confidence=0.8,
                         metadata=meta,
                     )
                 if faith < self._config.grounding_threshold:
                     # Partially unsupported — append a caveat.
                     caveat = (
-                        "\n\n> ⚠️ 提示：本回答部分结论未经手册直接验证，"
-                        "请核对原始资料后再行决策。"
+                        "\n\n> ⚠️ 提示：本回答部分结论未经手册直接验证，请核对原始资料后再行决策。"
                     )
                     return GuardrailResult(
                         action=GuardrailAction.SANITIZE,
-                        reason=(
-                            f"部分硬声明未经支持 "
-                            f"(faithfulness={faith:.2f})"
-                        ),
+                        reason=(f"部分硬声明未经支持 (faithfulness={faith:.2f})"),
                         sanitized_content=answer + caveat,
                         confidence=0.7,
                         metadata=meta,
@@ -175,7 +179,9 @@ class OutputGuardrail:
                 mismatched.append(cited)
 
         if mismatched:
-            log.warning(f"OutputGuardrail: potential hallucination - mismatched sources: {mismatched}")
+            log.warning(
+                f"OutputGuardrail: potential hallucination - mismatched sources: {mismatched}"
+            )
             return GuardrailResult(
                 action=GuardrailAction.ESCALATE,
                 reason=f"回答引用了不存在的来源: {mismatched}",
@@ -192,9 +198,9 @@ class OutputGuardrail:
     def validate(
         self,
         answer: str,
-        sources: Optional[List[str]] = None,
-        contexts: Optional[List[str]] = None,
-        cached_faith: Optional[float] = None,
+        sources: list[str] | None = None,
+        contexts: list[str] | None = None,
+        cached_faith: float | None = None,
     ) -> GuardrailResult:
         """Run all output checks in sequence; return the most restrictive result."""
         # Priority order: BLOCK > ESCALATE > SANITIZE > ALLOW
@@ -221,7 +227,11 @@ class OutputGuardrail:
             worst = result
 
         # 4. PII redaction (P3.1): redact any PII in the answer before it
-        #    reaches the user. Highest priority — always applies.
+        #    reaches the user. Composes with the worst action found so far
+        #    rather than pre-empting it: a hallucinated answer (ESCALATE) that
+        #    also contains PII must STAY ESCALATE *and* be redacted, so the
+        #    served/escalated text never leaks the PII. Previously this branch
+        #    returned early and silently discarded an ESCALATE verdict.
         if self._config.enable_pii_check:
             from agent.guardrails.pii import detect_pii, redact_pii
 
@@ -232,14 +242,25 @@ class OutputGuardrail:
                     f"OutputGuardrail: redacting {len(pii_matches)} PII "
                     f"({', '.join(m.kind for m in pii_matches)})"
                 )
-                # Redaction is a SANITIZE that overrides (always wins).
-                return GuardrailResult(
-                    action=GuardrailAction.SANITIZE,
-                    reason=f"redacted {len(pii_matches)} PII occurrence(s)",
-                    sanitized_content=redacted,
-                    confidence=1.0,
-                    metadata={"pii": [m.kind for m in pii_matches]},
-                )
+                # Attach the redacted content + PII metadata to whichever action
+                # was worst so far. ESCALATE stays ESCALATE (the safety signal
+                # is preserved) but carries the redacted payload; SANITIZE/ALLOW
+                # are promoted to a SANITIZE carrying the redacted text. Either
+                # way the consumer applies `sanitized_content` to the served
+                # message (see GuardrailManager.create_after_hook).
+                pii_meta = {"pii": [m.kind for m in pii_matches]}
+                if worst.action == GuardrailAction.ESCALATE:
+                    worst.sanitized_content = redacted
+                    worst.metadata = {**worst.metadata, **pii_meta}
+                else:
+                    worst = GuardrailResult(
+                        action=GuardrailAction.SANITIZE,
+                        reason=f"redacted {len(pii_matches)} PII occurrence(s)",
+                        sanitized_content=redacted,
+                        confidence=1.0,
+                        metadata=pii_meta,
+                    )
+                answer = redacted  # downstream checks see the redacted text
 
         if worst.action != GuardrailAction.ALLOW:
             log.info(f"OutputGuardrail: {worst.action.value} - {worst.reason}")

@@ -14,19 +14,19 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
-from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
-from agent.skills.base import BaseSkill, SkillContext, SkillResult, SkillStatus
 from agent.context.state import get_last_human_message
+from agent.skills.base import BaseSkill, SkillContext, SkillResult, SkillStatus
 from agent.skills.generate.prompts import (
-    GENERATE_SYSTEM_PROMPT,
     GENERATE_HUMAN_PROMPT,
+    GENERATE_SYSTEM_PROMPT,
 )
+from core.prompts.domain_profile import get_active_profile
 from utils.log_utils import log
 from utils.think_tag_utils import strip_think_tags
 
@@ -36,6 +36,7 @@ __all__ = ["GenerateSkill", "GenerateSkillConfig"]
 @dataclass
 class GenerateSkillConfig:
     """Configuration for GenerateSkill."""
+
     max_retries: int = 2
     retry_delay: float = 1.0
     max_context_length: int = 2500
@@ -54,14 +55,14 @@ class GenerateSkillConfig:
     confidence_w_intent: float = 0.2
 
 
-# Fixed refusal message when retrieval yields no sufficiently-relevant evidence.
-REFUSAL_MESSAGE = (
-    "未在维修手册中找到与该问题直接相关的依据。\n\n"
-    "建议：\n"
-    "1. 提供更多故障现象细节（如故障代码、参数读数、发生工况）；\n"
-    "2. 查阅对应机型的原始维修手册；\n"
-    "3. 联系专业技术人员进一步诊断。"
-)
+# Refusal message when retrieval yields no sufficiently-relevant evidence.
+# Sourced from the active domain profile so it matches the configured domain
+# (aviation refers to 维修手册/故障代码; general is domain-neutral).
+def _refusal_message() -> str:
+    return get_active_profile().refusal_message
+
+
+REFUSAL_MESSAGE = _refusal_message()
 
 
 class GenerateSkill(BaseSkill):
@@ -81,7 +82,7 @@ class GenerateSkill(BaseSkill):
 
     def __init__(
         self,
-        config: Optional[GenerateSkillConfig] = None,
+        config: GenerateSkillConfig | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -92,10 +93,12 @@ class GenerateSkill(BaseSkill):
     def chain(self):
         """Get the generation chain (lazy, cached)."""
         if self._chain is None:
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", self._skill_config.system_prompt),
-                ("human", self._skill_config.human_prompt),
-            ])
+            prompt = ChatPromptTemplate.from_messages(
+                [
+                    ("system", self._skill_config.system_prompt),
+                    ("human", self._skill_config.human_prompt),
+                ]
+            )
             self._chain = prompt | self.llm | StrOutputParser()
         return self._chain
 
@@ -117,10 +120,7 @@ class GenerateSkill(BaseSkill):
                 status=SkillStatus.PARTIAL,
                 messages=[
                     AIMessage(
-                        content=(
-                            "当前知识库中暂无相关文档。请先通过文档管理页面上传"
-                            "排故手册、维修手册等资料，然后再进行提问。"
-                        ),
+                        content=get_active_profile().empty_context_message,
                         additional_kwargs={"confidence": 0.0, "refused": False},
                     )
                 ],
@@ -198,7 +198,7 @@ class GenerateSkill(BaseSkill):
                     except Exception as e:  # noqa: BLE001
                         log.debug(f"self-reflection skipped: {e}")
 
-                extra_kwargs: Dict[str, Any] = {"confidence": confidence}
+                extra_kwargs: dict[str, Any] = {"confidence": confidence}
                 if reasoning:
                     extra_kwargs["reasoning"] = reasoning
 
@@ -227,7 +227,8 @@ class GenerateSkill(BaseSkill):
                         "shared_state": {
                             k: v
                             for k, v in shared_state.items()
-                            if k in (
+                            if k
+                            in (
                                 "retrieved_contexts",
                                 "sources",
                                 "relevance_scores",
@@ -255,9 +256,7 @@ class GenerateSkill(BaseSkill):
                         status=SkillStatus.FAILURE,
                         skill_name=self.name,
                         error=str(e),
-                        messages=[
-                            AIMessage(content="抱歉，生成回答时遇到问题，请稍后重试。")
-                        ],
+                        messages=[AIMessage(content="抱歉，生成回答时遇到问题，请稍后重试。")],
                     )
 
         return SkillResult(
@@ -265,9 +264,7 @@ class GenerateSkill(BaseSkill):
             messages=[AIMessage(content="生成回答失败。")],
         )
 
-    def _grounding_faithfulness(
-        self, answer: str, messages: List[BaseMessage]
-    ) -> Optional[float]:
+    def _grounding_faithfulness(self, answer: str, messages: list[BaseMessage]) -> float | None:
         """
         Best-effort online grounding score for the generated answer.
 
@@ -287,8 +284,8 @@ class GenerateSkill(BaseSkill):
             return None
 
     async def _agrounding_faithfulness(
-        self, answer: str, messages: List[BaseMessage]
-    ) -> Optional[float]:
+        self, answer: str, messages: list[BaseMessage]
+    ) -> float | None:
         """
         Async grounding score: fans out per-claim entailment concurrently so an
         answer with N hard claims does not block the event loop for N sequential
@@ -307,13 +304,13 @@ class GenerateSkill(BaseSkill):
             return None
 
     @staticmethod
-    def _contexts_list(messages: List[BaseMessage]) -> List[str]:
+    def _contexts_list(messages: list[BaseMessage]) -> list[str]:
         """Flatten retrieved chunks from the last message into plain strings."""
         last_message = messages[-1] if messages else None
         if last_message is None:
             return []
         content = last_message.content
-        out: List[str] = []
+        out: list[str] = []
         if isinstance(content, list):
             for item in content:
                 if isinstance(item, dict):
@@ -329,7 +326,7 @@ class GenerateSkill(BaseSkill):
         return out
 
     @staticmethod
-    def _extract_sources_list(messages: List[BaseMessage]) -> List[str]:
+    def _extract_sources_list(messages: list[BaseMessage]) -> list[str]:
         """
         Collect source names from the retrieved chunks in the last message.
 
@@ -341,7 +338,7 @@ class GenerateSkill(BaseSkill):
         if last_message is None:
             return []
         content = last_message.content
-        sources: List[str] = []
+        sources: list[str] = []
         if isinstance(content, list):
             for item in content:
                 if isinstance(item, dict):
@@ -356,6 +353,7 @@ class GenerateSkill(BaseSkill):
     async def aexecute(self, context: SkillContext) -> SkillResult:
         """Generate asynchronously and publish token chunks to LangGraph streams."""
         import asyncio
+
         from langgraph.config import get_stream_writer
 
         start = time.perf_counter()
@@ -370,10 +368,7 @@ class GenerateSkill(BaseSkill):
                 status=SkillStatus.PARTIAL,
                 messages=[
                     AIMessage(
-                        content=(
-                            "当前知识库中暂无相关文档。请先通过文档管理页面上传"
-                            "排故手册、维修手册等资料，然后再进行提问。"
-                        ),
+                        content=get_active_profile().empty_context_message,
                         additional_kwargs={"confidence": 0.0, "refused": False},
                     )
                 ],
@@ -418,9 +413,7 @@ class GenerateSkill(BaseSkill):
         for attempt in range(self._skill_config.max_retries + 1):
             try:
                 chunks: list[str] = []
-                async for chunk in self.chain.astream(
-                    {"question": question, "context": ctx}
-                ):
+                async for chunk in self.chain.astream({"question": question, "context": ctx}):
                     text = str(chunk)
                     if not text:
                         continue
@@ -453,7 +446,8 @@ class GenerateSkill(BaseSkill):
                         "shared_state": {
                             k: v
                             for k, v in shared_state.items()
-                            if k in (
+                            if k
+                            in (
                                 "retrieved_contexts",
                                 "sources",
                                 "relevance_scores",
@@ -475,9 +469,7 @@ class GenerateSkill(BaseSkill):
             except Exception as e:
                 log.warning(f"Async generate attempt {attempt + 1} failed: {e}")
                 if attempt < self._skill_config.max_retries:
-                    await asyncio.sleep(
-                        self._skill_config.retry_delay * (attempt + 1)
-                    )
+                    await asyncio.sleep(self._skill_config.retry_delay * (attempt + 1))
                     continue
                 elapsed = (time.perf_counter() - start) * 1000
                 log.error(f"GenerateSkill async failed ({elapsed:.0f}ms): {e}")
@@ -485,9 +477,7 @@ class GenerateSkill(BaseSkill):
                     status=SkillStatus.FAILURE,
                     skill_name=self.name,
                     error=str(e),
-                    messages=[
-                        AIMessage(content="抱歉，生成回答时遇到问题，请稍后重试。")
-                    ],
+                    messages=[AIMessage(content="抱歉，生成回答时遇到问题，请稍后重试。")],
                 )
 
     # ------------------------------------------------------------------
@@ -502,6 +492,7 @@ class GenerateSkill(BaseSkill):
         """
         try:
             from openai import OpenAI
+
             from utils.env_utils import (
                 LLM_MAX_TOKENS,
                 LLM_MODEL,
@@ -517,9 +508,7 @@ class GenerateSkill(BaseSkill):
             )
 
             system_msg = self._skill_config.system_prompt
-            human_msg = self._skill_config.human_prompt.format(
-                question=question, context=context
-            )
+            human_msg = self._skill_config.human_prompt.format(question=question, context=context)
 
             resp = client.chat.completions.create(
                 model=LLM_MODEL,
@@ -534,7 +523,7 @@ class GenerateSkill(BaseSkill):
 
             msg = resp.choices[0].message
             content = msg.content or ""
-            reasoning = getattr(msg, 'reasoning', '') or ''
+            reasoning = getattr(msg, "reasoning", "") or ""
 
             # Record token usage as an OTel span attribute (P3.5) when OTel
             # is enabled; falls back to a no-op span otherwise.
@@ -571,17 +560,16 @@ class GenerateSkill(BaseSkill):
         sync client doesn't have native async.
         """
         import asyncio
+
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(
-            None, self._invoke_with_reasoning, question, context
-        )
+        return await loop.run_in_executor(None, self._invoke_with_reasoning, question, context)
 
     # ------------------------------------------------------------------
     # Context/question extraction (from GenerateNode)
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _extract_question(messages: List[BaseMessage]) -> str:
+    def _extract_question(messages: list[BaseMessage]) -> str:
         """Extract the user's question from messages."""
         try:
             human_message = get_last_human_message(messages)
@@ -590,7 +578,7 @@ class GenerateSkill(BaseSkill):
             return messages[-1].content if messages else ""
 
     @staticmethod
-    def _extract_context(messages: List[BaseMessage]) -> str:
+    def _extract_context(messages: list[BaseMessage]) -> str:
         """
         Extract context from messages.
 
@@ -607,11 +595,11 @@ class GenerateSkill(BaseSkill):
 
         # If content is a list (tool result format), format via shared layer.
         if isinstance(content, list):
-            from core.retrieval.formatting import FormattedDoc, format_score
+            from core.retrieval.formatting import FormattedDoc
 
             # Build FormattedDocs straight from the list items (they already
             # carry text/source/title/score) and render with the shared format.
-            parts: List[str] = []
+            parts: list[str] = []
             idx = 0
             for item in content:
                 if isinstance(item, dict) and "text" in item:
@@ -667,11 +655,10 @@ class GenerateSkill(BaseSkill):
         if not use_tokens and len(ctx) <= budget_chars:
             return ctx
 
-        kept: List[str] = []
+        kept: list[str] = []
         used_tokens = 0
         used_chars = 0
         for chunk in chunks:
-            piece = "\n\n".join(kept + [chunk]) if kept else chunk
             if use_tokens:
                 cost = estimate_tokens(chunk) + 2  # +2 for the separator
                 if used_tokens + cost > budget_tokens and kept:
@@ -689,14 +676,14 @@ class GenerateSkill(BaseSkill):
             if chunks:
                 head = chunks[0]
                 if use_tokens:
-                    return head[:budget_tokens * 2] + "\n...[内容已按 token 预算截断]"
+                    return head[: budget_tokens * 2] + "\n...[内容已按 token 预算截断]"
                 return head[:budget_chars] + "\n...[内容已截断]"
             return ""
         marker = "...[内容已按 token 预算截断]" if use_tokens else "...[内容已截断]"
         return "\n\n".join(kept) + "\n" + marker
 
     @staticmethod
-    def _extract_relevance_scores(messages: List[BaseMessage]) -> List[float]:
+    def _extract_relevance_scores(messages: list[BaseMessage]) -> list[float]:
         """
         Extract retrieval relevance scores from the last tool/retriever message.
 
@@ -711,7 +698,7 @@ class GenerateSkill(BaseSkill):
         if last_message is None:
             return []
 
-        scores: List[float] = []
+        scores: list[float] = []
         content = last_message.content
 
         if isinstance(content, list):
@@ -724,9 +711,7 @@ class GenerateSkill(BaseSkill):
             scores = parse_relevance_scores(content)
         return scores
 
-    def _should_refuse(
-        self, messages: List[BaseMessage], has_context: bool
-    ) -> bool:
+    def _should_refuse(self, messages: list[BaseMessage], has_context: bool) -> bool:
         """
         Decide whether to refuse answering due to weak retrieval evidence.
 
@@ -744,8 +729,8 @@ class GenerateSkill(BaseSkill):
     def _compute_confidence(
         self,
         shared_state: dict,
-        grounding_faithfulness: Optional[float],
-    ) -> Tuple[float, bool]:
+        grounding_faithfulness: float | None,
+    ) -> tuple[float, bool]:
         """
         Composite confidence in [0, 1] and a 'degraded' flag.
 

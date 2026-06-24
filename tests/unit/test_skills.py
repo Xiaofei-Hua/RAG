@@ -10,6 +10,7 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 from typing import List
@@ -146,7 +147,24 @@ def test_mcp_retrieval_server():
 
 
 # -- Full tests (require LLM) --
+#
+# These hit a live Ollama instance and the singleton harness's real SQLite
+# checkpointer. They are skipped by default (the default unit suite has no
+# Ollama and must not depend on / mutate singleton state). Run them explicitly
+# against a live backend: ``pytest tests/unit/test_skills.py -m requires_ollama``
+import pytest
 
+try:
+    pytest.importorskip  # noqa: B018 — marker availability sanity
+except Exception:  # pragma: no cover
+    pass
+
+_requires_ollama = pytest.mark.requires_ollama
+_ollama_available = bool(os.environ.get("OLLAMA_FULL_TESTS"))
+
+
+@_requires_ollama
+@pytest.mark.skipif(not _ollama_available, reason="needs OLLAMA_FULL_TESTS=1 and a live Ollama")
 def test_full_thinking():
     """Full thinking mode test (requires Ollama)."""
     from agent.harness import get_agent_harness
@@ -161,6 +179,8 @@ def test_full_thinking():
     print(f"  [PASS] full_thinking ({len(messages)} messages)")
 
 
+@_requires_ollama
+@pytest.mark.skipif(not _ollama_available, reason="needs OLLAMA_FULL_TESTS=1 and a live Ollama")
 def test_full_fast():
     """Full fast mode test (requires Ollama)."""
     from agent.harness import get_agent_harness

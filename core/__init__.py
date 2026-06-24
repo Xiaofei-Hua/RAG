@@ -9,10 +9,10 @@ Provides essential components:
 - Distributed tracing
 """
 
-from core.intent.classifier import IntentClassifier, IntentType
-from core.retrieval.hybrid_retriever import HybridRetriever
-from core.memory.redis_memory import RedisSessionMemory
 from core.fallback.circuit_breaker import CircuitBreaker, CircuitState
+from core.intent.classifier import IntentClassifier, IntentType
+from core.memory.redis_memory import RedisSessionMemory
+from core.retrieval.hybrid_retriever import HybridRetriever
 
 __all__ = [
     "IntentClassifier",

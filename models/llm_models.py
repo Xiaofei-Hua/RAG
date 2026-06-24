@@ -19,10 +19,9 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
 
-from langchain_core.language_models import BaseChatModel
 from langchain_core.caches import InMemoryCache
+from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 
 from utils.env_utils import (
@@ -50,6 +49,7 @@ __all__ = [
 # Configuration
 # =============================================================================
 
+
 @dataclass
 class LLMConfig:
     """
@@ -57,6 +57,7 @@ class LLMConfig:
 
     Optimized for low-resource servers with conservative defaults.
     """
+
     # Model settings
     model_name: str = field(default_factory=lambda: LLM_MODEL)
     temperature: float = LLM_TEMPERATURE
@@ -65,8 +66,8 @@ class LLMConfig:
     max_retries: int = LLM_MAX_RETRIES
 
     # API settings
-    api_key: Optional[str] = None
-    base_url: Optional[str] = None
+    api_key: str | None = None
+    base_url: str | None = None
 
     def __post_init__(self):
         if self.api_key is None:
@@ -74,14 +75,15 @@ class LLMConfig:
         if self.base_url is None:
             self.base_url = OPENAI_BASE_URL or "http://localhost:11434/v1"
         if LLM_MODEL is not None:
-            self.model_name = LLM_MODEL 
+            self.model_name = LLM_MODEL
 
 
 @dataclass
 class WebSearchConfig:
     """Configuration for web search tool."""
+
     max_results: int = 2
-    api_key: Optional[str] = None
+    api_key: str | None = None
 
     def __post_init__(self):
         if self.api_key is None:
@@ -93,11 +95,11 @@ class WebSearchConfig:
 # =============================================================================
 
 # Global instances (lazy loaded)
-_llm_instance: Optional[BaseChatModel] = None
+_llm_instance: BaseChatModel | None = None
 _web_search_instance = None
 
 
-def get_llm(config: Optional[LLMConfig] = None) -> BaseChatModel:
+def get_llm(config: LLMConfig | None = None) -> BaseChatModel:
     """
     Get or create the LLM instance.
 
@@ -136,7 +138,7 @@ def get_llm(config: Optional[LLMConfig] = None) -> BaseChatModel:
     return _llm_instance
 
 
-def get_web_search_tool(config: Optional[WebSearchConfig] = None):
+def get_web_search_tool(config: WebSearchConfig | None = None):
     """
     Get or create the web search tool instance.
 
@@ -188,10 +190,9 @@ def reset_web_search():
 # Convenience functions
 # =============================================================================
 
+
 def create_custom_llm(
-    model_name: str = LLM_MODEL,
-    temperature: float = LLM_TEMPERATURE,
-    **kwargs
+    model_name: str = LLM_MODEL, temperature: float = LLM_TEMPERATURE, **kwargs
 ) -> BaseChatModel:
     """
     Create a custom LLM instance with specified parameters.
@@ -206,11 +207,7 @@ def create_custom_llm(
     Returns:
         New ChatOpenAI instance
     """
-    config = LLMConfig(
-        model_name=model_name,
-        temperature=temperature,
-        **kwargs
-    )
+    config = LLMConfig(model_name=model_name, temperature=temperature, **kwargs)
 
     return ChatOpenAI(
         model=config.model_name,

@@ -7,7 +7,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-
 # Explicit process/container environment variables take precedence over `.env`.
 load_dotenv(override=False)
 
@@ -52,9 +51,7 @@ LLM_MAX_RETRIES = _get_int("LLM_MAX_RETRIES", 1)
 
 # Embedding: local path is preferred when it exists; otherwise model ID is used.
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5")
-EMBEDDING_MODEL_PATH = _get_path(
-    "EMBEDDING_MODEL_PATH", "models/local_models/bge-small-zh-v1.5"
-)
+EMBEDDING_MODEL_PATH = _get_path("EMBEDDING_MODEL_PATH", "models/local_models/bge-small-zh-v1.5")
 EMBEDDING_DIMENSION = _get_int("EMBEDDING_DIMENSION", 512)
 EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "cpu")
 EMBEDDING_NORMALIZE = _get_bool("EMBEDDING_NORMALIZE", True)
@@ -62,9 +59,7 @@ EMBEDDING_BATCH_SIZE = _get_int("EMBEDDING_BATCH_SIZE", 8)
 
 # Optional cross-encoder reranker.
 RERANKER_ENABLED = _get_bool("RERANKER_ENABLED", False)
-RERANKER_MODEL = os.getenv(
-    "RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2"
-)
+RERANKER_MODEL = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
 RERANKER_MODEL_PATH = _get_path("RERANKER_MODEL_PATH", "")
 RERANKER_DEVICE = os.getenv("RERANKER_DEVICE", "cpu")
 RERANKER_WARMUP = _get_bool("RERANKER_WARMUP", False)
@@ -87,7 +82,7 @@ COLLECTION_NAME = os.getenv("COLLECTION_NAME", "t_collection01")
 # Switch to HNSW / IVF_FLAT on a standalone Milvus server for tunable
 # recall-vs-latency trade-offs. Index build + search params are JSON env vars.
 MILVUS_INDEX_TYPE = os.getenv("MILVUS_INDEX_TYPE", "AUTOINDEX")
-MILVUS_INDEX_PARAMS = os.getenv("MILVUS_INDEX_PARAMS", "")   # e.g. {"M":16,"efConstruction":200}
+MILVUS_INDEX_PARAMS = os.getenv("MILVUS_INDEX_PARAMS", "")  # e.g. {"M":16,"efConstruction":200}
 MILVUS_SEARCH_PARAMS = os.getenv("MILVUS_SEARCH_PARAMS", "")  # e.g. {"ef":64} or {"nprobe":10}
 
 # PDF ingestion. OCR is opt-in because local OCR engines add non-trivial

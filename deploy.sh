@@ -254,7 +254,10 @@ fi
 cd "$PROJECT_DIR"
 
 info "安装 Python 依赖..."
-uv sync
+# Install with the ocr extra so the standard offline bundle retains PaddleOCR
+# capability. The ocr extra was split out of base deps (F20) so minimal CPU
+# deploys can skip it; the bundle deploy keeps OCR by default.
+uv sync --extra ocr
 ok "Python 依赖安装完成"
 
 # ─── 6. Embedding 模型 ─────────────────────────────────────────────────────

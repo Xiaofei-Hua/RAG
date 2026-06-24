@@ -9,11 +9,11 @@ or one parser cannot handle a page object.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
-from pathlib import Path
 import re
-from typing import List, Optional, Sequence, Tuple
+from collections.abc import Sequence
+from dataclasses import dataclass
+from pathlib import Path
 
 from langchain_core.documents import Document
 
@@ -52,7 +52,7 @@ class PDFPageContent:
     image_count: int = 0
     object_count: int = 0
     asset_path: str = ""
-    ocr_confidence: Optional[float] = None
+    ocr_confidence: float | None = None
 
 
 @dataclass(frozen=True)
@@ -62,7 +62,7 @@ class PDFBlock:
     table_id: str = ""
 
 
-def parse_pdf_to_documents(file_path: str, filename: str) -> List[Document]:
+def parse_pdf_to_documents(file_path: str, filename: str) -> list[Document]:
     """Extract indexable text chunks from a PDF.
 
     The parser prefers pypdfium2 because it is tolerant of image-heavy pages and
@@ -76,13 +76,13 @@ def parse_pdf_to_documents(file_path: str, filename: str) -> List[Document]:
         not _has_enough_text(page.text) for page in pdfium_pages
     )
 
-    pypdf_pages: List[Optional[PDFPageContent]] = []
+    pypdf_pages: list[PDFPageContent | None] = []
     pypdf_errors = 0
     if needs_fallback:
         pypdf_pages, pypdf_errors = _extract_pages_with_pypdf(file_path)
 
     total_pages = max(len(pdfium_pages), len(pypdf_pages))
-    page_contents: List[PDFPageContent] = []
+    page_contents: list[PDFPageContent] = []
     ocr_attempted = 0
     ocr_succeeded = 0
 
@@ -110,7 +110,10 @@ def parse_pdf_to_documents(file_path: str, filename: str) -> List[Document]:
 
         page_contents.append(page)
 
-    table_count = sum(len(_blocks_from_page_text(page.text, page.page_number, count_only=True)) for page in page_contents)
+    table_count = sum(
+        len(_blocks_from_page_text(page.text, page.page_number, count_only=True))
+        for page in page_contents
+    )
 
     stats = PDFExtractionStats(
         total_pages=total_pages,
@@ -152,7 +155,7 @@ def parse_pdf_to_documents(file_path: str, filename: str) -> List[Document]:
             stats.pages_ocr_succeeded,
         )
 
-    documents: List[Document] = []
+    documents: list[Document] = []
     for page in page_contents:
         for block in _blocks_from_page_text(page.text, page.page_number):
             content_type = block.content_type
@@ -181,7 +184,7 @@ def parse_pdf_to_documents(file_path: str, filename: str) -> List[Document]:
     return documents
 
 
-def _extract_pages_with_pdfium(file_path: str) -> Tuple[List[Optional[PDFPageContent]], int]:
+def _extract_pages_with_pdfium(file_path: str) -> tuple[list[PDFPageContent | None], int]:
     try:
         import pypdfium2 as pdfium
         import pypdfium2.raw as pdfium_c
@@ -195,7 +198,7 @@ def _extract_pages_with_pdfium(file_path: str) -> Tuple[List[Optional[PDFPageCon
         log.warning("pypdfium2 failed to open PDF {}: {}", file_path, exc)
         return [], 1
 
-    pages: List[Optional[PDFPageContent]] = []
+    pages: list[PDFPageContent | None] = []
     failed_pages = 0
     try:
         for index in range(len(pdf)):
@@ -218,7 +221,9 @@ def _extract_pages_with_pdfium(file_path: str) -> Tuple[List[Optional[PDFPageCon
             except Exception as exc:
                 failed_pages += 1
                 pages.append(None)
-                log.warning("pypdfium2 failed to extract page {} from {}: {}", index + 1, file_path, exc)
+                log.warning(
+                    "pypdfium2 failed to extract page {} from {}: {}", index + 1, file_path, exc
+                )
             finally:
                 if textpage is not None:
                     textpage.close()
@@ -230,7 +235,7 @@ def _extract_pages_with_pdfium(file_path: str) -> Tuple[List[Optional[PDFPageCon
     return pages, failed_pages
 
 
-def _extract_pages_with_pypdf(file_path: str) -> Tuple[List[Optional[PDFPageContent]], int]:
+def _extract_pages_with_pypdf(file_path: str) -> tuple[list[PDFPageContent | None], int]:
     try:
         from pypdf import PdfReader
     except ImportError as exc:
@@ -243,7 +248,7 @@ def _extract_pages_with_pypdf(file_path: str) -> Tuple[List[Optional[PDFPageCont
         log.warning("pypdf failed to open PDF {}: {}", file_path, exc)
         return [], 1
 
-    pages: List[Optional[PDFPageContent]] = []
+    pages: list[PDFPageContent | None] = []
     failed_pages = 0
     for index, page in enumerate(reader.pages):
         try:
@@ -262,7 +267,7 @@ def _extract_pages_with_pypdf(file_path: str) -> Tuple[List[Optional[PDFPageCont
     return pages, failed_pages
 
 
-def _get_page(pages: Sequence[Optional[PDFPageContent]], index: int) -> Optional[PDFPageContent]:
+def _get_page(pages: Sequence[PDFPageContent | None], index: int) -> PDFPageContent | None:
     if index >= len(pages):
         return None
     return pages[index]
@@ -277,7 +282,7 @@ def _normalize_text(text: str) -> str:
     text = text.replace("\r\n", "\n").replace("\r", "\n")
     lines = [line.strip() for line in text.split("\n")]
 
-    normalized: List[str] = []
+    normalized: list[str] = []
     blank_seen = False
     for line in lines:
         if line:
@@ -295,17 +300,20 @@ def _blocks_from_page_text(
     page_number: int,
     *,
     count_only: bool = False,
-) -> List[PDFBlock]:
+) -> list[PDFBlock]:
     if not text.strip():
         return []
 
     if not PDF_EXTRACT_TABLES:
-        blocks = [PDFBlock(content=_collapse_inline_spaces(part), content_type="text") for part in _split_page_text(text)]
+        blocks = [
+            PDFBlock(content=_collapse_inline_spaces(part), content_type="text")
+            for part in _split_page_text(text)
+        ]
         return [block for block in blocks if block.content]
 
-    blocks: List[PDFBlock] = []
-    text_lines: List[str] = []
-    table_lines: List[str] = []
+    blocks: list[PDFBlock] = []
+    text_lines: list[str] = []
+    table_lines: list[str] = []
     table_index = 0
 
     def flush_text() -> None:
@@ -358,7 +366,7 @@ def _blocks_from_page_text(
     return blocks
 
 
-def _split_page_text(text: str) -> List[str]:
+def _split_page_text(text: str) -> list[str]:
     paragraphs = [part.strip() for part in re.split(r"\n\s*\n+", text) if part.strip()]
     if paragraphs:
         return [_collapse_inline_spaces(part) for part in paragraphs if part.strip()]
@@ -370,7 +378,7 @@ def _looks_like_table_row(line: str) -> bool:
     return len(cells) >= 2 and sum(1 for cell in cells if cell) >= 2
 
 
-def _split_table_row(line: str) -> List[str]:
+def _split_table_row(line: str) -> list[str]:
     if "|" in line:
         return [cell.strip() for cell in line.strip("|").split("|") if cell.strip()]
     if "\t" in line:
@@ -380,7 +388,7 @@ def _split_table_row(line: str) -> List[str]:
     return []
 
 
-def _rows_to_markdown(rows: List[List[str]]) -> str:
+def _rows_to_markdown(rows: list[list[str]]) -> str:
     rows = [row for row in rows if row]
     if not rows:
         return ""
@@ -390,7 +398,9 @@ def _rows_to_markdown(rows: List[List[str]]) -> str:
     separator = ["---"] * width
     body = normalized[1:]
     all_rows = [header, separator, *body]
-    return "\n".join("| " + " | ".join(_escape_markdown_cell(cell) for cell in row) + " |" for row in all_rows)
+    return "\n".join(
+        "| " + " | ".join(_escape_markdown_cell(cell) for cell in row) + " |" for row in all_rows
+    )
 
 
 def _escape_markdown_cell(cell: str) -> str:
@@ -407,8 +417,8 @@ def _extract_page_with_ocr(
     file_path: str,
     page_index: int,
     filename: str,
-    base_page: Optional[PDFPageContent],
-) -> Optional[PDFPageContent]:
+    base_page: PDFPageContent | None,
+) -> PDFPageContent | None:
     try:
         image_path = _render_page_image(file_path, page_index, filename)
         from documents.ocr_engine import extract_text_from_image

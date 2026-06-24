@@ -10,15 +10,13 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
 
-from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
-from agent.skills.base import BaseSkill, SkillContext, SkillResult, SkillStatus
 from agent.context.state import get_last_human_message
+from agent.skills.base import BaseSkill, SkillContext, SkillResult, SkillStatus
 from agent.skills.rewrite.prompts import REWRITE_PROMPT
 from utils.log_utils import log
 from utils.think_tag_utils import strip_think_tags
@@ -29,6 +27,7 @@ __all__ = ["RewriteSkill", "RewriteSkillConfig"]
 @dataclass
 class RewriteSkillConfig:
     """Configuration for RewriteSkill."""
+
     max_retries: int = 2
     retry_delay: float = 1.0
     rewrite_prompt: str = REWRITE_PROMPT
@@ -53,7 +52,7 @@ class RewriteSkill(BaseSkill):
 
     def __init__(
         self,
-        config: Optional[RewriteSkillConfig] = None,
+        config: RewriteSkillConfig | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -64,9 +63,7 @@ class RewriteSkill(BaseSkill):
     def chain(self):
         """Get the rewrite chain (lazy, cached)."""
         if self._chain is None:
-            prompt = ChatPromptTemplate.from_template(
-                self._skill_config.rewrite_prompt
-            )
+            prompt = ChatPromptTemplate.from_template(self._skill_config.rewrite_prompt)
             self._chain = prompt | self.llm | StrOutputParser()
         return self._chain
 
@@ -78,16 +75,11 @@ class RewriteSkill(BaseSkill):
         rewrite_count = context.rewrite_count
         max_rewrites = context.max_rewrites
 
-        log.info(
-            f"RewriteSkill: rewrite ({rewrite_count + 1}/{max_rewrites})"
-        )
+        log.info(f"RewriteSkill: rewrite ({rewrite_count + 1}/{max_rewrites})")
 
         # Safety: check if we've exceeded max rewrites
         if rewrite_count >= max_rewrites:
-            log.warning(
-                f"RewriteSkill: max rewrites reached "
-                f"({rewrite_count}/{max_rewrites})"
-            )
+            log.warning(f"RewriteSkill: max rewrites reached ({rewrite_count}/{max_rewrites})")
             return SkillResult(
                 status=SkillStatus.SKIPPED,
                 next_action="generate",
@@ -100,9 +92,7 @@ class RewriteSkill(BaseSkill):
         # Rewrite with retry
         for attempt in range(self._skill_config.max_retries + 1):
             try:
-                rewritten = self.chain.invoke({
-                    "original_question": original_question
-                })
+                rewritten = self.chain.invoke({"original_question": original_question})
                 rewritten = strip_think_tags(rewritten)
 
                 elapsed = (time.perf_counter() - start) * 1000
@@ -129,8 +119,7 @@ class RewriteSkill(BaseSkill):
                     time.sleep(self._skill_config.retry_delay * (attempt + 1))
                 else:
                     log.error(
-                        f"RewriteSkill failed after "
-                        f"{self._skill_config.max_retries + 1} attempts"
+                        f"RewriteSkill failed after {self._skill_config.max_retries + 1} attempts"
                     )
 
                     if self._skill_config.preserve_original_on_failure:
@@ -144,9 +133,7 @@ class RewriteSkill(BaseSkill):
 
                     return SkillResult(
                         status=SkillStatus.FAILURE,
-                        messages=[
-                            AIMessage(content="查询重写失败，请重新提问。")
-                        ],
+                        messages=[AIMessage(content="查询重写失败，请重新提问。")],
                         state_updates={"rewrite_count": rewrite_count + 1},
                         next_action="generate",
                         error=str(e),
@@ -181,9 +168,7 @@ class RewriteSkill(BaseSkill):
 
         for attempt in range(self._skill_config.max_retries + 1):
             try:
-                rewritten = await self.chain.ainvoke({
-                    "original_question": original_question
-                })
+                rewritten = await self.chain.ainvoke({"original_question": original_question})
                 rewritten = strip_think_tags(rewritten)
 
                 elapsed = (time.perf_counter() - start) * 1000
@@ -207,9 +192,7 @@ class RewriteSkill(BaseSkill):
             except Exception as e:
                 log.warning(f"Async rewrite attempt {attempt + 1} failed: {e}")
                 if attempt < self._skill_config.max_retries:
-                    await asyncio.sleep(
-                        self._skill_config.retry_delay * (attempt + 1)
-                    )
+                    await asyncio.sleep(self._skill_config.retry_delay * (attempt + 1))
                 else:
                     if self._skill_config.preserve_original_on_failure:
                         return SkillResult(
@@ -221,9 +204,7 @@ class RewriteSkill(BaseSkill):
                         )
                     return SkillResult(
                         status=SkillStatus.FAILURE,
-                        messages=[
-                            AIMessage(content="查询重写失败，请重新提问。")
-                        ],
+                        messages=[AIMessage(content="查询重写失败，请重新提问。")],
                         state_updates={"rewrite_count": rewrite_count + 1},
                         next_action="generate",
                         error=str(e),
@@ -241,7 +222,7 @@ class RewriteSkill(BaseSkill):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _extract_question(messages: List[BaseMessage]) -> str:
+    def _extract_question(messages: list[BaseMessage]) -> str:
         """Extract the original question from messages."""
         try:
             return get_last_human_message(messages).content

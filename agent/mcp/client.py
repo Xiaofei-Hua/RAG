@@ -9,11 +9,11 @@ Connects to MCP servers (in-process for now) and provides:
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from langchain_core.tools import BaseTool
 
-from agent.mcp.server import MCPServer, InProcessMCPServer
+from agent.mcp.server import InProcessMCPServer, MCPServer
 from utils.log_utils import log
 
 __all__ = ["MCPClient"]
@@ -36,9 +36,9 @@ class MCPClient:
     """
 
     def __init__(self):
-        self._servers: Dict[str, InProcessMCPServer] = {}
+        self._servers: dict[str, InProcessMCPServer] = {}
         # Reverse index: tool_name -> server_name
-        self._tool_to_server: Dict[str, str] = {}
+        self._tool_to_server: dict[str, str] = {}
 
     # ------------------------------------------------------------------
     # Server management
@@ -65,10 +65,7 @@ class MCPClient:
                 )
             self._tool_to_server[tool_name] = server_name
 
-        log.info(
-            f"MCPClient: added server '{server_name}' "
-            f"({len(server.list_tools())} tools)"
-        )
+        log.info(f"MCPClient: added server '{server_name}' ({len(server.list_tools())} tools)")
 
     def remove_server(self, server_name: str) -> None:
         """Remove a server and its tools from the client."""
@@ -80,11 +77,11 @@ class MCPClient:
             del self._servers[server_name]
             log.info(f"MCPClient: removed server '{server_name}'")
 
-    def get_server(self, server_name: str) -> Optional[InProcessMCPServer]:
+    def get_server(self, server_name: str) -> InProcessMCPServer | None:
         """Get a registered server by name."""
         return self._servers.get(server_name)
 
-    def list_servers(self) -> List[str]:
+    def list_servers(self) -> list[str]:
         """List all registered server names."""
         return list(self._servers.keys())
 
@@ -92,7 +89,7 @@ class MCPClient:
     # Tool lookup and execution
     # ------------------------------------------------------------------
 
-    def get_tool(self, name: str) -> Optional[Dict[str, Any]]:
+    def get_tool(self, name: str) -> dict[str, Any] | None:
         """
         Look up a tool by name across all servers.
 
@@ -117,7 +114,7 @@ class MCPClient:
     async def call_tool(
         self,
         tool_name: str,
-        arguments: Dict[str, Any],
+        arguments: dict[str, Any],
     ) -> Any:
         """
         Execute a tool by name.
@@ -153,7 +150,7 @@ class MCPClient:
         self,
         server_name: str,
         tool_name: str,
-        arguments: Dict[str, Any],
+        arguments: dict[str, Any],
     ) -> Any:
         """
         Execute a tool on a specific server.
@@ -183,20 +180,20 @@ class MCPClient:
     # LangChain integration
     # ------------------------------------------------------------------
 
-    def get_all_tools_as_langchain(self) -> List[BaseTool]:
+    def get_all_tools_as_langchain(self) -> list[BaseTool]:
         """
         Collect LangChain tools from all registered servers.
 
         Returns:
             Combined list of LangChain tools from all servers
         """
-        all_tools: List[BaseTool] = []
+        all_tools: list[BaseTool] = []
         for server in self._servers.values():
             if isinstance(server, MCPServer):
                 all_tools.extend(server.get_tools_as_langchain())
         return all_tools
 
-    def get_server_tools_as_langchain(self, server_name: str) -> List[BaseTool]:
+    def get_server_tools_as_langchain(self, server_name: str) -> list[BaseTool]:
         """
         Get LangChain tools from a specific server.
 
@@ -213,9 +210,9 @@ class MCPClient:
             return server.get_tools_as_langchain()
         return []
 
-    def list_all_tools(self) -> List[Dict[str, Any]]:
+    def list_all_tools(self) -> list[dict[str, Any]]:
         """List all tools from all servers."""
-        all_tools: List[Dict[str, Any]] = []
+        all_tools: list[dict[str, Any]] = []
         for server in self._servers.values():
             all_tools.extend(server.list_tools())
         return all_tools

@@ -14,7 +14,8 @@ Used by the chat router to wrap harness.ainvoke / streaming generation.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Awaitable, Callable, Optional, TypeVar
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
 
 from utils.log_utils import log
 
@@ -30,7 +31,7 @@ class CancelledTaskError(Exception):
 async def cancellable(
     coro: Awaitable[T],
     task_name: str = "task",
-    on_cancel: Optional[Callable[[], None]] = None,
+    on_cancel: Callable[[], None] | None = None,
 ) -> T:
     """
     Await ``coro`` but propagate cancellation cleanly.

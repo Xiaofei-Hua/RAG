@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from langchain_core.messages import AIMessage
 
@@ -25,15 +25,17 @@ __all__ = [
 
 class FallbackMode(str, Enum):
     """Degradation fallback modes."""
-    FULL = "full"              # Normal operation
-    CACHED_ONLY = "cached"     # Use cached responses only
+
+    FULL = "full"  # Normal operation
+    CACHED_ONLY = "cached"  # Use cached responses only
     SIMPLIFIED = "simplified"  # Simplified responses
-    OFFLINE = "offline"        # Minimal offline mode
+    OFFLINE = "offline"  # Minimal offline mode
 
 
 @dataclass
 class DegradationConfig:
     """Configuration for degradation handler."""
+
     default_mode: FallbackMode = FallbackMode.FULL
     cache_ttl: int = 3600  # Cache TTL in seconds
     enable_cache: bool = True
@@ -42,10 +44,11 @@ class DegradationConfig:
 @dataclass
 class CachedResponse:
     """Cached response entry."""
+
     query_hash: str
     response: str
     timestamp: float
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class DegradationHandler:
@@ -59,7 +62,7 @@ class DegradationHandler:
     - Automatic mode switching
     """
 
-    def __init__(self, config: Optional[DegradationConfig] = None):
+    def __init__(self, config: DegradationConfig | None = None):
         """
         Initialize degradation handler.
 
@@ -68,8 +71,8 @@ class DegradationHandler:
         """
         self.config = config or DegradationConfig()
         self._mode = self.config.default_mode
-        self._cache: Dict[str, CachedResponse] = {}
-        self._service_status: Dict[str, bool] = {}
+        self._cache: dict[str, CachedResponse] = {}
+        self._service_status: dict[str, bool] = {}
 
         log.debug(f"DegradationHandler initialized with mode: {self._mode.value}")
 
@@ -100,7 +103,7 @@ class DegradationHandler:
             if self._mode in (FallbackMode.CACHED_ONLY, FallbackMode.SIMPLIFIED):
                 self.mode = FallbackMode.FULL
 
-    def cache_response(self, query: str, response: str, metadata: Optional[Dict] = None):
+    def cache_response(self, query: str, response: str, metadata: dict | None = None):
         """Cache a response for potential fallback."""
         if not self.config.enable_cache:
             return
@@ -118,7 +121,7 @@ class DegradationHandler:
 
         log.debug(f"Cached response for query hash: {query_hash[:8]}...")
 
-    def get_cached_response(self, query: str) -> Optional[str]:
+    def get_cached_response(self, query: str) -> str | None:
         """Get cached response if available and not expired."""
         if not self.config.enable_cache:
             return None
@@ -139,7 +142,7 @@ class DegradationHandler:
 
         return cached.response
 
-    def generate_degraded_response(self, query: str, error: Optional[str] = None) -> AIMessage:
+    def generate_degraded_response(self, query: str, error: str | None = None) -> AIMessage:
         """
         Generate a degraded response based on current mode.
 
@@ -158,9 +161,7 @@ class DegradationHandler:
                 )
 
         if self._mode == FallbackMode.SIMPLIFIED:
-            return AIMessage(
-                content=self._generate_simplified_response(query)
-            )
+            return AIMessage(content=self._generate_simplified_response(query))
 
         if self._mode == FallbackMode.OFFLINE:
             return AIMessage(
@@ -191,24 +192,27 @@ class DegradationHandler:
             return "不客气！如果还有其他问题，随时可以问我。"
 
         if any(word in query_lower for word in ["帮助", "help", "怎么用"]):
-            return ("我可以帮助您：\n"
-                    "1. 回答关于飞机排故和故障分析的技术问题\n"
-                    "2. 查询维修手册和排故程序\n"
-                    "3. 提供故障代码和ATA章节相关建议\n\n"
-                    "请描述您的问题，我会尽力帮助您。")
+            # Help text is sourced from the active domain profile so the
+            # degraded path matches the configured domain (aviation refers
+            # to 排故/手册; general is domain-neutral).
+            from core.prompts.domain_profile import get_active_profile
 
-        return ("感谢您的提问。由于服务暂时受限，我无法提供完整的回答。\n\n"
-                "建议您：\n"
-                "1. 稍后重试\n"
-                "2. 简化问题表述\n"
-                "3. 联系技术支持获取帮助")
+            return get_active_profile().degradation_help
+
+        return (
+            "感谢您的提问。由于服务暂时受限，我无法提供完整的回答。\n\n"
+            "建议您：\n"
+            "1. 稍后重试\n"
+            "2. 简化问题表述\n"
+            "3. 联系技术支持获取帮助"
+        )
 
     def clear_cache(self):
         """Clear all cached responses."""
         self._cache.clear()
         log.info("Degradation cache cleared")
 
-    def get_stats(self) -> Dict[str, Any]:
+    def get_stats(self) -> dict[str, Any]:
         """Get degradation statistics."""
         return {
             "mode": self._mode.value,
@@ -218,7 +222,7 @@ class DegradationHandler:
 
 
 # Module-level instance
-_degradation_handler: Optional[DegradationHandler] = None
+_degradation_handler: DegradationHandler | None = None
 
 
 def get_degradation_handler() -> DegradationHandler:

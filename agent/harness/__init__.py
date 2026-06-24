@@ -9,10 +9,10 @@ Provides the orchestration layer:
 - TraceCollector: Skill-level observability and timing
 """
 
+from agent.harness.lifecycle import HookType, LifecycleHook, LifecycleManager
+from agent.harness.observability import SkillTrace, TraceCollector
 from agent.harness.orchestrator import AgentHarness, HarnessConfig
-from agent.harness.planner import Planner, ExecutionPlan, PlanType
-from agent.harness.lifecycle import LifecycleManager, LifecycleHook, HookType
-from agent.harness.observability import TraceCollector, SkillTrace
+from agent.harness.planner import ExecutionPlan, Planner, PlanType
 
 __all__ = [
     "AgentHarness",
@@ -51,41 +51,49 @@ def _register_hooks(harness: AgentHarness) -> None:
     # Guardrails (priority 1 = runs first)
     try:
         from agent.guardrails import GuardrailManager
+
         gm = GuardrailManager()
         lc.on_before_skill(gm.create_before_hook(), name="guardrail_input", priority=1)
         lc.on_after_skill(gm.create_after_hook(), name="guardrail_output", priority=1)
     except Exception as e:
         from utils.log_utils import log
+
         log.warning(f"Guardrail hooks not registered: {e}")
 
     # Metrics (token tracking + quality signals)
     try:
         from agent.metrics.integration import (
-            create_token_tracking_hook,
             create_quality_tracking_hook,
+            create_token_tracking_hook,
         )
+
         lc.on_after_skill(create_token_tracking_hook(), name="metrics_tokens", priority=50)
         lc.on_after_skill(create_quality_tracking_hook(), name="metrics_quality", priority=50)
     except Exception as e:
         from utils.log_utils import log
+
         log.warning(f"Metrics hooks not registered: {e}")
 
     # Memory (store facts after generate, enrich context before agent)
     try:
         from agent.memory.lifecycle import (
-            create_memory_store_hook,
             create_memory_enrichment_hook,
+            create_memory_store_hook,
         )
+
         lc.on_after_skill(create_memory_store_hook(), name="memory_store", priority=80)
         lc.on_before_skill(create_memory_enrichment_hook(), name="memory_enrich", priority=80)
     except Exception as e:
         from utils.log_utils import log
+
         log.warning(f"Memory hooks not registered: {e}")
 
     # Escalation (confidence-based)
     try:
         from agent.feedback.lifecycle import create_escalation_hook
+
         lc.on_after_skill(create_escalation_hook(), name="escalation", priority=90)
     except Exception as e:
         from utils.log_utils import log
+
         log.warning(f"Escalation hooks not registered: {e}")

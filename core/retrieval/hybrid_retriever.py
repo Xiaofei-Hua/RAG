@@ -9,13 +9,12 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from dataclasses import dataclass
 
 from langchain_core.documents import Document
 
-from documents.milvus_db import MilvusManager, MilvusConfig
 from core.retrieval.bm25_retriever import BM25Retriever
+from documents.milvus_db import MilvusManager
 from utils.env_utils import (
     RERANKER_CANDIDATE_TOP_K,
     RERANKER_ENABLED,
@@ -32,12 +31,14 @@ __all__ = [
 def _retrieval_cache_enabled() -> bool:
     """Env-gated retrieval-result cache (default on)."""
     import os
+
     return os.getenv("RETRIEVAL_CACHE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 
 
 @dataclass
 class HybridRetrieverConfig:
     """Configuration for hybrid retriever."""
+
     # Dense retrieval
     dense_weight: float = 0.5
     dense_top_k: int = RERANKER_CANDIDATE_TOP_K if RERANKER_ENABLED else 5
@@ -66,6 +67,7 @@ class HybridRetrieverConfig:
 @dataclass
 class RetrievalResult:
     """Single retrieval result."""
+
     document: Document
     score: float
     source: str  # "dense", "sparse", or "hybrid"
@@ -91,9 +93,9 @@ class HybridRetriever:
 
     def __init__(
         self,
-        dense_manager: Optional[MilvusManager] = None,
-        sparse_retriever: Optional[BM25Retriever] = None,
-        config: Optional[HybridRetrieverConfig] = None,
+        dense_manager: MilvusManager | None = None,
+        sparse_retriever: BM25Retriever | None = None,
+        config: HybridRetrieverConfig | None = None,
     ):
         """
         Initialize hybrid retriever.
@@ -107,33 +109,74 @@ class HybridRetriever:
         self._dense_manager = dense_manager
         self._sparse_retriever = sparse_retriever
         self._initialized = False
+        # Per-instance executor for the parallel dense/sparse sync legs. The
+        # legacy class-level ThreadPoolExecutor(max_workers=2) was a process-wide
+        # serialization point (2 workers shared across every request); it is now
+        # instance-scoped with a configurable worker count, and shut down in
+        # close() (wired into api.main lifespan shutdown). The async path uses
+        # run_in_executor(None, ...) (default pool) and is intentionally left
+        # unchanged — it is not bottlenecked.
+        import os
+
+        try:
+            workers = max(2, int(os.getenv("RETRIEVAL_PARALLEL_WORKERS", "4")))
+        except (TypeError, ValueError):
+            workers = 4
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=workers)
 
         log.debug(
             f"HybridRetriever created: "
             f"dense_weight={self.config.dense_weight}, "
-            f"sparse_weight={self.config.sparse_weight}"
+            f"sparse_weight={self.config.sparse_weight}, "
+            f"parallel_workers={workers}"
         )
+
+    def close(self) -> None:
+        """Release the parallel-retrieval thread pool. Idempotent."""
+        ex = getattr(self, "_executor", None)
+        if ex is not None:
+            try:
+                ex.shutdown(wait=False)
+            except Exception:  # noqa: BLE001
+                pass
 
     @property
     def dense_manager(self) -> MilvusManager:
         """Get dense retriever (lazy initialization)."""
         if self._dense_manager is None:
             from documents.milvus_db import get_milvus_manager
+
             self._dense_manager = get_milvus_manager()
         return self._dense_manager
 
     @property
     def sparse_retriever(self) -> BM25Retriever:
-        """Get sparse retriever (lazy initialization, auto-synced from Milvus)."""
+        """Get the shared BM25 singleton (auto-synced from Milvus on cold start).
+
+        Returns the process-wide ``get_bm25_retriever()`` singleton — the same
+        instance the documents router writes to on add/remove. This closes the
+        historical divergence where the hybrid retriever built its own
+        ``BM25Retriever()`` instance that never saw runtime document mutations.
+        """
         if self._sparse_retriever is None:
-            self._sparse_retriever = BM25Retriever()
+            from core.retrieval.bm25_retriever import get_bm25_retriever
+
+            self._sparse_retriever = get_bm25_retriever()
         self._ensure_sparse_indexed()
         return self._sparse_retriever
 
     def _ensure_sparse_indexed(self) -> None:
-        """Load documents from Milvus into BM25 if the index is empty."""
+        """Bootstrap the shared BM25 singleton from Milvus on cold start only.
+
+        The singleton is incrementally maintained by the documents write path
+        (add/remove call ``add_documents``/``remove_by_source`` on it directly),
+        so once it has an index we never re-bootstrap — its own
+        ``_index_built``/``_documents`` flags are authoritative. This only runs
+        on a cold process (or after an explicit ``clear()``) to hydrate BM25
+        from the durable Milvus store.
+        """
         if self._sparse_retriever._index_built and self._sparse_retriever._documents:
-            return  # Already indexed
+            return  # Singleton already holds an index maintained by the write path.
         try:
             results = self.dense_manager.query(
                 filter_expr="id > 0",
@@ -158,12 +201,59 @@ class HybridRetriever:
         except Exception as e:
             log.debug(f"BM25 Milvus sync skipped (collection may not exist): {e}")
 
+    # ------------------------------------------------------------------
+    # Cache helpers (F19 — single source of truth for version folding +
+    # deepcopy placement, so the sync and async retrieve paths cannot drift)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _cache_key_for(query: str, filter_expr: str | None, top_k: int) -> str:
+        """Build the versioned retrieval cache key (single source)."""
+        from core.retrieval.cache import cache_key, get_retrieval_cache_version
+
+        return cache_key(
+            "hybrid",
+            query,
+            filter_expr or "",
+            top_k,
+            get_retrieval_cache_version(),
+        )
+
+    @staticmethod
+    def _cache_get(key: str) -> list[Document] | None:
+        """Read-through cache helper. Returns None on any failure (degrade to
+        live retrieval — never break the path over caching)."""
+        if not _retrieval_cache_enabled():
+            return None
+        try:
+            from core.retrieval.cache import get_retrieval_cache
+
+            return get_retrieval_cache().get(key)
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"retrieval cache read skipped: {e}")
+            return None
+
+    @staticmethod
+    def _cache_put(key: str, documents: list[Document]) -> None:
+        """Write cache helper. Deep-copies so downstream mutations to the
+        returned Document objects do not corrupt the cached entry."""
+        if not _retrieval_cache_enabled():
+            return
+        try:
+            import copy
+
+            from core.retrieval.cache import get_retrieval_cache
+
+            get_retrieval_cache().put(key, copy.deepcopy(documents))
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"retrieval cache write skipped: {e}")
+
     def retrieve(
         self,
         query: str,
-        top_k: Optional[int] = None,
-        filter_expr: Optional[str] = None,
-    ) -> List[Document]:
+        top_k: int | None = None,
+        filter_expr: str | None = None,
+    ) -> list[Document]:
         """
         Perform hybrid retrieval synchronously.
 
@@ -182,17 +272,14 @@ class HybridRetriever:
         # Result cache: identical (query, filter, top_k) returns instantly.
         # The cache is best-effort; on any failure we fall through to live
         # retrieval (never break the path over caching).
-        if _retrieval_cache_enabled():
-            try:
-                from core.retrieval.cache import get_retrieval_cache, cache_key
-                key = cache_key("hybrid", query, filter_expr or "", top_k)
-                cached = get_retrieval_cache().get(key)
-                if cached is not None:
-                    log.debug(f"Hybrid retrieval cache HIT (key={key[:8]})")
-                    return cached
-            except Exception as e:  # noqa: BLE001
-                log.debug(f"retrieval cache read skipped: {e}")
-        cache_key_str = None
+        # Result cache: identical (query, filter, top_k, version) returns
+        # instantly. Version-folding + read are centralised in _cache_get /
+        # _cache_key_for so sync and async cannot drift.
+        cache_key_str = self._cache_key_for(query, filter_expr, top_k)
+        cached = self._cache_get(cache_key_str)
+        if cached is not None:
+            log.debug(f"Hybrid retrieval cache HIT (key={cache_key_str[:8]})")
+            return cached
 
         try:
             # Perform retrievals
@@ -217,18 +304,9 @@ class HybridRetriever:
                 f"final={len(documents)}, elapsed={elapsed:.1f}ms"
             )
 
-            # Persist into the result cache. We deep-copy so downstream
-            # mutations to the returned Document objects (e.g. retrieve skill
-            # injecting memory metadata) do not corrupt the cached entry — a
-            # shallow list copy would share element refs and leak mutations.
-            if _retrieval_cache_enabled():
-                try:
-                    import copy
-                    from core.retrieval.cache import get_retrieval_cache, cache_key as _ck
-                    cache_key_str = _ck("hybrid", query, filter_expr or "", top_k)
-                    get_retrieval_cache().put(cache_key_str, copy.deepcopy(documents))
-                except Exception as e:  # noqa: BLE001
-                    log.debug(f"retrieval cache write skipped: {e}")
+            # Persist into the result cache (deep-copy + version folded in the
+            # shared _cache_put helper so sync/async cannot drift).
+            self._cache_put(cache_key_str, documents)
 
             return documents
 
@@ -244,9 +322,9 @@ class HybridRetriever:
     async def aretrieve(
         self,
         query: str,
-        top_k: Optional[int] = None,
-        filter_expr: Optional[str] = None,
-    ) -> List[Document]:
+        top_k: int | None = None,
+        filter_expr: str | None = None,
+    ) -> list[Document]:
         """
         Perform hybrid retrieval asynchronously.
 
@@ -261,26 +339,17 @@ class HybridRetriever:
         top_k = top_k or self.config.final_top_k
         start_time = time.perf_counter()
 
-        # Result cache (parity with the sync path).
-        if _retrieval_cache_enabled():
-            try:
-                from core.retrieval.cache import get_retrieval_cache, cache_key
-                key = cache_key("hybrid", query, filter_expr or "", top_k)
-                cached = get_retrieval_cache().get(key)
-                if cached is not None:
-                    log.debug(f"Async hybrid retrieval cache HIT (key={key[:8]})")
-                    return cached
-            except Exception as e:  # noqa: BLE001
-                log.debug(f"retrieval cache read skipped: {e}")
+        # Result cache (parity with the sync path via the shared helpers).
+        cache_key_str = self._cache_key_for(query, filter_expr, top_k)
+        cached = self._cache_get(cache_key_str)
+        if cached is not None:
+            log.debug(f"Async hybrid retrieval cache HIT (key={cache_key_str[:8]})")
+            return cached
 
         try:
             # Parallel async retrieval
-            dense_task = asyncio.create_task(
-                self._adense_retrieve(query, filter_expr)
-            )
-            sparse_task = asyncio.create_task(
-                self._asparse_retrieve(query)
-            )
+            dense_task = asyncio.create_task(self._adense_retrieve(query, filter_expr))
+            sparse_task = asyncio.create_task(self._asparse_retrieve(query))
 
             dense_results, sparse_results = await asyncio.gather(
                 dense_task, sparse_task, return_exceptions=True
@@ -303,20 +372,11 @@ class HybridRetriever:
             documents = await self._ammr(query, documents, top_k)
 
             elapsed = (time.perf_counter() - start_time) * 1000
-            log.info(
-                f"Async hybrid retrieval: "
-                f"final={len(documents)}, elapsed={elapsed:.1f}ms"
-            )
+            log.info(f"Async hybrid retrieval: final={len(documents)}, elapsed={elapsed:.1f}ms")
 
-            if _retrieval_cache_enabled():
-                try:
-                    import copy
-                    from core.retrieval.cache import get_retrieval_cache, cache_key as _ck
-                    ckey = _ck("hybrid", query, filter_expr or "", top_k)
-                    # Deep-copy to insulate the cache from downstream mutations.
-                    get_retrieval_cache().put(ckey, copy.deepcopy(documents))
-                except Exception as e:  # noqa: BLE001
-                    log.debug(f"retrieval cache write skipped: {e}")
+            # Persist into the result cache via the shared helper (deep-copy +
+            # version folded in one place).
+            self._cache_put(cache_key_str, documents)
 
             return documents
 
@@ -324,9 +384,7 @@ class HybridRetriever:
             log.error(f"Async hybrid retrieval failed: {e}")
             return []
 
-    def _dense_retrieve(
-        self, query: str, filter_expr: Optional[str] = None
-    ) -> List[RetrievalResult]:
+    def _dense_retrieve(self, query: str, filter_expr: str | None = None) -> list[RetrievalResult]:
         """Perform dense (vector) retrieval, optionally pre-filtered."""
         try:
             results = self.dense_manager.search(
@@ -348,7 +406,7 @@ class HybridRetriever:
             log.warning(f"Dense retrieval failed: {e}")
             return []
 
-    def _sparse_retrieve(self, query: str) -> List[RetrievalResult]:
+    def _sparse_retrieve(self, query: str) -> list[RetrievalResult]:
         """Perform sparse (BM25) retrieval."""
         try:
             return self.sparse_retriever.retrieve(query, self.config.sparse_top_k)
@@ -357,23 +415,23 @@ class HybridRetriever:
             return []
 
     async def _adense_retrieve(
-        self, query: str, filter_expr: Optional[str] = None
-    ) -> List[RetrievalResult]:
+        self, query: str, filter_expr: str | None = None
+    ) -> list[RetrievalResult]:
         """Async dense retrieval."""
         return await asyncio.get_running_loop().run_in_executor(
             None, self._dense_retrieve, query, filter_expr
         )
 
-    async def _asparse_retrieve(self, query: str) -> List[RetrievalResult]:
+    async def _asparse_retrieve(self, query: str) -> list[RetrievalResult]:
         """Async sparse retrieval."""
         return await asyncio.get_running_loop().run_in_executor(None, self._sparse_retrieve, query)
 
     def _rerank(
         self,
         query: str,
-        documents: List[Document],
+        documents: list[Document],
         top_k: int,
-    ) -> List[Document]:
+    ) -> list[Document]:
         """Optionally apply a cross-encoder after RRF fusion."""
         if not self.config.enable_reranker:
             return documents[:top_k]
@@ -385,9 +443,9 @@ class HybridRetriever:
     async def _arerank(
         self,
         query: str,
-        documents: List[Document],
+        documents: list[Document],
         top_k: int,
-    ) -> List[Document]:
+    ) -> list[Document]:
         """Async counterpart of the optional cross-encoder stage."""
         if not self.config.enable_reranker:
             return documents[:top_k]
@@ -396,7 +454,7 @@ class HybridRetriever:
 
         return await get_reranker().arerank(query, documents, top_k=top_k)
 
-    def _time_decay(self, documents: List[Document]) -> List[Document]:
+    def _time_decay(self, documents: list[Document]) -> list[Document]:
         """Apply gentle time-decay scoring (P3.7). No-op without timestamps."""
         if not documents:
             return documents
@@ -411,9 +469,9 @@ class HybridRetriever:
     def _mmr(
         self,
         query: str,
-        documents: List[Document],
+        documents: list[Document],
         top_k: int,
-    ) -> List[Document]:
+    ) -> list[Document]:
         """
         Optional MMR de-redundancy stage.
 
@@ -427,9 +485,7 @@ class HybridRetriever:
         from core.retrieval.mmr import mmr_rerank
 
         try:
-            return mmr_rerank(
-                query, documents, top_k=top_k, lambda_=self.config.mmr_lambda
-            )
+            return mmr_rerank(query, documents, top_k=top_k, lambda_=self.config.mmr_lambda)
         except Exception as e:  # noqa: BLE001
             log.debug(f"MMR skipped: {e}")
             return documents[:top_k]
@@ -437,21 +493,18 @@ class HybridRetriever:
     async def _ammr(
         self,
         query: str,
-        documents: List[Document],
+        documents: list[Document],
         top_k: int,
-    ) -> List[Document]:
+    ) -> list[Document]:
         """Async counterpart of the MMR stage (offloads to executor)."""
         if not self.config.enable_mmr or len(documents) <= 1:
             return documents[:top_k]
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._mmr, query, documents, top_k)
 
-    # Shared thread pool for parallel retrieval
-    _executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
-
     def _parallel_retrieve(
-        self, query: str, filter_expr: Optional[str] = None
-    ) -> Tuple[List[RetrievalResult], List[RetrievalResult]]:
+        self, query: str, filter_expr: str | None = None
+    ) -> tuple[list[RetrievalResult], list[RetrievalResult]]:
         """Perform parallel retrieval using threads."""
         dense_future = self._executor.submit(self._dense_retrieve, query, filter_expr)
         sparse_future = self._executor.submit(self._sparse_retrieve, query)
@@ -459,9 +512,9 @@ class HybridRetriever:
 
     def _rrf_fusion(
         self,
-        dense_results: List[RetrievalResult],
-        sparse_results: List[RetrievalResult],
-    ) -> List[RetrievalResult]:
+        dense_results: list[RetrievalResult],
+        sparse_results: list[RetrievalResult],
+    ) -> list[RetrievalResult]:
         """
         Reciprocal Rank Fusion (RRF) to combine retrieval results.
 
@@ -475,7 +528,7 @@ class HybridRetriever:
             Fused and ranked results
         """
         # Build document ID to result mapping
-        doc_scores: Dict[str, Tuple[float, RetrievalResult]] = {}
+        doc_scores: dict[str, tuple[float, RetrievalResult]] = {}
 
         # Process dense results
         for result in dense_results:
@@ -500,11 +553,7 @@ class HybridRetriever:
                 doc_scores[doc_id] = (rrf_score, result)
 
         # Sort by combined score
-        sorted_results = sorted(
-            doc_scores.values(),
-            key=lambda x: x[0],
-            reverse=True
-        )
+        sorted_results = sorted(doc_scores.values(), key=lambda x: x[0], reverse=True)
 
         # Create final results with updated scores
         fused_results = []
@@ -526,18 +575,23 @@ class HybridRetriever:
         return fused_results
 
     def _get_doc_id(self, document: Document) -> str:
-        """Generate unique ID for document deduplication."""
-        # Use content hash as ID
+        """Generate unique ID for document deduplication.
+
+        Hashes the full ``page_content`` (not just a prefix) so that two chunks
+        sharing a long boilerplate header — common in aviation manuals — are not
+        collapsed into one RRF entry and silently dropped from fusion.
+        """
         import hashlib
-        content = document.page_content[:500]  # Use first 500 chars
+
+        content = document.page_content
         return hashlib.md5(content.encode()).hexdigest()[:16]
 
 
 # Module-level instance
-_hybrid_retriever: Optional[HybridRetriever] = None
+_hybrid_retriever: HybridRetriever | None = None
 
 
-def get_hybrid_retriever(config: Optional[HybridRetrieverConfig] = None) -> HybridRetriever:
+def get_hybrid_retriever(config: HybridRetrieverConfig | None = None) -> HybridRetriever:
     """Get or create hybrid retriever instance."""
     global _hybrid_retriever
     if _hybrid_retriever is None or config is not None:

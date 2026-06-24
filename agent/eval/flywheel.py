@@ -18,11 +18,10 @@ flywheel failure never blocks feedback submission.
 
 from __future__ import annotations
 
-import json
 import sqlite3
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 from agent.eval.candidates import promote_to_candidate
 from agent.eval.inference_store import InferenceRecord, get_inference_store
@@ -124,7 +123,7 @@ def on_negative_feedback(
     message_id: str,
     feedback_type: str,
     corrected_answer: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Flywheel entry point. Called after a negative-feedback row is written.
 
@@ -136,7 +135,7 @@ def on_negative_feedback(
 
     Returns a small summary dict (always populated, even on failure).
     """
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "promoted": False,
         "judge_run": False,
         "miss_recorded": False,

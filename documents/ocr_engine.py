@@ -6,9 +6,9 @@ only when enabled so lightweight deployments do not pay the import/model cost.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import os
-from typing import Any, List, Optional
+from dataclasses import dataclass
+from typing import Any
 
 from utils.env_utils import PDF_OCR_ENGINE, PDF_OCR_LANG
 from utils.log_utils import log
@@ -21,7 +21,7 @@ class OCRUnavailableError(RuntimeError):
 @dataclass(frozen=True)
 class OCRResult:
     text: str
-    confidence: Optional[float] = None
+    confidence: float | None = None
 
 
 _engine: object | None = None
@@ -82,8 +82,8 @@ def _run_paddleocr(engine: Any, image_path: str) -> Any:
 
 
 def _parse_paddleocr_result(raw_result: Any) -> OCRResult:
-    lines: List[str] = []
-    confidences: List[float] = []
+    lines: list[str] = []
+    confidences: list[float] = []
 
     for page_result in _iter_result_pages(raw_result):
         if isinstance(page_result, dict):
@@ -116,7 +116,7 @@ def _parse_paddleocr_result(raw_result: Any) -> OCRResult:
     return OCRResult(text="\n".join(lines).strip(), confidence=confidence)
 
 
-def _iter_result_pages(raw_result: Any) -> List[Any]:
+def _iter_result_pages(raw_result: Any) -> list[Any]:
     if raw_result is None:
         return []
     if isinstance(raw_result, dict):
@@ -128,8 +128,8 @@ def _iter_result_pages(raw_result: Any) -> List[Any]:
 
 def _extract_with_tesseract(image_path: str) -> OCRResult:
     try:
-        from PIL import Image
         import pytesseract
+        from PIL import Image
     except ImportError as exc:
         raise OCRUnavailableError(
             "pytesseract and Pillow are required for PDF_OCR_ENGINE=tesseract."

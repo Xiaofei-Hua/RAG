@@ -28,9 +28,7 @@ versions, so existing prompts and tests are unaffected.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
-
-from langchain_core.documents import Document
+from typing import Any
 
 __all__ = [
     "FormattedDoc",
@@ -43,12 +41,13 @@ __all__ = [
 @dataclass
 class FormattedDoc:
     """Structured view of one formatted evidence chunk."""
+
     index: int  # 1-based
     source: str
     title: str
-    score: Optional[float]
+    score: float | None
     content: str
-    metadata: Dict[str, Any] = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     @property
     def score_text(self) -> str:
@@ -57,8 +56,7 @@ class FormattedDoc:
     def to_evidence_line(self) -> str:
         """Render the ``[证据N] 来源=... | 标题=... | 相关度=...`` header line."""
         return (
-            f"[证据{self.index}] 来源={self.source} | "
-            f"标题={self.title} | 相关度={self.score_text}"
+            f"[证据{self.index}] 来源={self.source} | 标题={self.title} | 相关度={self.score_text}"
         )
 
 
@@ -69,7 +67,7 @@ def format_score(score: Any) -> str:
     return "N/A"
 
 
-def _doc_fields(doc: Any, idx: int, defaults: Dict[str, str]) -> FormattedDoc:
+def _doc_fields(doc: Any, idx: int, defaults: dict[str, str]) -> FormattedDoc:
     """Extract the common fields from a Document-like object."""
     text = doc.page_content.strip() if hasattr(doc, "page_content") else str(doc).strip()
     meta = getattr(doc, "metadata", None) or {}
@@ -84,9 +82,9 @@ def _doc_fields(doc: Any, idx: int, defaults: Dict[str, str]) -> FormattedDoc:
 
 
 def format_documents(
-    documents: List[Any],
-    defaults: Optional[Dict[str, str]] = None,
-) -> Tuple[str, List[FormattedDoc]]:
+    documents: list[Any],
+    defaults: dict[str, str] | None = None,
+) -> tuple[str, list[FormattedDoc]]:
     """
     Format a list of documents into the shared evidence-context string.
 
@@ -105,8 +103,8 @@ def format_documents(
     implementations produced, so prompts/tests are unaffected.
     """
     dv = defaults or {}
-    parts: List[str] = []
-    formatted: List[FormattedDoc] = []
+    parts: list[str] = []
+    formatted: list[FormattedDoc] = []
     out_idx = 0
     for doc in documents:
         fields = _doc_fields(doc, out_idx + 1, dv)
@@ -118,7 +116,7 @@ def format_documents(
     return "\n\n".join(parts), formatted
 
 
-def parse_relevance_scores(context: str) -> List[float]:
+def parse_relevance_scores(context: str) -> list[float]:
     """
     Extract the ``相关度=X`` scores from a formatted evidence-context string.
 
@@ -128,7 +126,7 @@ def parse_relevance_scores(context: str) -> List[float]:
     """
     import re
 
-    scores: List[float] = []
+    scores: list[float] = []
     for m in re.finditer(r"相关度=([\d.]+)", context):
         try:
             scores.append(float(m.group(1)))

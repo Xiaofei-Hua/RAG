@@ -4,8 +4,6 @@ Feedback and Escalation API Endpoints
 
 from __future__ import annotations
 
-from typing import Optional
-
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
@@ -17,7 +15,9 @@ router = APIRouter()
 class FeedbackRequest(BaseModel):
     session_id: str = Field(..., description="Session ID")
     message_id: str = Field("", description="Message ID being feedbacked on")
-    trace_id: str = Field("", description="Trace ID linking to the captured inference (for the eval flywheel)")
+    trace_id: str = Field(
+        "", description="Trace ID linking to the captured inference (for the eval flywheel)"
+    )
     feedback_type: str = Field(..., description="THUMBS_UP, THUMBS_DOWN, CORRECTION, FLAG")
     content: str = Field("", description="Feedback text")
     original_answer: str = Field("", description="Original answer (for corrections)")
@@ -58,10 +58,9 @@ async def submit_feedback(request: FeedbackRequest):
         try:
             from agent.memory.extractor import MemoryExtractor
             from agent.memory.store import get_memory_store
+
             extractor = MemoryExtractor()
-            mem = extractor.extract_correction(
-                request.original_answer, request.corrected_answer
-            )
+            mem = extractor.extract_correction(request.original_answer, request.corrected_answer)
             get_memory_store().store(mem)
         except Exception as e:
             log.warning(f"Failed to store correction in memory: {e}")
@@ -90,6 +89,7 @@ async def submit_feedback(request: FeedbackRequest):
 async def feedback_stats():
     """Get aggregate feedback statistics."""
     from agent.feedback.collector import get_feedback_collector
+
     return get_feedback_collector().get_stats()
 
 
@@ -97,6 +97,7 @@ async def feedback_stats():
 async def pending_escalations():
     """List pending escalations (admin)."""
     from agent.feedback.escalation import get_escalation_manager
+
     mgr = get_escalation_manager()
     records = mgr.get_pending()
     return {
@@ -138,6 +139,7 @@ async def get_feedback(session_id: str):
 async def resolve_escalation(escalation_id: str, request: ResolveEscalationRequest):
     """Resolve an escalation."""
     from agent.feedback.escalation import get_escalation_manager
+
     mgr = get_escalation_manager()
     ok = mgr.resolve(escalation_id, request.resolution)
     if not ok:

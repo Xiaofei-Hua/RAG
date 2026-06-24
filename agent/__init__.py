@@ -21,12 +21,15 @@ __all__ = [
     "SkillRegistry",
 ]
 
+
 # Lazy import to avoid circular dependencies
 def __getattr__(name: str):
     if name == "AgentHarness":
         from agent.harness.orchestrator import AgentHarness
+
         return AgentHarness
     if name == "HarnessConfig":
         from agent.harness.orchestrator import HarnessConfig
+
         return HarnessConfig
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

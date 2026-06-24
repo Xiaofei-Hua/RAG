@@ -6,7 +6,7 @@ Provides centralized error handling and response formatting.
 
 from __future__ import annotations
 
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import Request, Response
 from fastapi.responses import JSONResponse
@@ -40,5 +40,5 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
                         "message": str(e),
                         "trace_id": trace_id,
                     }
-                }
+                },
             )

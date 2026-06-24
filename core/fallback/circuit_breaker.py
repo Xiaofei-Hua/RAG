@@ -13,9 +13,10 @@ States:
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from collections.abc import Callable
+from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Dict, Optional, TypeVar
+from typing import Any, TypeVar
 
 from utils.log_utils import log
 
@@ -30,34 +31,38 @@ T = TypeVar("T")
 
 class CircuitState(str, Enum):
     """Circuit breaker states."""
-    CLOSED = "closed"        # Normal operation
-    OPEN = "open"            # Failing fast
+
+    CLOSED = "closed"  # Normal operation
+    OPEN = "open"  # Failing fast
     HALF_OPEN = "half_open"  # Testing recovery
 
 
 class CircuitBreakerError(Exception):
     """Raised when circuit is open."""
+
     pass
 
 
 @dataclass
 class CircuitStats:
     """Circuit breaker statistics."""
+
     total_calls: int = 0
     successful_calls: int = 0
     failed_calls: int = 0
-    last_failure_time: Optional[float] = None
-    last_failure_reason: Optional[str] = None
+    last_failure_time: float | None = None
+    last_failure_reason: str | None = None
     consecutive_failures: int = 0
 
 
 @dataclass
 class CircuitBreakerConfig:
     """Configuration for circuit breaker."""
-    failure_threshold: int = 5        # Failures before opening
-    recovery_timeout: float = 30.0    # Seconds before trying half-open
-    half_open_max_calls: int = 3      # Test calls in half-open state
-    success_threshold: int = 2        # Successes to close from half-open
+
+    failure_threshold: int = 5  # Failures before opening
+    recovery_timeout: float = 30.0  # Seconds before trying half-open
+    half_open_max_calls: int = 3  # Test calls in half-open state
+    success_threshold: int = 2  # Successes to close from half-open
 
 
 class CircuitBreaker:
@@ -79,7 +84,7 @@ class CircuitBreaker:
     def __init__(
         self,
         name: str = "default",
-        config: Optional[CircuitBreakerConfig] = None,
+        config: CircuitBreakerConfig | None = None,
     ):
         """
         Initialize circuit breaker.
@@ -109,7 +114,7 @@ class CircuitBreaker:
         return self._state
 
     @property
-    def stats(self) -> Dict[str, Any]:
+    def stats(self) -> dict[str, Any]:
         """Get circuit statistics."""
         return {
             "name": self.name,
@@ -147,9 +152,7 @@ class CircuitBreaker:
         if current_state == CircuitState.HALF_OPEN:
             if self._half_open_calls >= self.config.half_open_max_calls:
                 log.warning(f"Circuit '{self.name}' HALF_OPEN max calls reached")
-                raise CircuitBreakerError(
-                    f"Circuit breaker '{self.name}' is testing recovery."
-                )
+                raise CircuitBreakerError(f"Circuit breaker '{self.name}' is testing recovery.")
             self._half_open_calls += 1
 
         # Execute the function
@@ -188,9 +191,7 @@ class CircuitBreaker:
 
         if current_state == CircuitState.HALF_OPEN:
             if self._half_open_calls >= self.config.half_open_max_calls:
-                raise CircuitBreakerError(
-                    f"Circuit breaker '{self.name}' is testing recovery."
-                )
+                raise CircuitBreakerError(f"Circuit breaker '{self.name}' is testing recovery.")
             self._half_open_calls += 1
 
         try:
@@ -237,10 +238,7 @@ class CircuitBreaker:
         self._last_state_change = time.time()
         self._half_open_calls = 0
 
-        log.info(
-            f"Circuit '{self.name}' state change: "
-            f"{old_state.value} -> {new_state.value}"
-        )
+        log.info(f"Circuit '{self.name}' state change: {old_state.value} -> {new_state.value}")
 
     def reset(self):
         """Reset the circuit breaker."""
@@ -260,8 +258,8 @@ class CircuitBreaker:
 
 
 # Pre-configured circuit breakers for common services
-_llm_circuit: Optional[CircuitBreaker] = None
-_retriever_circuit: Optional[CircuitBreaker] = None
+_llm_circuit: CircuitBreaker | None = None
+_retriever_circuit: CircuitBreaker | None = None
 
 
 def get_llm_circuit() -> CircuitBreaker:
@@ -273,7 +271,7 @@ def get_llm_circuit() -> CircuitBreaker:
             config=CircuitBreakerConfig(
                 failure_threshold=3,
                 recovery_timeout=60.0,
-            )
+            ),
         )
     return _llm_circuit
 
@@ -287,6 +285,6 @@ def get_retriever_circuit() -> CircuitBreaker:
             config=CircuitBreakerConfig(
                 failure_threshold=5,
                 recovery_timeout=30.0,
-            )
+            ),
         )
     return _retriever_circuit

@@ -21,7 +21,6 @@ import hashlib
 import os
 import sqlite3
 import threading
-from typing import Optional
 
 from utils.log_utils import log
 
@@ -88,12 +87,10 @@ class EmbeddingRegistry:
                 (collection, fp, model_name, int(dimension), now, now),
             )
             self._conn.commit()
-        log.info(
-            f"EmbeddingRegistry: {collection} -> {model_name} dim={dimension} (fp={fp})"
-        )
+        log.info(f"EmbeddingRegistry: {collection} -> {model_name} dim={dimension} (fp={fp})")
         return fp
 
-    def get(self, collection: str) -> Optional[dict]:
+    def get(self, collection: str) -> dict | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM embedding_registry WHERE collection = ?",
@@ -119,7 +116,7 @@ class EmbeddingRegistry:
             self._conn.close()
 
 
-_registry: Optional[EmbeddingRegistry] = None
+_registry: EmbeddingRegistry | None = None
 _registry_lock = threading.Lock()
 
 

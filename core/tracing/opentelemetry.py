@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import functools
+from collections.abc import Callable
 from contextlib import contextmanager
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional, TypeVar
+from dataclasses import dataclass
+from typing import Any, TypeVar
 
 from utils.env_utils import (
     OTEL_CONSOLE_EXPORTER,
@@ -27,7 +28,7 @@ class TracingConfig:
     environment: str = "development"
     enable_tracing: bool = OTEL_ENABLED
     sample_rate: float = OTEL_SAMPLE_RATE
-    export_endpoint: Optional[str] = OTEL_EXPORTER_OTLP_ENDPOINT or None
+    export_endpoint: str | None = OTEL_EXPORTER_OTLP_ENDPOINT or None
     console_exporter: bool = OTEL_CONSOLE_EXPORTER
 
 
@@ -37,7 +38,7 @@ class NoOpSpan:
     def set_attribute(self, key: str, value: Any) -> None:
         pass
 
-    def add_event(self, name: str, attributes: Optional[Dict] = None) -> None:
+    def add_event(self, name: str, attributes: dict | None = None) -> None:
         pass
 
     def record_exception(self, exception: BaseException) -> None:
@@ -47,7 +48,7 @@ class NoOpSpan:
         pass
 
 
-def setup_opentelemetry(config: Optional[TracingConfig] = None) -> bool:
+def setup_opentelemetry(config: TracingConfig | None = None) -> bool:
     """Configure the global OpenTelemetry provider once."""
     global _configured
     cfg = config or TracingConfig()
@@ -130,7 +131,7 @@ def trace_context(name: str, **attributes):
             raise
 
 
-def traced(name: Optional[str] = None):
+def traced(name: str | None = None):
     """Trace a synchronous or asynchronous function."""
 
     def decorator(func: Callable[..., T]) -> Callable[..., T]:

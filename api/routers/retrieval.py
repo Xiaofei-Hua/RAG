@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import List, Optional
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
@@ -25,6 +24,7 @@ router = APIRouter()
 # Request / Response Models
 # =============================================================================
 
+
 class RetrievalRequest(BaseModel):
     query: str = Field(..., min_length=1, description="检索查询文本")
     top_k: int = Field(5, ge=1, le=50, description="返回结果数量")
@@ -35,14 +35,14 @@ class RetrievedDocument(BaseModel):
     source: str = ""
     title: str = ""
     score: float = 0.0
-    retrieval_score: Optional[float] = None
-    rerank_score: Optional[float] = None
+    retrieval_score: float | None = None
+    rerank_score: float | None = None
     rerank_applied: bool = False
 
 
 class RetrievalResponse(BaseModel):
     query: str
-    results: List[RetrievedDocument]
+    results: list[RetrievedDocument]
     total: int
     retrieval_time_ms: float
 
@@ -50,6 +50,7 @@ class RetrievalResponse(BaseModel):
 # =============================================================================
 # Helpers
 # =============================================================================
+
 
 def _build_response(query: str, results, elapsed_ms: float) -> RetrievalResponse:
     docs = []
@@ -75,23 +76,29 @@ def _build_response(query: str, results, elapsed_ms: float) -> RetrievalResponse
             title = meta.get("title", "")
         else:
             continue
-        docs.append(RetrievedDocument(
-            content=content,
-            source=source,
-            title=title,
-            score=score,
-            retrieval_score=meta.get("retrieval_score"),
-            rerank_score=meta.get("rerank_score"),
-            rerank_applied=bool(meta.get("rerank_applied", False)),
-        ))
+        docs.append(
+            RetrievedDocument(
+                content=content,
+                source=source,
+                title=title,
+                score=score,
+                retrieval_score=meta.get("retrieval_score"),
+                rerank_score=meta.get("rerank_score"),
+                rerank_applied=bool(meta.get("rerank_applied", False)),
+            )
+        )
     return RetrievalResponse(
-        query=query, results=docs, total=len(docs), retrieval_time_ms=elapsed_ms,
+        query=query,
+        results=docs,
+        total=len(docs),
+        retrieval_time_ms=elapsed_ms,
     )
 
 
 # =============================================================================
 # Endpoints
 # =============================================================================
+
 
 @router.post("", response_model=RetrievalResponse)
 async def hybrid_retrieve(req: RetrievalRequest):
@@ -106,7 +113,7 @@ async def hybrid_retrieve(req: RetrievalRequest):
     start = time.perf_counter()
     try:
         results = await retriever.aretrieve(req.query, top_k=req.top_k)
-    except Exception as e:
+    except Exception:
         log.exception("Hybrid retrieval failed")
         raise HTTPException(500, "检索失败，请稍后重试")
     elapsed = (time.perf_counter() - start) * 1000
@@ -125,10 +132,8 @@ async def dense_retrieve(req: RetrievalRequest):
     manager = get_milvus_manager()
     start = time.perf_counter()
     try:
-        results = await asyncio.to_thread(
-            manager.search, query=req.query, top_k=req.top_k
-        )
-    except Exception as e:
+        results = await asyncio.to_thread(manager.search, query=req.query, top_k=req.top_k)
+    except Exception:
         log.exception("Dense retrieval failed")
         raise HTTPException(500, "向量检索失败，请稍后重试")
     elapsed = (time.perf_counter() - start) * 1000
@@ -150,10 +155,8 @@ async def sparse_retrieve(req: RetrievalRequest):
         # 确保通过 worker 线程访问 sparse_retriever 属性，
         # 避免首次调用时在事件循环上同步触发 Milvus->BM25 索引同步阻塞请求
         bm25 = await asyncio.to_thread(lambda: retriever.sparse_retriever)
-        results = await asyncio.to_thread(
-            bm25.retrieve, req.query, top_k=req.top_k
-        )
-    except Exception as e:
+        results = await asyncio.to_thread(bm25.retrieve, req.query, top_k=req.top_k)
+    except Exception:
         log.exception("Sparse retrieval failed")
         raise HTTPException(500, "BM25 检索失败，请稍后重试")
     elapsed = (time.perf_counter() - start) * 1000

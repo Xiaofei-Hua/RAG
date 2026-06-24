@@ -14,7 +14,7 @@ The planner considers:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from utils.log_utils import log
 
@@ -27,6 +27,7 @@ __all__ = [
 
 class PlanType:
     """Execution plan types."""
+
     THINKING = "thinking"
     FAST = "fast"
     DIRECT = "direct"  # General chat, no retrieval needed
@@ -42,8 +43,9 @@ class ExecutionPlan:
         skills: Ordered list of skill names to execute
         mode: Human-readable description
     """
+
     plan_type: str
-    skills: List[str]
+    skills: list[str]
     mode: str = ""
 
     # Pre-built plans for common paths
@@ -99,8 +101,8 @@ class Planner:
     def plan(
         self,
         query: str = "",
-        intent: Optional[str] = None,
-        mode: Optional[str] = None,
+        intent: str | None = None,
+        mode: str | None = None,
         **kwargs,
     ) -> ExecutionPlan:
         """
@@ -145,7 +147,7 @@ class Planner:
 
     def plan_from_context(
         self,
-        context: Optional[Any] = None,
+        context: Any | None = None,
         **kwargs,
     ) -> ExecutionPlan:
         """

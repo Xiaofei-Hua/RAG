@@ -14,11 +14,9 @@ from __future__ import annotations
 
 import ipaddress
 import os
-from typing import Dict, Any, Literal
+from typing import Literal
 
-from fastapi import APIRouter, Header, HTTPException, Request, Depends
-
-from utils.log_utils import log
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 router = APIRouter()
 
@@ -31,11 +29,17 @@ def require_admin(
     Gate sensitive admin endpoints.
 
     - If ``ADMIN_API_KEY`` is set: the request must carry a matching
-      ``X-Admin-Key`` header.
+      ``X-Admin-Key`` header. The comparison uses ``hmac.compare_digest`` on the
+      raw bytes (constant-time for equal-length inputs). The configured key is
+      consumed as-is — no ``.strip()`` at compare time, which would both leak
+      the key length and silently mutate a key with intentional surrounding
+      bytes. (The configured value is stripped once at config load.)
     - If unset (local dev): only loopback clients are allowed.
 
     Raises 401 on missing/mismatched key, 403 on non-loopback without a key.
     """
+    import hmac
+
     configured = os.getenv("ADMIN_API_KEY", "").strip()
     client_host = None
     try:
@@ -45,7 +49,12 @@ def require_admin(
         client_host = None
 
     if configured:
-        if not x_admin_key or x_admin_key.strip() != configured:
+        # Constant-time comparison. A missing header compares against an empty
+        # string (rejected). We do NOT strip the supplied header here — the
+        # configured key was already stripped above, and stripping the input
+        # would re-introduce a length oracle.
+        supplied = x_admin_key or ""
+        if not hmac.compare_digest(supplied, configured):
             raise HTTPException(status_code=401, detail="invalid or missing admin key")
         return
 
@@ -72,7 +81,6 @@ def require_admin(
 async def health_check():
     """Detailed health check."""
     from core.fallback.circuit_breaker import get_llm_circuit, get_retriever_circuit
-    from core.memory.redis_memory import get_session_memory
 
     llm_circuit = get_llm_circuit()
     retriever_circuit = get_retriever_circuit()
@@ -94,6 +102,7 @@ async def health_check():
     # Check vector database
     try:
         from documents.milvus_db import get_milvus_manager
+
         manager = get_milvus_manager()
         health = manager.health_check()
         services["milvus"] = {
@@ -107,6 +116,7 @@ async def health_check():
         }
 
     from utils.env_utils import RERANKER_ENABLED
+
     if RERANKER_ENABLED:
         from core.retrieval.reranker import get_reranker
 
@@ -126,8 +136,7 @@ async def health_check():
 
     # Overall status
     all_healthy = all(
-        s.get("status") in ("healthy", "degraded", "ready", "cold")
-        for s in services.values()
+        s.get("status") in ("healthy", "degraded", "ready", "cold") for s in services.values()
     )
 
     return {
@@ -139,9 +148,9 @@ async def health_check():
 @router.get("/metrics")
 async def get_metrics():
     """Get system metrics."""
-    import time
     import gc
     import platform
+    import time
 
     result = {
         "timestamp": time.time(),
@@ -155,6 +164,7 @@ async def get_metrics():
     # Memory usage - with error handling
     try:
         import psutil
+
         process = psutil.Process()
         memory_info = process.memory_info()
         result["memory"] = {
@@ -227,7 +237,7 @@ async def set_degradation_mode(
     _: None = Depends(require_admin),
 ):
     """Set degradation mode."""
-    from core.fallback.degradation import get_degradation_handler, FallbackMode
+    from core.fallback.degradation import FallbackMode, get_degradation_handler
 
     handler = get_degradation_handler()
     new_mode = FallbackMode(mode)
@@ -331,6 +341,7 @@ async def get_config(_: None = Depends(require_admin)):
 # Evaluation flywheel endpoints
 # =============================================================================
 
+
 @router.get("/eval/runs")
 async def eval_runs(limit: int = 20):
     """List recent evaluation run summaries (history.jsonl)."""
@@ -406,8 +417,9 @@ async def inferences(limit: int = 50, offset: int = 0, _: None = Depends(require
 @router.get("/inferences/{trace_id}")
 async def inference_detail(trace_id: str, _: None = Depends(require_admin)):
     """Full detail (incl. retrieved docs + answer) for one inference."""
-    from agent.eval import get_inference_store
     from fastapi import HTTPException
+
+    from agent.eval import get_inference_store
 
     rec = get_inference_store().get(trace_id)
     if rec is None:

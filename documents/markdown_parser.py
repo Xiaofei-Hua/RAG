@@ -13,10 +13,11 @@ from __future__ import annotations
 import hashlib
 import os
 import time
+from collections.abc import Iterable, Sequence
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple, Type
+from typing import Any
 
 from langchain_community.document_loaders import UnstructuredMarkdownLoader
 from langchain_core.documents import Document
@@ -32,7 +33,9 @@ def _get_local_embeddings():
     Ensures only one embedding model instance is loaded in the process.
     """
     from models.embedding_models import get_local_embeddings
+
     return get_local_embeddings()
+
 
 # version-safe import
 try:
@@ -52,6 +55,7 @@ __all__ = [
 
 
 # Config / Stats
+
 
 @dataclass(frozen=True)
 class MarkdownParserConfig:
@@ -90,7 +94,7 @@ class MarkdownParserConfig:
     merged_category_value: str = "content"
 
     # Tokenizer settings
-    tokenizer_model_name: Optional[str] = None
+    tokenizer_model_name: str | None = None
     use_tiktoken: bool = True
     tiktoken_http_timeout_s: float = 2.5
 
@@ -103,9 +107,7 @@ class MarkdownParserConfig:
         if self.semantic_batch_size < 1:
             raise ValueError("semantic_batch_size must be >= 1")
         if self.fallback_chunk_size_tokens <= self.fallback_chunk_overlap_tokens:
-            raise ValueError(
-                "fallback_chunk_size_tokens must be > fallback_chunk_overlap_tokens"
-            )
+            raise ValueError("fallback_chunk_size_tokens must be > fallback_chunk_overlap_tokens")
         if self.tiktoken_http_timeout_s <= 0:
             raise ValueError("tiktoken_http_timeout_s must be > 0")
 
@@ -133,6 +135,7 @@ class ParserStats:
 
 # Token Counter (safe)
 
+
 class TokenCounter:
     """
     Production-safe TokenCounter with offline fallback.
@@ -149,7 +152,7 @@ class TokenCounter:
         self,
         *,
         embeddings: Any,
-        model_hint: Optional[str],
+        model_hint: str | None,
         use_tiktoken: bool,
         timeout_s: float,
         logger: Any = log,
@@ -170,7 +173,7 @@ class TokenCounter:
             self._try_init_tiktoken_encoder()
 
     @staticmethod
-    def _infer_model_name_from_embeddings(embeddings: Any) -> Optional[str]:
+    def _infer_model_name_from_embeddings(embeddings: Any) -> str | None:
         """Extract model name from embeddings object."""
         if embeddings is None:
             return None
@@ -262,10 +265,10 @@ class TokenCounter:
 class _TreeNode:
     """Tree node for representing markdown element hierarchy."""
 
-    element: "_Element"
-    children: List["_TreeNode"] = field(default_factory=list)
+    element: _Element
+    children: list[_TreeNode] = field(default_factory=list)
     title_path: str = ""
-    nearest_title: Optional["_TreeNode"] = None
+    nearest_title: _TreeNode | None = None
 
 
 @dataclass
@@ -274,10 +277,10 @@ class _Element:
 
     idx: int
     text: str
-    metadata: Dict[str, Any]
-    category: Optional[str]
-    element_id: Optional[str]
-    parent_id: Optional[str]
+    metadata: dict[str, Any]
+    category: str | None
+    element_id: str | None
+    parent_id: str | None
 
 
 # Parser
@@ -299,8 +302,8 @@ class MarkdownParser:
         *,
         config: MarkdownParserConfig = MarkdownParserConfig(),
         embeddings: Any = None,
-        loader_cls: Type[UnstructuredMarkdownLoader] = UnstructuredMarkdownLoader,
-        splitter_cls: Type[SemanticChunker] = SemanticChunker,
+        loader_cls: type[UnstructuredMarkdownLoader] = UnstructuredMarkdownLoader,
+        splitter_cls: type[SemanticChunker] = SemanticChunker,
         logger: Any = log,
     ) -> None:
         self.cfg = config
@@ -319,9 +322,9 @@ class MarkdownParser:
         )
 
         # Lazy init: SemanticChunker construction can trigger spaCy downloads
-        self._semantic_splitter: Optional[Any] = None
+        self._semantic_splitter: Any | None = None
 
-        self._fallback_splitter: Optional[Any] = None  # lazy init
+        self._fallback_splitter: Any | None = None  # lazy init
         self.last_stats: ParserStats = ParserStats()
 
     # Public API
@@ -342,7 +345,7 @@ class MarkdownParser:
 
     def parse_markdown_to_documents(
         self, md_file: str | Path, *, encoding: str = "utf-8"
-    ) -> List[Document]:
+    ) -> list[Document]:
         """
         Parse a markdown file into a list of Document objects.
 
@@ -372,8 +375,9 @@ class MarkdownParser:
         stats.duplicates_element_id_count = dup_count
 
         # Step 3: Precompute links (O(n))
-        parent_idx, nearest_title_idx, title_path, title_count, fwd_parent = \
-            self._precompute_links(elements)
+        parent_idx, nearest_title_idx, title_path, title_count, fwd_parent = self._precompute_links(
+            elements
+        )
         stats.titles = title_count
         stats.forward_parent_ref_count = fwd_parent
 
@@ -412,13 +416,13 @@ class MarkdownParser:
         )
         return chunked_docs
 
-    def get_last_stats(self) -> Dict[str, Any]:
+    def get_last_stats(self) -> dict[str, Any]:
         """Return statistics from the last parse operation."""
         return asdict(self.last_stats)
 
     # Loader
 
-    def _parse_markdown(self, md_path: Path, *, encoding: str) -> List[Document]:
+    def _parse_markdown(self, md_path: Path, *, encoding: str) -> list[Document]:
         """Load markdown file. Uses simple regex parser by default for speed."""
         if not md_path.exists() or not md_path.is_file():
             raise FileNotFoundError(f"Markdown file not found: {md_path}")
@@ -426,7 +430,7 @@ class MarkdownParser:
         # Prefer simple loader: fast, no external deps (no spaCy download)
         return self._simple_markdown_load(md_path, encoding)
 
-    def _simple_markdown_load(self, md_path: Path, encoding: str) -> List[Document]:
+    def _simple_markdown_load(self, md_path: Path, encoding: str) -> list[Document]:
         """
         Simple markdown loader that doesn't depend on unstructured/spaCy.
 
@@ -435,30 +439,32 @@ class MarkdownParser:
         """
         import re
 
-        with open(md_path, "r", encoding=encoding) as f:
+        with open(md_path, encoding=encoding) as f:
             content = f.read()
 
         if not content.strip():
             return []
 
         # Split into sections by headings
-        sections = re.split(r'(^#{1,6}\s+.+$)', content, flags=re.MULTILINE)
+        sections = re.split(r"(^#{1,6}\s+.+$)", content, flags=re.MULTILINE)
 
         documents = []
         idx = 0
 
         # Handle content before first heading
-        if sections and not sections[0].startswith('#'):
+        if sections and not sections[0].startswith("#"):
             pre_content = sections[0].strip()
             if pre_content:
-                documents.append(Document(
-                    page_content=pre_content,
-                    metadata={
-                        "category": "NarrativeText",
-                        "element_id": f"pre_{idx}",
-                        "parent_id": None,
-                    }
-                ))
+                documents.append(
+                    Document(
+                        page_content=pre_content,
+                        metadata={
+                            "category": "NarrativeText",
+                            "element_id": f"pre_{idx}",
+                            "parent_id": None,
+                        },
+                    )
+                )
                 idx += 1
             sections = sections[1:]
 
@@ -471,19 +477,21 @@ class MarkdownParser:
             if not heading:
                 continue
 
-            title_text = re.sub(r'^#{1,6}\s+', '', heading)
+            title_text = re.sub(r"^#{1,6}\s+", "", heading)
             title_id = f"title_{idx}"
-            level = len(heading) - len(heading.lstrip('#'))
+            level = len(heading) - len(heading.lstrip("#"))
 
             # Add title element
-            documents.append(Document(
-                page_content=title_text,
-                metadata={
-                    "category": "Title",
-                    "element_id": title_id,
-                    "parent_id": current_parent_id if level > 1 else None,
-                }
-            ))
+            documents.append(
+                Document(
+                    page_content=title_text,
+                    metadata={
+                        "category": "Title",
+                        "element_id": title_id,
+                        "parent_id": current_parent_id if level > 1 else None,
+                    },
+                )
+            )
             idx += 1
 
             # Update parent for nested headings
@@ -494,17 +502,19 @@ class MarkdownParser:
 
             # Add body content
             if body:
-                for para in body.split('\n\n'):
+                for para in body.split("\n\n"):
                     para = para.strip()
                     if para:
-                        documents.append(Document(
-                            page_content=para,
-                            metadata={
-                                "category": "NarrativeText",
-                                "element_id": f"text_{idx}",
-                                "parent_id": title_id,
-                            }
-                        ))
+                        documents.append(
+                            Document(
+                                page_content=para,
+                                metadata={
+                                    "category": "NarrativeText",
+                                    "element_id": f"text_{idx}",
+                                    "parent_id": title_id,
+                                },
+                            )
+                        )
                         idx += 1
 
         self.log.info(f"Simple markdown loader: {len(documents)} elements from {md_path.name}")
@@ -512,7 +522,7 @@ class MarkdownParser:
 
     # Normalize
 
-    def _clean_metadata(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
+    def _clean_metadata(self, metadata: dict[str, Any]) -> dict[str, Any]:
         """Clean and normalize metadata dictionary."""
         result = dict(metadata or {})
         if self.cfg.remove_languages_in_metadata:
@@ -521,10 +531,10 @@ class MarkdownParser:
 
     def _normalize_elements(
         self, docs: Sequence[Document], md_path: Path
-    ) -> Tuple[List[_Element], int]:
+    ) -> tuple[list[_Element], int]:
         """Convert raw documents to internal _Element objects."""
-        elements: List[_Element] = []
-        seen_ids: Set[str] = set()
+        elements: list[_Element] = []
+        seen_ids: set[str] = set()
         dup_count = 0
 
         for idx, doc in enumerate(docs):
@@ -565,7 +575,7 @@ class MarkdownParser:
 
     def _build_element_tree(
         self, elements: Sequence[_Element]
-    ) -> Tuple[List[_TreeNode], Dict[int, _TreeNode], Dict[str, _TreeNode], int]:
+    ) -> tuple[list[_TreeNode], dict[int, _TreeNode], dict[str, _TreeNode], int]:
         """
         Build a tree structure from elements based on parent_id relationships.
 
@@ -576,8 +586,8 @@ class MarkdownParser:
             - forward_parent_ref: Count of forward parent references
         """
         # First pass: create tree nodes and build mappings
-        idx_to_node: Dict[int, _TreeNode] = {}
-        id_to_node: Dict[str, _TreeNode] = {}
+        idx_to_node: dict[int, _TreeNode] = {}
+        id_to_node: dict[str, _TreeNode] = {}
 
         for el in elements:
             node = _TreeNode(element=el)
@@ -587,7 +597,7 @@ class MarkdownParser:
 
         # Second pass: build parent-child relationships
         forward_parent_ref = 0
-        roots: List[_TreeNode] = []
+        roots: list[_TreeNode] = []
         nodes_list = list(idx_to_node.values())
 
         for node in nodes_list:
@@ -613,7 +623,7 @@ class MarkdownParser:
         self,
         node: _TreeNode,
         parent_title_path: str,
-        current_nearest_title: Optional[_TreeNode],
+        current_nearest_title: _TreeNode | None,
     ) -> None:
         """
         DFS traversal to compute title_path and nearest_title for each node.
@@ -646,7 +656,7 @@ class MarkdownParser:
 
     def _precompute_links(
         self, elements: Sequence[_Element]
-    ) -> Tuple[List[int], List[int], Dict[int, str], int, int]:
+    ) -> tuple[list[int], list[int], dict[int, str], int, int]:
         """
         Precompute parent indices, nearest title indices, and title paths using DFS.
 
@@ -666,9 +676,9 @@ class MarkdownParser:
 
         # Extract results into arrays/dicts
         n = len(elements)
-        parent_idx: List[int] = [-1] * n
-        nearest_title_idx: List[int] = [-1] * n
-        title_path: Dict[int, str] = {}
+        parent_idx: list[int] = [-1] * n
+        nearest_title_idx: list[int] = [-1] * n
+        title_path: dict[int, str] = {}
         title_count = 0
 
         for el in elements:
@@ -704,11 +714,11 @@ class MarkdownParser:
         elements: Sequence[_Element],
         parent_idx: Sequence[int],
         nearest_title_idx: Sequence[int],
-        title_path: Dict[int, str],
-    ) -> Tuple[List[Document], int]:
+        title_path: dict[int, str],
+    ) -> tuple[list[Document], int]:
         """Merge elements by title hierarchy using precomputed indices."""
-        title_bucket: Dict[int, List[str]] = {}
-        out_with_idx: List[Tuple[int, Document]] = []
+        title_bucket: dict[int, list[str]] = {}
+        out_with_idx: list[tuple[int, Document]] = []
         orphan_out = 0
 
         # Initialize title buckets
@@ -737,9 +747,7 @@ class MarkdownParser:
                 if self.cfg.keep_orphan_elements:
                     metadata = dict(el.metadata)
                     metadata.setdefault("category", el.category or "orphan")
-                    out_with_idx.append(
-                        (el.idx, Document(page_content=el.text, metadata=metadata))
-                    )
+                    out_with_idx.append((el.idx, Document(page_content=el.text, metadata=metadata)))
                     orphan_out += 1
 
         # Build merged documents
@@ -771,7 +779,7 @@ class MarkdownParser:
         return [doc for _, doc in out_with_idx], orphan_out
 
     @staticmethod
-    def _generate_doc_id(metadata: Dict[str, Any], idx: int, text: str) -> str:
+    def _generate_doc_id(metadata: dict[str, Any], idx: int, text: str) -> str:
         """Generate a stable document ID using SHA256 (truncated)."""
         source = str(metadata.get("source", ""))
         content_head = text[:256]
@@ -808,12 +816,27 @@ class MarkdownParser:
             chunk_size=self.cfg.fallback_chunk_size_tokens,
             chunk_overlap=self.cfg.fallback_chunk_overlap_tokens,
             length_function=self._token_counter.count,  # Token-aware with fallback
-            separators=["\n\n", "\n", "。", "！", "？", ".", "!", "?", "；", ";", "，", ",", " ", ""],
+            separators=[
+                "\n\n",
+                "\n",
+                "。",
+                "！",
+                "？",
+                ".",
+                "!",
+                "?",
+                "；",
+                ";",
+                "，",
+                ",",
+                " ",
+                "",
+            ],
         )
 
     def _chunk_documents(
         self, docs: Sequence[Document]
-    ) -> Tuple[List[Document], int, int, int, int]:
+    ) -> tuple[list[Document], int, int, int, int]:
         """
         Chunk documents using semantic splitting for large docs.
 
@@ -824,8 +847,8 @@ class MarkdownParser:
             - semantic_split_failed_docs: Number of docs that failed semantic splitting
             - fallback_split_used_docs: Number of docs processed by fallback splitter
         """
-        small: List[Document] = []
-        large: List[Document] = []
+        small: list[Document] = []
+        large: list[Document] = []
 
         for doc in docs:
             text = doc.page_content or ""
@@ -837,7 +860,7 @@ class MarkdownParser:
         semantic_fail = 0
         fallback_used = 0
 
-        result: List[Document] = list(small)
+        result: list[Document] = list(small)
 
         if not large:
             return result, 0, 0, 0, 0
@@ -898,7 +921,9 @@ class MarkdownParser:
 # Main Entry Point
 
 if __name__ == "__main__":
-    file_path = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "md", "tech_report_0tfhhamx.md")
+    file_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "md", "tech_report_0tfhhamx.md"
+    )
 
     parser = MarkdownParser(
         config=MarkdownParserConfig(

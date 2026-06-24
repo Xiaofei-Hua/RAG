@@ -20,9 +20,9 @@ rewrite loop); they are exposed for the retrieve skill to use when enabled via
 from __future__ import annotations
 
 import re
-from typing import List, Optional
 
 from langchain_core.documents import Document
+
 from utils.log_utils import log
 
 __all__ = ["hyde", "multi_query_retrieve"]
@@ -32,10 +32,12 @@ __all__ = ["hyde", "multi_query_retrieve"]
 # Shared LLM helper
 # ---------------------------------------------------------------------------
 
-def _llm_invoke(prompt: str) -> Optional[str]:
+
+def _llm_invoke(prompt: str) -> str | None:
     """Best-effort single LLM call. Returns None on any failure."""
     try:
         from langchain_core.messages import HumanMessage
+
         from models.llm_models import create_custom_llm
 
         llm = create_custom_llm(temperature=0.0)
@@ -47,9 +49,10 @@ def _llm_invoke(prompt: str) -> Optional[str]:
         return None
 
 
-async def _allm_invoke(prompt: str) -> Optional[str]:
+async def _allm_invoke(prompt: str) -> str | None:
     try:
         from langchain_core.messages import HumanMessage
+
         from models.llm_models import create_custom_llm
 
         llm = create_custom_llm(temperature=0.0)
@@ -65,11 +68,16 @@ async def _allm_invoke(prompt: str) -> Optional[str]:
 # HyDE
 # ---------------------------------------------------------------------------
 
-_HYDE_PROMPT = (
-    "请针对下面的用户问题，写一段 100-150 字的、假设性的、技术准确的排故/诊断"
-    "回答段落（不需要绝对正确，作为检索的假设文档）。只输出段落本身。\n\n"
-    "问题：{query}\n\n假设性回答："
-)
+
+def _hyde_prompt_template() -> str:
+    """HyDE prompt template from the active domain profile (call-time read)."""
+    from core.prompts.domain_profile import get_active_profile
+
+    # The profile's hyde prompt uses {question}; map to the {query} arg here.
+    return get_active_profile().prompts.get("hyde", "").replace("{question}", "{query}") or (
+        "请针对下面的用户问题，写一段 100-150 字的假设性回答段落，"
+        "用于检索。只输出段落本身。\n\n问题：{query}\n\n假设性回答："
+    )
 
 
 def hyde(query: str) -> str:
@@ -79,7 +87,7 @@ def hyde(query: str) -> str:
     Returns the hypothetical text to embed, or falls back to the original
     query when the LLM is unavailable.
     """
-    text = _llm_invoke(_HYDE_PROMPT.format(query=query[:300]))
+    text = _llm_invoke(_hyde_prompt_template().format(query=query[:300]))
     if not text:
         log.debug("HyDE: LLM unavailable, using original query")
         return query
@@ -88,7 +96,7 @@ def hyde(query: str) -> str:
 
 async def ahyde(query: str) -> str:
     """Async HyDE."""
-    text = await _allm_invoke(_HYDE_PROMPT.format(query=query[:300]))
+    text = await _allm_invoke(_hyde_prompt_template().format(query=query[:300]))
     return text or query
 
 
@@ -96,26 +104,31 @@ async def ahyde(query: str) -> str:
 # Multi-Query
 # ---------------------------------------------------------------------------
 
-_MULTI_QUERY_PROMPT = (
-    "你是检索查询扩展助手。针对下面的用户问题，生成 {n} 个不同角度的、等价的"
-    "检索查询（用于从维修手册中召回更多相关内容）。每行一个，不要编号，不要解释。\n\n"
-    "问题：{query}\n\n"
-    "生成的{n}个查询："
-)
+
+def _multi_query_prompt_template() -> str:
+    """Multi-query prompt template from the active domain profile (call-time)."""
+    from core.prompts.domain_profile import get_active_profile
+
+    return get_active_profile().prompts.get("multi_query", "") or (
+        "针对下面的用户问题，生成 {n} 个不同角度的、等价的检索查询，"
+        "用于从知识库召回更多相关内容。每行一个，不要编号，不要解释。\n\n"
+        "问题：{query}\n\n生成的{n}个查询："
+    )
+
 
 _Q_LINE_RE = re.compile(r"[^\n]{4,}")
 
 
-def _parse_queries(raw: str, n: int) -> List[str]:
+def _parse_queries(raw: str, n: int) -> list[str]:
     """Extract up to n clean query lines from the LLM response."""
-    lines = [l.strip().lstrip("0123456789.-、）)）:： ") for l in raw.splitlines()]
-    lines = [l for l in lines if _Q_LINE_RE.fullmatch(l)]
+    lines = [line.strip().lstrip("0123456789.-、）)）:： ") for line in raw.splitlines()]
+    lines = [line for line in lines if _Q_LINE_RE.fullmatch(line)]
     return lines[:n]
 
 
-def multi_query_expand(query: str, n: int = 3) -> List[str]:
+def multi_query_expand(query: str, n: int = 3) -> list[str]:
     """Generate N reformulations of the query (sync). Returns [original, ...]."""
-    raw = _llm_invoke(_MULTI_QUERY_PROMPT.format(query=query[:300], n=n))
+    raw = _llm_invoke(_multi_query_prompt_template().format(query=query[:300], n=n))
     if not raw:
         return [query]
     extra = _parse_queries(raw, n)
@@ -127,9 +140,9 @@ def multi_query_expand(query: str, n: int = 3) -> List[str]:
     return out[: n + 1]
 
 
-async def amulti_query_expand(query: str, n: int = 3) -> List[str]:
+async def amulti_query_expand(query: str, n: int = 3) -> list[str]:
     """Async variant of multi_query_expand."""
-    raw = await _allm_invoke(_MULTI_QUERY_PROMPT.format(query=query[:300], n=n))
+    raw = await _allm_invoke(_multi_query_prompt_template().format(query=query[:300], n=n))
     if not raw:
         return [query]
     extra = _parse_queries(raw, n)
@@ -140,7 +153,7 @@ async def amulti_query_expand(query: str, n: int = 3) -> List[str]:
     return out[: n + 1]
 
 
-def _rrf_fuse(document_lists: List[List[Document]], k: int = 60) -> List[Document]:
+def _rrf_fuse(document_lists: list[list[Document]], k: int = 60) -> list[Document]:
     """Lightweight RRF over several retrieved lists (reuse score metadata)."""
     import hashlib
 
@@ -162,8 +175,8 @@ def multi_query_retrieve(
     retriever,
     n: int = 3,
     top_k: int = 4,
-    filter_expr: Optional[str] = None,
-) -> List[Document]:
+    filter_expr: str | None = None,
+) -> list[Document]:
     """
     Expand the query, retrieve for each, RRF-fuse, return top_k.
 
@@ -190,17 +203,15 @@ async def amulti_query_retrieve(
     retriever,
     n: int = 3,
     top_k: int = 4,
-    filter_expr: Optional[str] = None,
-) -> List[Document]:
+    filter_expr: str | None = None,
+) -> list[Document]:
     """Async variant of multi_query_retrieve."""
     queries = await amulti_query_expand(query, n=n)
     if len(queries) == 1:
         return await retriever.aretrieve(query, top_k=top_k, filter_expr=filter_expr)
     import asyncio
 
-    tasks = [
-        retriever.aretrieve(q, top_k=top_k, filter_expr=filter_expr) for q in queries
-    ]
+    tasks = [retriever.aretrieve(q, top_k=top_k, filter_expr=filter_expr) for q in queries]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     lists = [r for r in results if isinstance(r, list)]
     if not lists:

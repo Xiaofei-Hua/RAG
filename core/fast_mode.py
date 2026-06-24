@@ -11,16 +11,17 @@ Fast mode (this module):       Retrieve → Generate                            
 from __future__ import annotations
 
 import time
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
-from core.prompts.aircraft_prompts import GENERATE_SYSTEM_PROMPT, GENERATE_HUMAN_PROMPT
+from core.prompts.aircraft_prompts import GENERATE_HUMAN_PROMPT, GENERATE_SYSTEM_PROMPT
 from utils.log_utils import log
-from utils.think_tag_utils import strip_think_tags, build_fast_mode_prompt
+from utils.think_tag_utils import strip_think_tags
 
 __all__ = [
     "FastModeResult",
@@ -36,7 +37,7 @@ _chain = None
 @dataclass
 class FastModeResult:
     answer: str
-    sources: List[Dict[str, Any]]
+    sources: list[dict[str, Any]]
     retrieval_count: int
     retrieval_time_ms: float
     generation_time_ms: float
@@ -52,27 +53,27 @@ def _format_context(documents) -> str:
     """
     from core.retrieval.formatting import format_documents
 
-    context, _ = format_documents(
-        documents, defaults={"source": "未知来源", "title": "未知标题"}
-    )
+    context, _ = format_documents(documents, defaults={"source": "未知来源", "title": "未知标题"})
     return context
 
 
-def _docs_to_sources(documents) -> List[Dict[str, Any]]:
+def _docs_to_sources(documents) -> list[dict[str, Any]]:
     """Convert retrieved Documents to source dicts for API response."""
     sources = []
     for doc in documents:
         meta = getattr(doc, "metadata", None) or {}
         content = doc.page_content if hasattr(doc, "page_content") else str(doc)
-        sources.append({
-            "content": content[:500],
-            "source": meta.get("source"),
-            "title": meta.get("title"),
-            "score": meta.get("score", 0.0),
-            "retrieval_score": meta.get("retrieval_score"),
-            "rerank_score": meta.get("rerank_score"),
-            "rerank_applied": bool(meta.get("rerank_applied", False)),
-        })
+        sources.append(
+            {
+                "content": content[:500],
+                "source": meta.get("source"),
+                "title": meta.get("title"),
+                "score": meta.get("score", 0.0),
+                "retrieval_score": meta.get("retrieval_score"),
+                "rerank_score": meta.get("rerank_score"),
+                "rerank_applied": bool(meta.get("rerank_applied", False)),
+            }
+        )
     return sources
 
 
@@ -84,19 +85,23 @@ def _get_chain(llm: BaseChatModel):
     """Build the generate chain (cached across calls)."""
     global _chain
     if _chain is None:
-        prompt = ChatPromptTemplate.from_messages([
-            ("system", GENERATE_SYSTEM_PROMPT),
-            ("human", _FAST_HUMAN_PROMPT),
-        ])
+        prompt = ChatPromptTemplate.from_messages(
+            [
+                ("system", GENERATE_SYSTEM_PROMPT),
+                ("human", _FAST_HUMAN_PROMPT),
+            ]
+        )
         _chain = prompt | llm | StrOutputParser()
     return _chain
 
 
 # Cache for the streaming prompt chain (no StrOutputParser — we iterate chunks directly)
-_stream_prompt = ChatPromptTemplate.from_messages([
-    ("system", GENERATE_SYSTEM_PROMPT),
-    ("human", _FAST_HUMAN_PROMPT),
-])
+_stream_prompt = ChatPromptTemplate.from_messages(
+    [
+        ("system", GENERATE_SYSTEM_PROMPT),
+        ("human", _FAST_HUMAN_PROMPT),
+    ]
+)
 
 
 def fast_generate(query: str, top_k: int = 3) -> FastModeResult:
@@ -114,6 +119,7 @@ def fast_generate(query: str, top_k: int = 3) -> FastModeResult:
     # --- Retrieve ---
     t0 = time.perf_counter()
     from core.retrieval.hybrid_retriever import get_hybrid_retriever
+
     retriever = get_hybrid_retriever()
     documents = retriever.retrieve(query, top_k=top_k)
     retrieval_ms = (time.perf_counter() - t0) * 1000
@@ -135,6 +141,7 @@ def fast_generate(query: str, top_k: int = 3) -> FastModeResult:
         context = context[:2500] + "\n...[内容已截断]"
 
     from models.llm_models import get_llm
+
     llm = get_llm()
     chain = _get_chain(llm)
 
@@ -154,7 +161,7 @@ def fast_generate(query: str, top_k: int = 3) -> FastModeResult:
     )
 
 
-async def fast_generate_stream(query: str, top_k: int = 3) -> AsyncIterator[Dict[str, Any]]:
+async def fast_generate_stream(query: str, top_k: int = 3) -> AsyncIterator[dict[str, Any]]:
     """
     Fast mode: direct retrieve + streaming generate.
 
@@ -171,6 +178,7 @@ async def fast_generate_stream(query: str, top_k: int = 3) -> AsyncIterator[Dict
     # --- Retrieve ---
     t0 = time.perf_counter()
     from core.retrieval.hybrid_retriever import get_hybrid_retriever
+
     retriever = get_hybrid_retriever()
     documents = await retriever.aretrieve(query, top_k=top_k)
     retrieval_ms = (time.perf_counter() - t0) * 1000
@@ -178,8 +186,19 @@ async def fast_generate_stream(query: str, top_k: int = 3) -> AsyncIterator[Dict
     log.info(f"Fast mode retrieval: {len(documents)} docs, {retrieval_ms:.0f}ms")
 
     if not documents:
-        yield {"type": "token", "content": "当前知识库中暂无相关文档。请先通过文档管理页面上传排故手册、维修手册等资料，然后再进行提问。"}
-        yield {"type": "done", "full_response": "", "sources": [], "processing_time_ms": retrieval_ms}
+        empty_msg = (
+            "当前知识库中暂无相关文档。请先通过文档管理页面上传"
+            "排故手册、维修手册等资料，然后再进行提问。"
+        )
+        yield {"type": "token", "content": empty_msg}
+        # full_response must carry the same message as the non-streaming
+        # path's `answer` (fast_generate), not an empty string (B5).
+        yield {
+            "type": "done",
+            "full_response": empty_msg,
+            "sources": [],
+            "processing_time_ms": retrieval_ms,
+        }
         return
 
     context = _format_context(documents)
@@ -188,6 +207,7 @@ async def fast_generate_stream(query: str, top_k: int = 3) -> AsyncIterator[Dict
 
     # --- Stream generate ---
     from models.llm_models import get_llm
+
     llm = get_llm()
     chain = _stream_prompt | llm
 
@@ -234,9 +254,7 @@ async def fast_generate_async(query: str, top_k: int = 3) -> FastModeResult:
     from models.llm_models import get_llm
 
     t1 = time.perf_counter()
-    answer = await _get_chain(get_llm()).ainvoke(
-        {"question": query, "context": context}
-    )
+    answer = await _get_chain(get_llm()).ainvoke({"question": query, "context": context})
     answer = strip_think_tags(answer)
     generation_ms = (time.perf_counter() - t1) * 1000
     return FastModeResult(

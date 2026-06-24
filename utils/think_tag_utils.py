@@ -9,7 +9,7 @@ Handles Qwen3's dual-mode reasoning:
 
 import re
 
-_THINK_PATTERN = re.compile(r'<think[\s\S]*?</think\s*>', re.DOTALL)
+_THINK_PATTERN = re.compile(r"<think[\s\S]*?</think\s*>", re.DOTALL)
 
 NO_THINK_SUFFIX = " /no_think"
 
@@ -18,7 +18,7 @@ def strip_think_tags(text: str) -> str:
     """Remove Qwen3 <think...</think< tags from text."""
     if not text:
         return text
-    return _THINK_PATTERN.sub('', text).strip()
+    return _THINK_PATTERN.sub("", text).strip()
 
 
 def build_fast_mode_prompt(question: str) -> str:

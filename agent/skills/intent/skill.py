@@ -15,9 +15,6 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
-
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from agent.skills.base import BaseSkill, SkillContext, SkillResult, SkillStatus
 from core.intent.classifier import (
@@ -34,6 +31,7 @@ __all__ = ["IntentSkill", "IntentSkillConfig"]
 @dataclass
 class IntentSkillConfig:
     """Configuration for IntentSkill."""
+
     max_retries: int = 2
     retry_delay: float = 0.5
     fallback_intent: IntentType = IntentType.RAG_QUERY
@@ -60,7 +58,7 @@ class IntentSkill(BaseSkill):
 
     def __init__(
         self,
-        config: Optional[IntentSkillConfig] = None,
+        config: IntentSkillConfig | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)

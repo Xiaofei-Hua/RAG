@@ -10,10 +10,10 @@ Provides distributed tracing using OpenTelemetry:
 
 from core.tracing.opentelemetry import (
     TracingConfig,
-    trace_context,
     get_tracer,
     instrument_fastapi,
     setup_opentelemetry,
+    trace_context,
     traced,
 )
 

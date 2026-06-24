@@ -17,14 +17,13 @@ Candidates are then curated into ``golden.yaml`` via the CLI (or the
 from __future__ import annotations
 
 import json
-import os
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from agent.eval.dataset import append_cases
-from agent.eval.inference_store import InferenceRecord, get_inference_store
+from agent.eval.inference_store import InferenceRecord
 from agent.eval.types import EvalCase
 from utils.log_utils import log
 
@@ -51,11 +50,11 @@ class CandidateRecord:
         session_id: str,
         query: str,
         answer: str,
-        retrieved_docs: List[Dict[str, Any]],
+        retrieved_docs: list[dict[str, Any]],
         feedback_type: str,
         corrected_answer: str = "",
         source: str = "feedback",
-        created_at: Optional[float] = None,
+        created_at: float | None = None,
     ):
         self.candidate_id = candidate_id
         self.trace_id = trace_id
@@ -69,7 +68,7 @@ class CandidateRecord:
         self.source = source
         self.created_at = created_at or time.time()
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "candidate_id": self.candidate_id,
             "trace_id": self.trace_id,
@@ -85,7 +84,7 @@ class CandidateRecord:
         }
 
     @classmethod
-    def from_dict(cls, d: Dict[str, Any]) -> "CandidateRecord":
+    def from_dict(cls, d: dict[str, Any]) -> CandidateRecord:
         return cls(
             candidate_id=d.get("candidate_id", ""),
             trace_id=d.get("trace_id", ""),
@@ -121,7 +120,7 @@ def promote_to_candidate(
     feedback_type: str,
     corrected_answer: str = "",
     source: str = "feedback",
-) -> Optional[CandidateRecord]:
+) -> CandidateRecord | None:
     """
     Persist an inference as a candidate in the candidate pool.
 
@@ -156,11 +155,11 @@ def promote_to_candidate(
     return rec
 
 
-def list_candidates() -> List[CandidateRecord]:
+def list_candidates() -> list[CandidateRecord]:
     """List all candidates in the pool, oldest first."""
     if not CANDIDATES_DIR.exists():
         return []
-    out: List[CandidateRecord] = []
+    out: list[CandidateRecord] = []
     for p in sorted(CANDIDATES_DIR.glob("*.json")):
         try:
             out.append(CandidateRecord.from_dict(json.loads(p.read_text(encoding="utf-8"))))
@@ -169,7 +168,7 @@ def list_candidates() -> List[CandidateRecord]:
     return out
 
 
-def load_candidate(candidate_id: str) -> Optional[CandidateRecord]:
+def load_candidate(candidate_id: str) -> CandidateRecord | None:
     path = CANDIDATES_DIR / f"{candidate_id}.json"
     if not path.exists():
         return None
@@ -183,9 +182,9 @@ def promote_candidate_to_golden(
     candidate_id: str,
     dataset_path: str = "data/eval/golden.yaml",
     case_id: str = "",
-    reference_answer_override: Optional[str] = None,
+    reference_answer_override: str | None = None,
     delete_candidate: bool = True,
-) -> Optional[EvalCase]:
+) -> EvalCase | None:
     """
     Promote a reviewed candidate into the golden dataset.
 

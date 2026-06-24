@@ -13,14 +13,12 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
 
-from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 
-from agent.skills.base import BaseSkill, SkillContext, SkillResult, SkillStatus
 from agent.context.state import Grade, get_last_human_message
-from agent.skills.grade.prompts import GRADE_SYSTEM_PROMPT, GRADE_HUMAN_PROMPT
+from agent.skills.base import BaseSkill, SkillContext, SkillResult, SkillStatus
+from agent.skills.grade.prompts import GRADE_HUMAN_PROMPT, GRADE_SYSTEM_PROMPT
 from utils.log_utils import log
 
 __all__ = ["GradeSkill", "GradeSkillConfig"]
@@ -29,6 +27,7 @@ __all__ = ["GradeSkill", "GradeSkillConfig"]
 @dataclass
 class GradeSkillConfig:
     """Configuration for GradeSkill."""
+
     grade_system_prompt: str = GRADE_SYSTEM_PROMPT
     grade_human_prompt: str = GRADE_HUMAN_PROMPT
     max_retries: int = 2
@@ -53,7 +52,7 @@ class GradeSkill(BaseSkill):
 
     def __init__(
         self,
-        config: Optional[GradeSkillConfig] = None,
+        config: GradeSkillConfig | None = None,
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -64,13 +63,13 @@ class GradeSkill(BaseSkill):
     def chain(self):
         """Get the grading chain (lazy, cached)."""
         if self._chain is None:
-            llm_with_structured = self.llm.with_structured_output(
-                Grade, method="json_mode"
+            llm_with_structured = self.llm.with_structured_output(Grade, method="json_mode")
+            prompt = ChatPromptTemplate.from_messages(
+                [
+                    ("system", self._skill_config.grade_system_prompt),
+                    ("human", self._skill_config.grade_human_prompt),
+                ]
             )
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", self._skill_config.grade_system_prompt),
-                ("human", self._skill_config.grade_human_prompt),
-            ])
             self._chain = prompt | llm_with_structured
         return self._chain
 
@@ -98,10 +97,7 @@ class GradeSkill(BaseSkill):
             elapsed = (time.perf_counter() - start) * 1000
             next_action = "generate" if is_relevant else "rewrite"
 
-            log.info(
-                f"GradeSkill: relevant={is_relevant}, "
-                f"next={next_action}, {elapsed:.0f}ms"
-            )
+            log.info(f"GradeSkill: relevant={is_relevant}, next={next_action}, {elapsed:.0f}ms")
 
             return SkillResult(
                 status=SkillStatus.SUCCESS,
@@ -150,8 +146,7 @@ class GradeSkill(BaseSkill):
             next_action = "generate" if is_relevant else "rewrite"
 
             log.info(
-                f"GradeSkill (async): relevant={is_relevant}, "
-                f"next={next_action}, {elapsed:.0f}ms"
+                f"GradeSkill (async): relevant={is_relevant}, next={next_action}, {elapsed:.0f}ms"
             )
 
             return SkillResult(
@@ -182,7 +177,7 @@ class GradeSkill(BaseSkill):
     # Internal
     # ------------------------------------------------------------------
 
-    def _extract_inputs(self, messages: List) -> tuple:
+    def _extract_inputs(self, messages: list) -> tuple:
         """Extract question and context from messages."""
         try:
             question = get_last_human_message(messages).content
@@ -216,10 +211,12 @@ class GradeSkill(BaseSkill):
         """
         for attempt in range(self._skill_config.max_retries + 1):
             try:
-                result = self.chain.invoke({
-                    "question": question,
-                    "context": context,
-                })
+                result = self.chain.invoke(
+                    {
+                        "question": question,
+                        "context": context,
+                    }
+                )
 
                 return self._parse_relevance(result)
 
@@ -237,10 +234,12 @@ class GradeSkill(BaseSkill):
 
         for attempt in range(self._skill_config.max_retries + 1):
             try:
-                result = await self.chain.ainvoke({
-                    "question": question,
-                    "context": context,
-                })
+                result = await self.chain.ainvoke(
+                    {
+                        "question": question,
+                        "context": context,
+                    }
+                )
                 return self._parse_relevance(result)
 
             except Exception as e:

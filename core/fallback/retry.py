@@ -9,8 +9,9 @@ from __future__ import annotations
 import asyncio
 import functools
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, List, Optional, Tuple, TypeVar, Union
+from typing import TypeVar
 
 from utils.log_utils import log
 
@@ -35,12 +36,13 @@ class RetryPolicy:
         jitter: Add random jitter to prevent thundering herd
         retryable_exceptions: Exception types that trigger retry
     """
+
     max_retries: int = 3
     base_delay: float = 1.0
     max_delay: float = 60.0
     exponential_base: float = 2.0
     jitter: bool = True
-    retryable_exceptions: Tuple[type, ...] = (
+    retryable_exceptions: tuple[type, ...] = (
         ConnectionError,
         TimeoutError,
     )
@@ -49,21 +51,18 @@ class RetryPolicy:
         """Calculate delay for given attempt number."""
         import random
 
-        delay = min(
-            self.base_delay * (self.exponential_base ** attempt),
-            self.max_delay
-        )
+        delay = min(self.base_delay * (self.exponential_base**attempt), self.max_delay)
 
         if self.jitter:
             # Add up to 25% jitter
-            delay *= (1 + random.random() * 0.25)
+            delay *= 1 + random.random() * 0.25
 
         return delay
 
 
 def retry_with_backoff(
-    policy: Optional[RetryPolicy] = None,
-    retryable_exceptions: Optional[Tuple[type, ...]] = None,
+    policy: RetryPolicy | None = None,
+    retryable_exceptions: tuple[type, ...] | None = None,
 ):
     """
     Decorator for automatic retry with exponential backoff.
@@ -113,9 +112,7 @@ def retry_with_backoff(
                         )
                         await asyncio.sleep(delay)
                     else:
-                        log.error(
-                            f"{func.__name__} failed after {policy.max_retries + 1} attempts"
-                        )
+                        log.error(f"{func.__name__} failed after {policy.max_retries + 1} attempts")
 
             raise last_exception
 
@@ -138,9 +135,7 @@ def retry_with_backoff(
                         )
                         time.sleep(delay)
                     else:
-                        log.error(
-                            f"{func.__name__} failed after {policy.max_retries + 1} attempts"
-                        )
+                        log.error(f"{func.__name__} failed after {policy.max_retries + 1} attempts")
 
             raise last_exception
 

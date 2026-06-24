@@ -6,7 +6,6 @@ import asyncio
 import threading
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from langchain_core.documents import Document
 
@@ -35,7 +34,7 @@ def get_reranker_model_source() -> str:
     return RERANKER_MODEL
 
 
-_cache_status: Dict[str, bool] = {}
+_cache_status: dict[str, bool] = {}
 _cache_status_lock = threading.Lock()
 
 
@@ -91,11 +90,11 @@ class RerankerConfig:
 class Reranker:
     """Lazy-loaded cross-encoder with graceful retrieval-order fallback."""
 
-    def __init__(self, config: Optional[RerankerConfig] = None):
+    def __init__(self, config: RerankerConfig | None = None):
         self.config = config or RerankerConfig()
         self._model = None
         self._load_attempted = False
-        self._load_error: Optional[str] = None
+        self._load_error: str | None = None
         self._load_lock = threading.Lock()
         log.debug(f"Reranker initialized: model={self.config.model_source}")
 
@@ -149,10 +148,10 @@ class Reranker:
 
     @staticmethod
     def _fallback_documents(
-        documents: List[Document],
+        documents: list[Document],
         top_k: int,
-        error: Optional[str] = None,
-    ) -> List[Document]:
+        error: str | None = None,
+    ) -> list[Document]:
         results = []
         for doc in documents[:top_k]:
             metadata = dict(doc.metadata)
@@ -165,9 +164,9 @@ class Reranker:
     def rerank(
         self,
         query: str,
-        documents: List[Document],
-        top_k: Optional[int] = None,
-    ) -> List[Document]:
+        documents: list[Document],
+        top_k: int | None = None,
+    ) -> list[Document]:
         if not documents:
             return []
         top_k = top_k or self.config.top_k
@@ -182,9 +181,7 @@ class Reranker:
                 batch_size=self.config.batch_size,
                 show_progress_bar=False,
             )
-            scored_docs = sorted(
-                zip(documents, scores), key=lambda item: item[1], reverse=True
-            )
+            scored_docs = sorted(zip(documents, scores), key=lambda item: item[1], reverse=True)
 
             results = []
             for doc, score in scored_docs[:top_k]:
@@ -208,13 +205,13 @@ class Reranker:
     async def arerank(
         self,
         query: str,
-        documents: List[Document],
-        top_k: Optional[int] = None,
-    ) -> List[Document]:
+        documents: list[Document],
+        top_k: int | None = None,
+    ) -> list[Document]:
         return await asyncio.to_thread(self.rerank, query, documents, top_k)
 
 
-_reranker: Optional[Reranker] = None
+_reranker: Reranker | None = None
 
 
 def get_reranker() -> Reranker:

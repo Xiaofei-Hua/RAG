@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -39,9 +39,7 @@ class TracingMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         # Generate or use existing trace ID
         trace_id = (
-            _current_otel_trace_id()
-            or request.headers.get("X-Trace-ID")
-            or str(uuid.uuid4())[:16]
+            _current_otel_trace_id() or request.headers.get("X-Trace-ID") or str(uuid.uuid4())[:16]
         )
 
         # Store in request state

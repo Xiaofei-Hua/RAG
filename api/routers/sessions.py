@@ -6,10 +6,8 @@ Handles session management endpoints.
 
 from __future__ import annotations
 
-from typing import List, Optional
-
-from fastapi import APIRouter, HTTPException, Depends
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel
 
 from utils.log_utils import log
 
@@ -20,23 +18,27 @@ router = APIRouter()
 # Models
 # =============================================================================
 
+
 class SessionInfo(BaseModel):
     """Session information model."""
+
     session_id: str
     message_count: int
     title: str = ""
-    created_at: Optional[float] = None
-    last_active: Optional[float] = None
+    created_at: float | None = None
+    last_active: float | None = None
 
 
 class SessionListResponse(BaseModel):
     """Session list response."""
-    sessions: List[SessionInfo]
+
+    sessions: list[SessionInfo]
     total: int
 
 
 class SessionCreateResponse(BaseModel):
     """Session creation response."""
+
     session_id: str
     message: str
 
@@ -45,9 +47,11 @@ class SessionCreateResponse(BaseModel):
 # Dependencies
 # =============================================================================
 
+
 async def get_session_memory():
     """Get session memory instance."""
     from core.memory.redis_memory import get_session_memory
+
     return get_session_memory()
 
 
@@ -55,10 +59,12 @@ async def get_session_memory():
 # Endpoints
 # =============================================================================
 
+
 @router.post("", response_model=SessionCreateResponse)
 async def create_session():
     """Create a new session."""
     import uuid
+
     session_id = str(uuid.uuid4())
 
     return SessionCreateResponse(
@@ -71,7 +77,7 @@ async def create_session():
 async def list_sessions(
     skip: int = 0,
     limit: int = 20,
-    session_memory = Depends(get_session_memory),
+    session_memory=Depends(get_session_memory),
 ):
     """List all active sessions."""
     try:
@@ -97,7 +103,7 @@ async def list_sessions(
 @router.get("/{session_id}", response_model=SessionInfo)
 async def get_session(
     session_id: str,
-    session_memory = Depends(get_session_memory),
+    session_memory=Depends(get_session_memory),
 ):
     """Get session details."""
     try:
@@ -121,7 +127,7 @@ async def get_session(
 @router.post("/{session_id}/extend")
 async def extend_session(
     session_id: str,
-    session_memory = Depends(get_session_memory),
+    session_memory=Depends(get_session_memory),
 ):
     """Refresh a session's last-active timestamp."""
     try:
@@ -139,7 +145,7 @@ async def extend_session(
 @router.delete("/{session_id}")
 async def delete_session(
     session_id: str,
-    session_memory = Depends(get_session_memory),
+    session_memory=Depends(get_session_memory),
 ):
     """Delete a session and its history."""
     try:

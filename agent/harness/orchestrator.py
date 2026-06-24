@@ -16,42 +16,91 @@ import asyncio
 import contextvars
 import sqlite3
 import uuid
-from dataclasses import dataclass
-from typing import Any, AsyncIterator, Dict, List, Optional
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
+from typing import Any
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.runnables import RunnableLambda
 from langgraph.checkpoint.memory import MemorySaver
-from langgraph.constants import START, END
+from langgraph.constants import END, START
 from langgraph.graph import StateGraph
 from langgraph.prebuilt import ToolNode, tools_condition
 
-from agent.skills.base import BaseSkill, SkillContext, SkillResult, SkillStatus
-from agent.skills.registry import SkillRegistry
+from agent.context.state import AgentState
 from agent.harness.lifecycle import LifecycleManager
 from agent.harness.observability import TraceCollector
-from agent.harness.planner import ExecutionPlan, Planner, PlanType
-from agent.context.state import AgentState
+from agent.harness.planner import Planner, PlanType
+from agent.skills.base import BaseSkill, SkillContext, SkillResult, SkillStatus
+from agent.skills.registry import SkillRegistry
 from utils.log_utils import log
 
 __all__ = ["AgentHarness", "HarnessConfig"]
 
 
+# Default on-disk path for session checkpoints. Exposed as a module-level
+# attribute so tests/conftest.py tmp_data_dir can redirect it (AGENTS.md §10
+# persistence contract); HarnessConfig.checkpoint_path reads it as its default.
+DEFAULT_CHECKPOINT_PATH = "./data/checkpoints.db"
+
+
+def _enable_strict_msgpack_deserialization() -> None:
+    """Force langgraph-checkpoint into strict msgpack deserialization.
+
+    Background: langgraph-checkpoint >= 3.0 fixed CVE-2025-64439 (json-mode
+    deserialisation RCE) via a json allow-list and removal of the unsafe json
+    mode. Separately, its ``JsonPlusSerializer`` exposes a *msgpack* deserialiser
+    whose default is **permissive** (``allowed_msgpack_modules=True`` = any type
+    instantiated) unless ``LANGGRAPH_STRICT_MSGPACK=true``. Because checkpoints
+    land on disk as plaintext blobs, a permissive msgpack path is an RCE surface
+    for anyone able to write the checkpoint DB. A security-fix PR must not ship
+    with that path open, so we force strict here.
+
+    The env var is read once at module import; to be robust against other
+    modules importing langgraph.checkpoint before us, we also set the resolved
+    flag directly on the internal module (idempotent). Strict mode only blocks
+    *unregistered* custom types — normal graph state (dicts/messages/scalars)
+    are SAFE_MSGPACK_TYPES and round-trip unaffected (verified in
+    test_strict_msgpack_allows_normal_checkpoint_round_trip).
+    """
+    import os
+
+    os.environ.setdefault("LANGGRAPH_STRICT_MSGPACK", "true")
+    try:
+        from langgraph.checkpoint.serde import jsonplus as _jp
+
+        _lg = getattr(_jp, "_lg_msgpack", None)
+        if _lg is not None:
+            _lg.STRICT_MSGPACK_ENABLED = True
+    except ImportError:
+        pass
+
+
+_enable_strict_msgpack_deserialization()
+
+
+# Sentinel SkillResult used by `_skill_to_conditional._assert_no_state_lost` to
+# run the before-hook state-leak check without a real result yet (channel 2 is
+# checked again after the skill executes with the actual result).
+_EMPTY_SKILLRESULT = SkillResult()
+
+
 # Per-run trace collector. Each invoke()/ainvoke() call installs a fresh
 # TraceCollector here so that concurrent runs on the singleton harness never
 # share/overwrite each other's traces (begin_run()/_traces.clear() isolation).
-_run_trace_ctx: contextvars.ContextVar[Optional[TraceCollector]] = (
-    contextvars.ContextVar("agent_run_trace", default=None)
+_run_trace_ctx: contextvars.ContextVar[TraceCollector | None] = contextvars.ContextVar(
+    "agent_run_trace", default=None
 )
 
 
 @dataclass
 class HarnessConfig:
     """Configuration for AgentHarness."""
+
     # Session settings
-    session_id: Optional[str] = None
-    thread_id: Optional[str] = None
+    session_id: str | None = None
+    thread_id: str | None = None
 
     # Execution mode
     default_mode: str = "thinking"
@@ -59,7 +108,12 @@ class HarnessConfig:
 
     # Memory / checkpointing
     use_memory: bool = True
-    checkpoint_path: str = "./data/checkpoints.db"
+    # Resolved lazily via default_factory (evaluated at instantiation, not
+    # class-definition) so monkeypatching the module-level DEFAULT_CHECKPOINT_PATH
+    # (e.g. tests/conftest.py tmp_data_dir) takes effect for fresh instances.
+    # The annotation stays ``str`` — no None sentinel leaks into downstream
+    # sqlite3.connect/aiosqlite.connect call sites (AGENTS.md §10).
+    checkpoint_path: str = field(default_factory=lambda: DEFAULT_CHECKPOINT_PATH)
 
     # Rewrites
     max_rewrites: int = 3
@@ -100,8 +154,8 @@ class AgentHarness:
 
     def __init__(
         self,
-        llm: Optional[BaseChatModel] = None,
-        config: Optional[HarnessConfig] = None,
+        llm: BaseChatModel | None = None,
+        config: HarnessConfig | None = None,
     ):
         self._llm = llm
         self._config = config or HarnessConfig()
@@ -124,6 +178,17 @@ class AgentHarness:
         # Guards the async checkpoint init (astart) so concurrent first-calls
         # do not double-build the graph.
         self._async_init_lock = asyncio.Lock()
+        # Serializes the SYNC invoke()/stream() graph calls. The sync SQLite
+        # checkpointer uses check_same_thread=False on a shared connection with
+        # no internal locking, so concurrent sync invocations across threads
+        # would raise/corrupt (LangGraph writes checkpoints via SqliteSaver on
+        # every node). The async path (AsyncSqliteSaver via aiosqlite) is
+        # connection-safe and does NOT take this lock. Production multi-worker
+        # deployments should use the async path; this lock makes the sync path
+        # correct for CLI/scripts.
+        import threading
+
+        self._sync_invoke_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Properties
@@ -133,6 +198,7 @@ class AgentHarness:
     def llm(self) -> BaseChatModel:
         if self._llm is None:
             from models.llm_models import get_llm
+
             self._llm = get_llm()
         return self._llm
 
@@ -180,11 +246,11 @@ class AgentHarness:
         retrieval.
         """
         from agent.skills.agent.skill import AgentSkill
-        from agent.skills.retrieve.skill import RetrieveSkill
-        from agent.skills.grade.skill import GradeSkill
-        from agent.skills.rewrite.skill import RewriteSkill
         from agent.skills.generate.skill import GenerateSkill
+        from agent.skills.grade.skill import GradeSkill
         from agent.skills.intent.skill import IntentSkill
+        from agent.skills.retrieve.skill import RetrieveSkill
+        from agent.skills.rewrite.skill import RewriteSkill
 
         # Build the MCP tool client aggregating all available tool servers.
         mcp_client = self._build_mcp_client()
@@ -263,9 +329,7 @@ class AgentHarness:
             workflow.add_node("agent", self._skill_to_node("agent", agent_skill))
 
         if retrieve_skill is not None:
-            workflow.add_node(
-                "retrieve", self._skill_to_node("retrieve", retrieve_skill)
-            )
+            workflow.add_node("retrieve", self._skill_to_node("retrieve", retrieve_skill))
         else:
             retrieve_tools = self._get_retrieve_tools()
             workflow.add_node("retrieve", ToolNode(retrieve_tools))
@@ -316,9 +380,9 @@ class AgentHarness:
 
     def _merge_state_update(
         self,
-        result: "SkillResult",
-        before_increments: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        result: SkillResult,
+        before_increments: dict[str, Any],
+    ) -> dict[str, Any]:
         """
         Build the node's state-update dict from a SkillResult plus any
         ``shared_state`` increments returned by before-skill hooks.
@@ -347,7 +411,7 @@ class AgentHarness:
     def _skill_to_node(self, skill_name: str, skill: BaseSkill):
         harness = self
 
-        def node_fn(state: AgentState) -> Dict[str, Any]:
+        def node_fn(state: AgentState) -> dict[str, Any]:
             context = SkillContext.from_agent_state(
                 state,
                 session_id=harness._config.session_id or "",
@@ -361,6 +425,7 @@ class AgentHarness:
                 before_increments = harness._lifecycle.fire_before_skill(skill_name, context)
             except Exception as guardrail_err:
                 from agent.skills.base import SkillResult, SkillStatus
+
                 log.warning(f"Skill '{skill_name}' blocked: {guardrail_err}")
                 return SkillResult(
                     status=SkillStatus.FAILURE,
@@ -384,7 +449,7 @@ class AgentHarness:
 
             return harness._merge_state_update(result, before_increments)
 
-        async def async_node_fn(state: AgentState) -> Dict[str, Any]:
+        async def async_node_fn(state: AgentState) -> dict[str, Any]:
             context = SkillContext.from_agent_state(
                 state,
                 session_id=harness._config.session_id or "",
@@ -432,7 +497,38 @@ class AgentHarness:
         Convert a skill to a LangGraph conditional edge function.
 
         Used for the grade skill which returns "generate" or "rewrite".
+
+        Conditional-edge functions can only return a routing key — they cannot
+        emit a state update. That means state writes are silently lost here along
+        TWO channels: (1) any ``shared_state`` increment returned by a before-hook,
+        and (2) the skill's own ``SkillResult.state_updates``/``shared_state``.
+        ``_assert_no_state_lost`` guards both and logs an error (never raises) if
+        either channel carries state — so a future developer who adds a grade
+        before-hook or who puts ``state_updates`` on GradeSkill gets a loud signal
+        instead of a silent drop. The real fix if grade ever needs to write state
+        is to convert it from a conditional edge into a real node.
         """
+
+        def _assert_no_state_lost(before_increments, result):
+            leaked = []
+            if before_increments:
+                if before_increments.get("shared_state"):
+                    leaked.append("before-hook shared_state")
+                else:
+                    leaked.append(f"before-hook fields: {list(before_increments)}")
+            su = result.state_updates or {}
+            if su.get("shared_state"):
+                leaked.append("skill state_updates.shared_state")
+            elif su:
+                leaked.append(f"skill state_updates keys: {list(su)}")
+            if leaked:
+                log.error(
+                    f"[conditional-edge-guard] skill '{skill_name}' is wired as a "
+                    f"conditional edge and cannot persist state, but it produced: "
+                    f"{leaked}. The state was dropped. If '{skill_name}' needs to "
+                    f"write state, convert it from a conditional edge into a real node."
+                )
+
         harness = self
 
         def conditional_fn(state: AgentState):
@@ -442,12 +538,8 @@ class AgentHarness:
                 thread_id=harness._config.thread_id or "",
             )
 
-            harness._lifecycle.fire_before_skill(skill_name, context)
-            # NOTE: conditional (edge) functions can only return a routing key,
-            # not a state update, so any before-hook shared_state increments
-            # cannot be persisted here. No current before-hook targets the
-            # "grade" node, so this is benign; if one is added, grade must be
-            # converted from a conditional edge into a real node.
+            before_increments = harness._lifecycle.fire_before_skill(skill_name, context)
+            _assert_no_state_lost(before_increments, _EMPTY_SKILLRESULT)
 
             trace = harness.traces.begin(skill_name)
             result = skill._timed_execute(context)
@@ -459,6 +551,7 @@ class AgentHarness:
             )
 
             harness._lifecycle.fire_after_skill(skill_name, context, result)
+            _assert_no_state_lost(None, result)
 
             # Return the routing decision
             return result.next_action or "generate"
@@ -469,7 +562,8 @@ class AgentHarness:
                 session_id=harness._config.session_id or "",
                 thread_id=harness._config.thread_id or "",
             )
-            harness._lifecycle.fire_before_skill(skill_name, context)
+            before_increments = harness._lifecycle.fire_before_skill(skill_name, context)
+            _assert_no_state_lost(before_increments, _EMPTY_SKILLRESULT)
             trace = harness.traces.begin(skill_name)
 
             from core.tracing import trace_context
@@ -492,6 +586,7 @@ class AgentHarness:
                 metadata=result.metadata,
             )
             harness._lifecycle.fire_after_skill(skill_name, context, result)
+            _assert_no_state_lost(None, result)
             return result.next_action or "generate"
 
         return RunnableLambda(conditional_fn, afunc=async_conditional_fn)
@@ -511,6 +606,7 @@ class AgentHarness:
 
         # Fallback: use the existing retriever tool
         from agent.mcp.retriever_tools import get_retriever_tool
+
         return [get_retriever_tool()]
 
     # ------------------------------------------------------------------
@@ -546,6 +642,7 @@ class AgentHarness:
         """Set up SQLite checkpointing for session persistence."""
         try:
             import os
+
             _ckpt_dir = os.path.dirname(self._config.checkpoint_path) or "."
             os.makedirs(_ckpt_dir, exist_ok=True)
             self._checkpoint_conn = sqlite3.connect(
@@ -553,13 +650,11 @@ class AgentHarness:
                 check_same_thread=False,
             )
             from langgraph.checkpoint.sqlite import SqliteSaver
+
             self._memory = SqliteSaver(self._checkpoint_conn)
             log.info("AgentHarness: SQLite checkpoint enabled")
         except ImportError:
-            log.warning(
-                "langgraph-checkpoint-sqlite not installed, "
-                "using MemorySaver"
-            )
+            log.warning("langgraph-checkpoint-sqlite not installed, using MemorySaver")
             self._memory = MemorySaver()
 
     async def astart(self) -> None:
@@ -579,6 +674,7 @@ class AgentHarness:
                 return
 
             import os
+
             import aiosqlite
             from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
@@ -587,9 +683,7 @@ class AgentHarness:
             if self._checkpoint_conn is not None:
                 self._checkpoint_conn.close()
                 self._checkpoint_conn = None
-            self._async_checkpoint_conn = await aiosqlite.connect(
-                self._config.checkpoint_path
-            )
+            self._async_checkpoint_conn = await aiosqlite.connect(self._config.checkpoint_path)
             self._memory = AsyncSqliteSaver(self._async_checkpoint_conn)
             self._graph = None
             self.build_graph()
@@ -602,10 +696,10 @@ class AgentHarness:
     def invoke(
         self,
         question: str,
-        thread_id: Optional[str] = None,
-        max_rewrites: Optional[int] = None,
-        mode: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        thread_id: str | None = None,
+        max_rewrites: int | None = None,
+        mode: str | None = None,
+    ) -> dict[str, Any]:
         """
         Invoke the agent with a question (thinking mode by default).
 
@@ -642,7 +736,10 @@ class AgentHarness:
 
         run_collector = self._begin_run()
         try:
-            result = self.graph.invoke(inputs, config=config)
+            # Serialize sync graph invocations — the shared sync SQLite
+            # checkpointer connection is not safe for concurrent writes.
+            with self._sync_invoke_lock:
+                result = self.graph.invoke(inputs, config=config)
         finally:
             self._end_run(run_collector)
         return result
@@ -650,9 +747,9 @@ class AgentHarness:
     def stream(
         self,
         question: str,
-        thread_id: Optional[str] = None,
+        thread_id: str | None = None,
         stream_mode: Any = "values",
-        max_rewrites: Optional[int] = None,
+        max_rewrites: int | None = None,
     ):
         """
         Stream the graph execution.
@@ -683,19 +780,20 @@ class AgentHarness:
 
         run_collector = self._begin_run()
         try:
-            yield from self.graph.stream(
-                inputs, config=config, stream_mode=stream_mode
-            )
+            # Serialize sync graph streams — checkpoints are written throughout
+            # streaming, so the lock spans the whole generator.
+            with self._sync_invoke_lock:
+                yield from self.graph.stream(inputs, config=config, stream_mode=stream_mode)
         finally:
             self._end_run(run_collector)
 
     async def ainvoke(
         self,
         question: str,
-        thread_id: Optional[str] = None,
-        max_rewrites: Optional[int] = None,
-        mode: Optional[str] = None,
-    ) -> Dict[str, Any]:
+        thread_id: str | None = None,
+        max_rewrites: int | None = None,
+        mode: str | None = None,
+    ) -> dict[str, Any]:
         """Invoke the graph through its native asynchronous execution path."""
         plan = self._planner.plan(query=question, mode=mode)
         if plan.plan_type == PlanType.FAST:
@@ -733,9 +831,9 @@ class AgentHarness:
     async def astream(
         self,
         question: str,
-        thread_id: Optional[str] = None,
+        thread_id: str | None = None,
         stream_mode: Any = "values",
-        max_rewrites: Optional[int] = None,
+        max_rewrites: int | None = None,
     ) -> AsyncIterator[Any]:
         """Stream graph updates and custom token events natively through asyncio."""
         await self.astart()
@@ -757,9 +855,14 @@ class AgentHarness:
             ):
                 yield event
         finally:
-            run_collector.end_run()
+            # Align with invoke/ainvoke/invoke_fast: reset the per-run
+            # contextvar (so traces never bleed into a subsequent run on the
+            # same task) and emit the run summary. The prior code only called
+            # end_run() directly, leaving _run_trace_ctx pointing at the
+            # finished collector and skipping log_summary() — see B1.
+            self._end_run(run_collector)
 
-    def invoke_fast(self, query: str, thread_id: Optional[str] = None) -> Dict[str, Any]:
+    def invoke_fast(self, query: str, thread_id: str | None = None) -> dict[str, Any]:
         """
         Fast mode: direct retrieve + generate without the full graph.
 
@@ -793,7 +896,7 @@ class AgentHarness:
             "_generation_time_ms": result.generation_time_ms,
         }
 
-    async def ainvoke_fast(self, query: str, top_k: int = 3) -> AsyncIterator[Dict[str, Any]]:
+    async def ainvoke_fast(self, query: str, top_k: int = 3) -> AsyncIterator[dict[str, Any]]:
         """
         Fast mode with streaming.
 
@@ -806,7 +909,7 @@ class AgentHarness:
             async for event in fast_generate_stream(query, top_k=top_k):
                 yield event
         finally:
-            run_collector.end_run()
+            self._end_run(run_collector)
 
     # ------------------------------------------------------------------
     # Session management
@@ -818,7 +921,7 @@ class AgentHarness:
         self._config.session_id = str(uuid.uuid4())
         return self._config.thread_id
 
-    def get_config(self) -> Dict[str, Any]:
+    def get_config(self) -> dict[str, Any]:
         """Get current harness configuration."""
         return {
             "session_id": self._config.session_id,

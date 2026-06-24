@@ -54,6 +54,20 @@ class TestMergeReducer:
         assert left == {"a": 1}
         assert right == {"b": 2}
 
+    def test_list_valued_key_is_whole_key_overwrite_not_concatenation(self):
+        """F03 contract pin: the reducer is a shallow merge. When two producers
+        write the same key holding a list, the later write REPLACES the whole
+        list — it does NOT concatenate. This is the documented foot-gun
+        (AGENTS.md §4.1); new producers must use a fresh key or accept overwrite
+        semantics. Pinning it prevents an accidental switch to deep-merge."""
+        from agent.context.state import merge_shared_state
+
+        left = {"retrieved_contexts": ["doc_a", "doc_b"]}
+        right = {"retrieved_contexts": ["doc_c"]}
+        merged = merge_shared_state(left, right)
+        # Later write wins wholesale; "doc_a"/"doc_b" are GONE, not appended.
+        assert merged == {"retrieved_contexts": ["doc_c"]}
+
     def test_initial_state_has_shared_state(self):
         from agent.context.state import StateManager
 

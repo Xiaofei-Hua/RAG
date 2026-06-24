@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import importlib
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from agent.skills.base import BaseSkill
 from utils.log_utils import log
@@ -25,9 +25,9 @@ _SKILLS_DIR = Path(__file__).parent
 
 class SkillRegistry:
     def __init__(self):
-        self._skills: Dict[str, BaseSkill] = {}
+        self._skills: dict[str, BaseSkill] = {}
 
-    def register(self, skill: BaseSkill) -> "SkillRegistry":
+    def register(self, skill: BaseSkill) -> SkillRegistry:
         self._skills[skill.name] = skill
         log.info(f"Skill registered: {skill.name}")
         return self
@@ -35,7 +35,7 @@ class SkillRegistry:
     def unregister(self, name: str) -> None:
         self._skills.pop(name, None)
 
-    def get(self, name: str) -> Optional[BaseSkill]:
+    def get(self, name: str) -> BaseSkill | None:
         return self._skills.get(name)
 
     def require(self, name: str) -> BaseSkill:
@@ -44,16 +44,16 @@ class SkillRegistry:
             raise KeyError(f"Skill '{name}' not registered")
         return skill
 
-    def list_skills(self) -> List[str]:
+    def list_skills(self) -> list[str]:
         return list(self._skills.keys())
 
-    def get_all(self) -> Dict[str, BaseSkill]:
+    def get_all(self) -> dict[str, BaseSkill]:
         return dict(self._skills)
 
-    def health_check(self) -> Dict[str, Any]:
+    def health_check(self) -> dict[str, Any]:
         return {name: skill.health_check() for name, skill in self._skills.items()}
 
-    def auto_discover(self, **skill_kwargs) -> "SkillRegistry":
+    def auto_discover(self, **skill_kwargs) -> SkillRegistry:
         """
         Scan agent/skills/ subdirectories for skill.py modules
         and register any BaseSkill instances they export.

@@ -14,10 +14,8 @@ full self-consistency check via a second LLM call.
 from __future__ import annotations
 
 import re
-from typing import Optional, Tuple
 
 from agent.eval.judge import is_hard_claim, split_claims
-from utils.log_utils import log
 
 __all__ = ["reflect_on_reasoning", "SelfReflectionResult"]
 
@@ -37,15 +35,13 @@ _HEDGE_RE = re.compile(
     r"(?i)不确定|可能|也许|大概|似乎|推测|猜测|不肯定|存疑|"
     r"unsure|uncertain|maybe|perhaps|might|guess|unclear"
 )
-_CONTRADICTION_RE = re.compile(
-    r"(?i)矛盾|冲突|不一致|相反|but also|however|on the other hand"
-)
+_CONTRADICTION_RE = re.compile(r"(?i)矛盾|冲突|不一致|相反|but also|however|on the other hand")
 
 
 def reflect_on_reasoning(
     answer: str,
     reasoning: str,
-    grounding_faithfulness: Optional[float] = None,
+    grounding_faithfulness: float | None = None,
 ) -> SelfReflectionResult:
     """
     Inspect the reasoning trace for uncertainty signals.

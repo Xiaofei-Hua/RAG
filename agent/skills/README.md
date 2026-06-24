@@ -1,6 +1,7 @@
 # Skills
 
-Each skill is a self-contained capability unit that implements `BaseSkill`.
+Each skill is a self-contained capability unit that implements `BaseSkill`. The
+source of truth is the **directory** form: `agent/skills/<name>/skill.py`.
 
 ## Interface
 
@@ -16,6 +17,9 @@ class BaseSkill(ABC):
     async def aexecute(self, context: SkillContext) -> SkillResult: ...
 ```
 
+Each skill directory may also carry `prompts.py` (re-exporting from
+`core/prompts/aircraft_prompts.py`), `config.yaml`, and a `README.md`.
+
 ## Pipeline Flow
 
 ```
@@ -25,18 +29,23 @@ AgentSkill -> RetrieveSkill -> GradeSkill -> GenerateSkill
 
 ## Adding a Skill
 
-1. Create `my_skill.py` inheriting `BaseSkill`
-2. Set `name` and `description` class attributes
-3. Implement `execute()` and `aexecute()`
-4. Register via `harness.register_skill(MySkill())`
+1. Create `agent/skills/<name>/skill.py` inheriting `BaseSkill`.
+2. Set `name` and `description` class attributes.
+3. Implement `execute()` and `aexecute()`.
+4. Register in `agent/harness/orchestrator.py` `register_defaults()` (or wire
+   into `build_graph()`).
 
 ## Current Skills
 
 | Skill | File | Description |
 |-------|------|-------------|
-| agent | agent_skill.py | Tool-call decision node |
-| retrieve | retrieve_skill.py | Hybrid retrieval (handled by ToolNode) |
-| grade | grade_skill.py | Document relevance grading |
-| rewrite | rewrite_skill.py | Query rewriting |
-| generate | generate_skill.py | Final answer generation |
-| intent | intent_skill.py | User intent classification |
+| agent | agent/skills/agent/skill.py | Tool-call decision node |
+| retrieve | agent/skills/retrieve/skill.py | Hybrid retrieval (Dense + BM25 + RRF) |
+| grade | agent/skills/grade/skill.py | Document relevance grading |
+| rewrite | agent/skills/rewrite/skill.py | Query rewriting |
+| generate | agent/skills/generate/skill.py | Final answer generation (Qwen3 reasoning capture + grounding + confidence) |
+| intent | agent/skills/intent/skill.py | User intent classification |
+
+> Note: legacy flat shim files (`agent/skills/*_skill.py`) have been removed —
+> they only re-exported the directory skills. Always use the directory form
+> above.

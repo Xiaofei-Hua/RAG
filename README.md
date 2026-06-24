@@ -51,7 +51,7 @@ Fast 模式跳过多轮判断，直接执行检索和生成，适合需要更低
 ### 1. 环境要求
 
 - Linux、WSL2 或 macOS
-- Python 3.10+
+- Python 3.10+（开发最低版本；CI 用 3.13 提前发现兼容问题，见 `.github/workflows/`）
 - Node.js 20+
 - [Ollama](https://ollama.com/)
 - 建议至少 16 GB 内存；运行 `qwen3:14b` 建议使用独立显卡
@@ -643,21 +643,29 @@ EVAL_SAMPLE_RATE=0.1
 ```text
 agent/
 ├── harness/       LangGraph 编排、计划、生命周期与可观测性
-├── skills/        Agent、检索、评分、重写、生成和意图技能
+├── skills/        Agent、检索、评分、重写、生成和意图技能（目录式布局）
 ├── context/       Agent 共享状态与会话上下文
 ├── mcp/           MCP 服务端、客户端与检索工具
+├── eval/          可信评测与反馈回流飞轮（judge/scorer/runner/dataset/history/...）
+├── guardrails/    输入输出安全检查（input/output/grounding/pii）
 ├── feedback/      用户反馈与升级处理
-├── guardrails/    输入输出安全检查
-└── memory/        长期记忆提取与存储
+├── memory/        长期记忆提取与存储
+└── metrics/       指标与成本
 
-api/               FastAPI 应用、路由与中间件
-core/              检索、意图、会话、降级和 tracing
-documents/         文档解析、注册与 Milvus 管理
+api/               FastAPI 应用、路由（chat/documents/sessions/admin/feedback/retrieval）与中间件
+core/              检索（hybrid/bm25/reranker/mmr/cache）、意图、会话、降级、tracing、并发
+documents/         文档解析（markdown/pdf/ocr）、注册表与 Milvus 管理
 models/            LLM 与 Embedding 配置
-web/               Vue 3 前端
-tests/             单元、API 与全链路测试
-docs/              API 文档与技术报告
+web/               Vue 3 + Vite + TS + Pinia 前端
+tests/             单元、进程内 E2E、性能、前端 E2E、API 与全链路测试
+docs/              API 文档、技术报告、specs/（需求-设计-评审）与 specs/prompts/（评审模板）
+scripts/           run_eval / replay_eval / curate_golden / load_test / download_reranker
+utils/             log_utils / env_utils / print_utils / think_tag_utils
+data/              运行时 SQLite（sessions/inferences/candidates/eval/judge_cache）+ milvus_data.db
 ```
+
+> 更新于本目录的树以实际目录为准；详细的模块契约、降级矩阵、不变量见
+> [AGENTS.md](AGENTS.md) 及子目录 `agent/AGENTS.md`、`core/AGENTS.md`、`web/AGENTS.md`、`tests/AGENTS.md`。
 
 ## 数据与运行时文件
 

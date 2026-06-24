@@ -11,13 +11,14 @@ Protocol: https://modelcontextprotocol.io
 
 from __future__ import annotations
 
+import asyncio
 import inspect
-import json
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 from langchain_core.tools import StructuredTool
-from pydantic import BaseModel, create_model
+from pydantic import create_model
 
 from utils.log_utils import log
 
@@ -34,9 +35,11 @@ __all__ = [
 # Core data types
 # =============================================================================
 
+
 @dataclass
 class MCPServerConfig:
     """Configuration for MCP server."""
+
     name: str = "rag-mcp-server"
     version: str = "1.0.0"
     description: str = "MCP Server for Enterprise RAG Platform"
@@ -45,23 +48,26 @@ class MCPServerConfig:
 @dataclass
 class MCPTool:
     """MCP tool definition."""
+
     name: str
     description: str
-    input_schema: Dict[str, Any]
+    input_schema: dict[str, Any]
     handler: Callable
 
 
 @dataclass
 class MCPToolResult:
     """Result from tool execution."""
+
     success: bool
     result: Any
-    error: Optional[str] = None
+    error: str | None = None
 
 
 # =============================================================================
 # Base MCP Server
 # =============================================================================
+
 
 class _BaseMCPServer:
     """
@@ -70,16 +76,16 @@ class _BaseMCPServer:
     Provides a registry for tools and handles tool execution.
     """
 
-    def __init__(self, config: Optional[MCPServerConfig] = None):
+    def __init__(self, config: MCPServerConfig | None = None):
         self.config = config or MCPServerConfig()
-        self._tools: Dict[str, MCPTool] = {}
+        self._tools: dict[str, MCPTool] = {}
         log.info(f"MCPServer initialized: {self.config.name}")
 
     def register_tool(
         self,
         name: str,
         description: str,
-        input_schema: Dict[str, Any],
+        input_schema: dict[str, Any],
         handler: Callable,
     ):
         if name in self._tools:
@@ -97,7 +103,7 @@ class _BaseMCPServer:
             del self._tools[name]
             log.debug(f"Tool unregistered: {name}")
 
-    def list_tools(self) -> List[Dict[str, Any]]:
+    def list_tools(self) -> list[dict[str, Any]]:
         return [
             {
                 "name": tool.name,
@@ -110,7 +116,7 @@ class _BaseMCPServer:
     async def call_tool(
         self,
         name: str,
-        arguments: Dict[str, Any],
+        arguments: dict[str, Any],
     ) -> MCPToolResult:
         if name not in self._tools:
             return MCPToolResult(
@@ -124,6 +130,7 @@ class _BaseMCPServer:
         try:
             log.info(f"Executing tool: {name} with args: {arguments}")
             import asyncio
+
             if asyncio.iscoroutinefunction(tool.handler):
                 result = await tool.handler(**arguments)
             else:
@@ -133,17 +140,19 @@ class _BaseMCPServer:
             log.error(f"Tool execution failed: {e}")
             return MCPToolResult(success=False, result=None, error=str(e))
 
-    def get_tool_schemas_for_llm(self) -> List[Dict[str, Any]]:
+    def get_tool_schemas_for_llm(self) -> list[dict[str, Any]]:
         schemas = []
         for tool in self._tools.values():
-            schemas.append({
-                "type": "function",
-                "function": {
-                    "name": tool.name,
-                    "description": tool.description,
-                    "parameters": tool.input_schema,
+            schemas.append(
+                {
+                    "type": "function",
+                    "function": {
+                        "name": tool.name,
+                        "description": tool.description,
+                        "parameters": tool.input_schema,
+                    },
                 }
-            })
+            )
         return schemas
 
     def bind_to_llm(self, llm):
@@ -155,6 +164,7 @@ class _BaseMCPServer:
 # Extended MCPServer with LangChain integration
 # =============================================================================
 
+
 class MCPServer(_BaseMCPServer):
     """
     MCP Server with LangChain tool conversion.
@@ -164,9 +174,9 @@ class MCPServer(_BaseMCPServer):
     llm.bind_tools().
     """
 
-    def get_tools_as_langchain(self) -> List[StructuredTool]:
+    def get_tools_as_langchain(self) -> list[StructuredTool]:
         """Convert all registered MCP tools to LangChain StructuredTool instances."""
-        lc_tools: List[StructuredTool] = []
+        lc_tools: list[StructuredTool] = []
         for tool in self._tools.values():
             lc_tools.append(self._mcp_to_langchain(tool))
         return lc_tools
@@ -178,7 +188,7 @@ class MCPServer(_BaseMCPServer):
         properties = input_schema.get("properties", {})
         required_fields = set(input_schema.get("required", []))
 
-        field_definitions: Dict[str, Any] = {}
+        field_definitions: dict[str, Any] = {}
         for prop_name, prop_def in properties.items():
             prop_type = str
             if isinstance(prop_def, dict):
@@ -194,10 +204,6 @@ class MCPServer(_BaseMCPServer):
                 elif ptype == "object":
                     prop_type = dict
 
-            description = ""
-            if isinstance(prop_def, dict):
-                description = prop_def.get("description", "")
-
             if prop_name in required_fields:
                 field_definitions[prop_name] = (prop_type, ...)
             else:
@@ -205,7 +211,7 @@ class MCPServer(_BaseMCPServer):
                 if default is not None:
                     field_definitions[prop_name] = (prop_type, default)
                 else:
-                    field_definitions[prop_name] = (Optional[prop_type], None)
+                    field_definitions[prop_name] = (prop_type | None, None)
 
         model_name = f"{tool.name}_Input"
         try:
@@ -218,6 +224,7 @@ class MCPServer(_BaseMCPServer):
         def _make_sync_func(h):
             def func(**kwargs):
                 import asyncio
+
                 if asyncio.iscoroutinefunction(h):
                     try:
                         loop = asyncio.get_running_loop()
@@ -225,12 +232,14 @@ class MCPServer(_BaseMCPServer):
                         loop = None
                     if loop and loop.is_running():
                         import concurrent.futures
+
                         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
                             future = pool.submit(asyncio.run, h(**kwargs))
                             return future.result()
                     else:
                         return asyncio.run(h(**kwargs))
                 return h(**kwargs)
+
             return func
 
         sync_func = _make_sync_func(handler)
@@ -255,8 +264,8 @@ class MCPServer(_BaseMCPServer):
     def register_callable(
         self,
         func: Callable,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
+        name: str | None = None,
+        description: str | None = None,
     ) -> None:
         """
         Register a tool from a plain callable by inspecting its signature.
@@ -267,14 +276,14 @@ class MCPServer(_BaseMCPServer):
         description = description or inspect.getdoc(func) or f"Tool: {name}"
 
         sig = inspect.signature(func)
-        properties: Dict[str, Any] = {}
-        required: List[str] = []
+        properties: dict[str, Any] = {}
+        required: list[str] = []
 
         for param_name, param in sig.parameters.items():
             if param_name in ("self", "cls"):
                 continue
 
-            prop: Dict[str, Any] = {"type": "string"}
+            prop: dict[str, Any] = {"type": "string"}
             annotation = param.annotation
 
             if annotation != inspect.Parameter.empty:
@@ -306,6 +315,7 @@ class MCPServer(_BaseMCPServer):
 # In-process MCP Server
 # =============================================================================
 
+
 class InProcessMCPServer(MCPServer):
     """
     MCP Server for in-process use (no networking).
@@ -314,7 +324,7 @@ class InProcessMCPServer(MCPServer):
     directly in memory -- no serialization or transport overhead.
     """
 
-    def __init__(self, config: Optional[MCPServerConfig] = None):
+    def __init__(self, config: MCPServerConfig | None = None):
         super().__init__(config)
         self._started = False
 

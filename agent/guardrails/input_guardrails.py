@@ -1,33 +1,29 @@
 from __future__ import annotations
 
-import re
-from typing import Optional
-
 from agent.guardrails.prompts import INJECTION_PATTERNS
 from agent.guardrails.types import GuardrailAction, GuardrailConfig, GuardrailResult
 from utils.log_utils import log
 
-# ---------------------------------------------------------------------------
-# PHM / aviation topic keywords (Chinese + English)
-# ---------------------------------------------------------------------------
-_TOPIC_KEYWORDS: set[str] = {
-    # English
-    "fault", "engine", "hydraulic", "avionics", "vibration",
-    "ATA", "maintenance", "troubleshoot", "diagnosis", "diagnostic",
-    "sensor", "bearing", "turbine", "compressor", "blade",
-    "oil", "fuel", "bleed", "landing gear", "apu",
-    # Chinese
-    "故障", "发动机", "液压", "航电", "振动",
-    "维修", "排故", "诊断", "传感器", "轴承",
-    "涡轮", "压气机", "叶片", "滑油", "燃油",
-    "起落架", "辅助动力装置",
-}
+
+def _topic_keywords() -> set[str]:
+    """
+    Topic keywords sourced from the active domain profile.
+
+    Previously hardcoded to aviation vocabulary, this allow-list now reflects
+    the configured domain (aviation_phm by default; empty for the general
+    profile, which does not gate on domain vocabulary). This is the single
+    most important de-coupling point: an aviation-only allow-list would block
+    every off-domain knowledge base.
+    """
+    from core.prompts.domain_profile import get_active_profile
+
+    return {kw.lower() for kw in get_active_profile().rag_keywords}
 
 
 class InputGuardrail:
     """Validates incoming user messages before they reach the agent."""
 
-    def __init__(self, config: Optional[GuardrailConfig] = None):
+    def __init__(self, config: GuardrailConfig | None = None):
         self._config = config or GuardrailConfig()
 
     # ------------------------------------------------------------------
@@ -67,17 +63,26 @@ class InputGuardrail:
 
     def _check_topic(self, message: str) -> GuardrailResult:
         """
-        Validate that the message is at least loosely related to the
-        PHM / aviation domain.  Ambiguous messages are ALLOWed; only
-        clearly manipulative off-topic prompts are BLOCKed.
+        Validate that the message is at least loosely related to the active
+        domain (per the profile's topic keywords). Ambiguous messages are
+        ALLOWed; only clearly manipulative off-topic prompts are BLOCKed.
+
+        When the active profile has no domain keywords (e.g. the general
+        profile), this check allows everything through — topic gating is a
+        domain-specific hardening, not a universal requirement.
         """
         if not self._config.enable_topic_check:
+            return GuardrailResult(action=GuardrailAction.ALLOW)
+
+        keywords = _topic_keywords()
+        # No domain keywords configured -> do not gate on vocabulary.
+        if not keywords:
             return GuardrailResult(action=GuardrailAction.ALLOW)
 
         lower = message.lower()
 
         # Check for topic overlap
-        keyword_hits = sum(1 for kw in _TOPIC_KEYWORDS if kw.lower() in lower)
+        keyword_hits = sum(1 for kw in keywords if kw in lower)
 
         if keyword_hits > 0:
             return GuardrailResult(action=GuardrailAction.ALLOW)
@@ -88,7 +93,7 @@ class InputGuardrail:
         # Ambiguous / casual questions are allowed through.
         manipulation_markers = {"hack", "exploit", "bypass", "绕过", "破解"}
         if any(m in lower for m in manipulation_markers):
-            log.warning(f"InputGuardrail: off-topic with manipulation marker detected")
+            log.warning("InputGuardrail: off-topic with manipulation marker detected")
             return GuardrailResult(
                 action=GuardrailAction.BLOCK,
                 reason="话题超出系统范围且含有操控意图",

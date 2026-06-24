@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Dict, List
 
 from utils.env_utils import LLM_MODEL
 
@@ -49,5 +48,5 @@ class RunMetrics:
 
     total_tokens: int = 0
     total_cost_usd: float = 0.0
-    quality_signals: List[QualitySignal] = field(default_factory=list)
-    skill_durations: Dict[str, float] = field(default_factory=dict)
+    quality_signals: list[QualitySignal] = field(default_factory=list)
+    skill_durations: dict[str, float] = field(default_factory=dict)

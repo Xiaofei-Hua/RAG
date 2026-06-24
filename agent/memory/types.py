@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Dict, List, Optional
 
 
 class MemoryType(str, Enum):
@@ -18,7 +17,7 @@ class MemoryEntry:
     id: str = ""
     memory_type: MemoryType = MemoryType.FACT
     content: str = ""
-    metadata: Dict = field(default_factory=dict)
+    metadata: dict = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     access_count: int = 0
     relevance_score: float = 1.0
@@ -27,6 +26,6 @@ class MemoryEntry:
 @dataclass
 class MemoryQuery:
     query: str = ""
-    memory_types: Optional[List[MemoryType]] = None
+    memory_types: list[MemoryType] | None = None
     limit: int = 5
     min_relevance: float = 0.0

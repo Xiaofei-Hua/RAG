@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-from typing import List
-
 from agent.eval.types import EvalCase
 
 
-def get_default_eval_cases() -> List[EvalCase]:
+def get_default_eval_cases() -> list[EvalCase]:
     return [
         # Engine cases (5)
         EvalCase(

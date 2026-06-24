@@ -16,16 +16,14 @@ from __future__ import annotations
 import gc
 import time
 from dataclasses import dataclass, field
-from functools import lru_cache
-from typing import Any, Dict, List, Optional
 
 from langchain_core.documents import Document
-from langchain_core.tools import create_retriever_tool
 from langchain_core.retrievers import BaseRetriever
+from langchain_core.tools import create_retriever_tool
 from pydantic import ConfigDict
 
-from documents.milvus_db import MilvusManager, MilvusConfig
 from core.prompts.aircraft_prompts import RETRIEVER_TOOL_DESCRIPTION, RETRIEVER_TOOL_NAME
+from documents.milvus_db import MilvusConfig, MilvusManager
 from utils.env_utils import COLLECTION_NAME, MILVUS_URI
 from utils.log_utils import log
 
@@ -44,6 +42,7 @@ class RetrieverConfig:
 
     Default values are conservative for 4GB RAM, 4-core CPU servers.
     """
+
     # Milvus connection
     milvus_uri: str = MILVUS_URI
     collection_name: str = COLLECTION_NAME
@@ -79,9 +78,9 @@ class RetrieverManager:
     - Memory-efficient operations
     """
 
-    def __init__(self, config: Optional[RetrieverConfig] = None) -> None:
+    def __init__(self, config: RetrieverConfig | None = None) -> None:
         self.config = config or RetrieverConfig()
-        self._manager: Optional[MilvusManager] = None
+        self._manager: MilvusManager | None = None
         self._initialized = False
 
         log.debug(f"RetrieverManager created: collection={self.config.collection_name}")
@@ -106,8 +105,8 @@ class RetrieverManager:
     def search(
         self,
         query: str,
-        top_k: Optional[int] = None,
-    ) -> List[Document]:
+        top_k: int | None = None,
+    ) -> list[Document]:
         """
         Search for similar documents.
 
@@ -135,7 +134,9 @@ class RetrieverManager:
                     if result.score >= self.config.score_threshold:
                         documents.append(result.to_document())
 
-                log.debug(f"Search returned {len(documents)} documents (threshold={self.config.score_threshold})")
+                log.debug(
+                    f"Search returned {len(documents)} documents (threshold={self.config.score_threshold})"
+                )
                 return documents
 
             except Exception as e:
@@ -159,7 +160,7 @@ class RetrieverManager:
         gc.collect()
         log.debug("RetrieverManager resources released")
 
-    def __enter__(self) -> "RetrieverManager":
+    def __enter__(self) -> RetrieverManager:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
@@ -179,10 +180,10 @@ class MilvusRetriever(BaseRetriever):
 
     # Configuration fields that shouldn't be included in serialization
     config: RetrieverConfig = field(default_factory=RetrieverConfig)
-    _manager: Optional[RetrieverManager] = None
+    _manager: RetrieverManager | None = None
     _hybrid_retriever = None
 
-    def __init__(self, config: Optional[RetrieverConfig] = None, **kwargs):
+    def __init__(self, config: RetrieverConfig | None = None, **kwargs):
         super().__init__(**kwargs)
         self.config = config or RetrieverConfig()
         self._manager = None
@@ -200,6 +201,7 @@ class MilvusRetriever(BaseRetriever):
         """Get HybridRetriever instance (lazy initialization)."""
         if self._hybrid_retriever is None:
             from core.retrieval.hybrid_retriever import HybridRetriever, HybridRetrieverConfig
+
             hybrid_config = HybridRetrieverConfig(
                 final_top_k=self.config.top_k,
             )
@@ -214,7 +216,7 @@ class MilvusRetriever(BaseRetriever):
         query: str,
         *,
         run_manager=None,
-    ) -> List[Document]:
+    ) -> list[Document]:
         """Get relevant documents for a query using hybrid or dense retrieval."""
         if self.config.use_hybrid:
             try:
@@ -235,12 +237,12 @@ class MilvusRetriever(BaseRetriever):
 # =============================================================================
 
 # Global instances (lazy loaded)
-_retriever_manager: Optional[RetrieverManager] = None
-_retriever: Optional[MilvusRetriever] = None
+_retriever_manager: RetrieverManager | None = None
+_retriever: MilvusRetriever | None = None
 _retriever_tool = None
 
 
-def get_retriever_manager(config: Optional[RetrieverConfig] = None) -> RetrieverManager:
+def get_retriever_manager(config: RetrieverConfig | None = None) -> RetrieverManager:
     """
     Get or create a RetrieverManager instance.
 
@@ -266,7 +268,7 @@ def get_retriever_manager(config: Optional[RetrieverConfig] = None) -> Retriever
     return _retriever_manager
 
 
-def get_retriever(config: Optional[RetrieverConfig] = None) -> MilvusRetriever:
+def get_retriever(config: RetrieverConfig | None = None) -> MilvusRetriever:
     """
     Get or create a LangChain-compatible retriever.
 
@@ -288,7 +290,7 @@ def get_retriever(config: Optional[RetrieverConfig] = None) -> MilvusRetriever:
 
 
 def get_retriever_tool(
-    config: Optional[RetrieverConfig] = None,
+    config: RetrieverConfig | None = None,
     force_new: bool = False,
 ):
     """
@@ -345,6 +347,7 @@ def cleanup_retriever_resources() -> None:
     gc.collect()
     log.info("Retriever resources cleaned up")
 
+
 # =============================================================================
 # CLI for testing
 # =============================================================================
@@ -373,12 +376,12 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     print("RAG Retriever Test")
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print(f"Query: {args.query}")
     print(f"Top-K: {args.top_k}")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     try:
         # Use context manager for proper cleanup
@@ -405,6 +408,6 @@ if __name__ == "__main__":
             cleanup_retriever_resources()
             print("Resources cleaned up.\n")
 
-    print(f"{'='*60}")
+    print(f"{'=' * 60}")
     print("Test completed")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")

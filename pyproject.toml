@@ -24,7 +24,7 @@ dependencies = [
     "langchain-tavily>=0.2.0,<2.0.0",
     "langgraph>=1.0.0,<2.0.0",
     "langgraph-checkpoint>=4.0.0,<5.0.0",
-    "langgraph-checkpoint-sqlite>=2.0.0,<3.0.0",
+    "langgraph-checkpoint-sqlite>=3.1.0,<4.0.0",
     "langgraph-prebuilt>=1.0.0,<2.0.0",
     "pymilvus>=2.5.0,<2.6.0",
     "milvus-lite>=2.5.0",
@@ -51,6 +51,8 @@ dependencies = [
     "opentelemetry-sdk>=1.42.1",
     "opentelemetry-exporter-otlp-proto-http>=1.42.1",
     "opentelemetry-instrumentation-fastapi>=0.63b1",
+    "datasets>=5.0.0",
+    "aiosqlite>=0.20,<1.0",
 ]
 
 [project.optional-dependencies]

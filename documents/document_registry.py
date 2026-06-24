@@ -8,8 +8,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
-import time
-from typing import Dict, List, Literal, Optional
+from typing import Literal
 
 from utils.log_utils import log
 
@@ -47,8 +46,16 @@ class DocumentRegistry:
         self._conn.commit()
         log.info(f"Document registry initialized: {db_path}")
 
-    def put(self, doc_id: str, filename: str, status: DocumentStatus, chunks: int,
-            created_at: float, size_bytes: int, file_hash: str) -> None:
+    def put(
+        self,
+        doc_id: str,
+        filename: str,
+        status: DocumentStatus,
+        chunks: int,
+        created_at: float,
+        size_bytes: int,
+        file_hash: str,
+    ) -> None:
         self._conn.execute(
             "INSERT OR REPLACE INTO documents "
             "(id, filename, status, chunks, created_at, size_bytes, file_hash) "
@@ -57,20 +64,18 @@ class DocumentRegistry:
         )
         self._conn.commit()
 
-    def get(self, doc_id: str) -> Optional[dict]:
-        row = self._conn.execute(
-            "SELECT * FROM documents WHERE id = ?", (doc_id,)
-        ).fetchone()
+    def get(self, doc_id: str) -> dict | None:
+        row = self._conn.execute("SELECT * FROM documents WHERE id = ?", (doc_id,)).fetchone()
         return dict(row) if row else None
 
-    def find_by_filename(self, filename: str) -> Optional[dict]:
+    def find_by_filename(self, filename: str) -> dict | None:
         """Find document by exact filename."""
         row = self._conn.execute(
             "SELECT * FROM documents WHERE filename = ? LIMIT 1", (filename,)
         ).fetchone()
         return dict(row) if row else None
 
-    def find_by_file_hash(self, file_hash: str) -> Optional[dict]:
+    def find_by_file_hash(self, file_hash: str) -> dict | None:
         """Find document by exact file hash."""
         row = self._conn.execute(
             "SELECT * FROM documents WHERE file_hash = ? LIMIT 1", (file_hash,)
@@ -85,13 +90,11 @@ class DocumentRegistry:
         self._conn.commit()
 
     def delete(self, doc_id: str) -> bool:
-        cursor = self._conn.execute(
-            "DELETE FROM documents WHERE id = ?", (doc_id,)
-        )
+        cursor = self._conn.execute("DELETE FROM documents WHERE id = ?", (doc_id,))
         self._conn.commit()
         return cursor.rowcount > 0
 
-    def list_all(self, skip: int = 0, limit: int = 20) -> List[dict]:
+    def list_all(self, skip: int = 0, limit: int = 20) -> list[dict]:
         rows = self._conn.execute(
             "SELECT * FROM documents ORDER BY created_at DESC LIMIT ? OFFSET ?",
             (limit, skip),
@@ -121,7 +124,7 @@ class DocumentRegistry:
 
 
 # Module-level singleton
-_registry: Optional[DocumentRegistry] = None
+_registry: DocumentRegistry | None = None
 
 
 def get_document_registry() -> DocumentRegistry:

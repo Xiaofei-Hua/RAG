@@ -26,7 +26,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from utils.log_utils import log
 
@@ -44,16 +44,18 @@ __all__ = [
 # HITL approval gate
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class ApprovalRequest:
     """A pending human-approval request."""
+
     id: str
     session_id: str
-    action: str          # e.g. "execute_remediation"
+    action: str  # e.g. "execute_remediation"
     detail: str = ""
     status: str = "pending"  # pending | approved | rejected
     created_at: float = field(default_factory=time.time)
-    resolved_at: Optional[float] = None
+    resolved_at: float | None = None
     resolver: str = ""
 
 
@@ -82,9 +84,7 @@ class HITLGate:
         )
         self._conn.commit()
 
-    def request_approval(
-        self, session_id: str, action: str, detail: str = ""
-    ) -> ApprovalRequest:
+    def request_approval(self, session_id: str, action: str, detail: str = "") -> ApprovalRequest:
         """Create a pending approval request and return it."""
         req = ApprovalRequest(
             id=uuid.uuid4().hex[:12],
@@ -122,11 +122,10 @@ class HITLGate:
             self._conn.commit()
         return cur.rowcount > 0
 
-    def list_pending(self, limit: int = 50) -> List[ApprovalRequest]:
+    def list_pending(self, limit: int = 50) -> list[ApprovalRequest]:
         with self._lock:
             rows = self._conn.execute(
-                "SELECT * FROM approvals WHERE status = 'pending' "
-                "ORDER BY created_at DESC LIMIT ?",
+                "SELECT * FROM approvals WHERE status = 'pending' ORDER BY created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
         return [self._row_to_req(r) for r in rows]
@@ -149,7 +148,7 @@ class HITLGate:
             self._conn.close()
 
 
-_gate: Optional[HITLGate] = None
+_gate: HITLGate | None = None
 _gate_lock = threading.Lock()
 
 
@@ -166,19 +165,21 @@ def get_hitl_gate() -> HITLGate:
 # Declarative workflow DSL
 # ---------------------------------------------------------------------------
 
+
 @dataclass
 class WorkflowSpec:
     """A declarative agent workflow: intent -> plan mapping."""
+
     name: str = ""
     description: str = ""
     # intent -> ordered list of skill names to execute
-    plans: Dict[str, List[str]] = field(default_factory=dict)
+    plans: dict[str, list[str]] = field(default_factory=dict)
     # per-skill config overrides
-    skill_config: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    skill_config: dict[str, dict[str, Any]] = field(default_factory=dict)
     source: str = "file"
 
 
-def load_workflow(path: str) -> Optional[WorkflowSpec]:
+def load_workflow(path: str) -> WorkflowSpec | None:
     """Load a workflow spec from YAML/JSON."""
     p = Path(path)
     if not p.exists():
@@ -208,9 +209,7 @@ def _workflow_dir() -> Path:
     return Path(os.getenv("WORKFLOW_DIR", "data/workflows"))
 
 
-def resolve_workflow_for_intent(
-    intent: str, default_plan: Optional[List[str]] = None
-) -> List[str]:
+def resolve_workflow_for_intent(intent: str, default_plan: list[str] | None = None) -> list[str]:
     """
     Resolve the ordered skill list for a given intent.
 

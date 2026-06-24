@@ -19,7 +19,6 @@ Reliability contract (critical for the hot path):
 from __future__ import annotations
 
 import asyncio
-from typing import List, Optional, Tuple
 
 from utils.log_utils import log
 
@@ -31,10 +30,10 @@ class GroundingResult:
 
     def __init__(
         self,
-        faithfulness: Optional[float],
+        faithfulness: float | None,
         supported: int = 0,
         total: int = 0,
-        unsupported_claims: Optional[List[str]] = None,
+        unsupported_claims: list[str] | None = None,
         degraded: bool = False,
         reason: str = "",
     ):
@@ -88,7 +87,7 @@ class GroundingGuardrail:
     def check(
         self,
         answer: str,
-        contexts: List[str],
+        contexts: list[str],
     ) -> GroundingResult:
         """
         Check how well the answer's hard claims are grounded in the contexts.
@@ -118,18 +117,20 @@ class GroundingGuardrail:
                 # No hard claims => nothing dangerous to hallucinate. Treat as
                 # fully grounded (1.0) so we don't penalise safe, soft answers.
                 return GroundingResult(
-                    faithfulness=1.0, supported=0, total=0,
+                    faithfulness=1.0,
+                    supported=0,
+                    total=0,
                     reason="no hard claims to verify",
                 )
 
             context_blob = "\n\n".join(
-                f"[片段{i+1}] {c.strip()}" for i, c in enumerate(contexts) if c.strip()
+                f"[片段{i + 1}] {c.strip()}" for i, c in enumerate(contexts) if c.strip()
             )
             supported = 0
-            unsupported: List[str] = []
+            unsupported: list[str] = []
             judged = 0
             for claim in hard_claims:
-                verdict = judge._entail(claim, context_blob)
+                verdict = judge.entail(claim, context_blob)
                 if verdict is None:
                     continue  # unavailable != unsupported
                 judged += 1
@@ -140,7 +141,8 @@ class GroundingGuardrail:
 
             if judged == 0:
                 return GroundingResult(
-                    faithfulness=None, degraded=True,
+                    faithfulness=None,
+                    degraded=True,
                     reason="judge could not evaluate any claim",
                 )
 
@@ -154,14 +156,12 @@ class GroundingGuardrail:
             )
         except Exception as e:  # noqa: BLE001 - hot path must not crash
             log.warning(f"GroundingGuardrail check failed: {e}")
-            return GroundingResult(
-                faithfulness=None, degraded=True, reason=f"error: {e}"
-            )
+            return GroundingResult(faithfulness=None, degraded=True, reason=f"error: {e}")
 
     async def acheck(
         self,
         answer: str,
-        contexts: List[str],
+        contexts: list[str],
     ) -> GroundingResult:
         """
         Async grounding check that fans out the per-claim entailment calls
@@ -192,22 +192,24 @@ class GroundingGuardrail:
             hard_claims = [c for c in claims if is_hard_claim(c)]
             if not hard_claims:
                 return GroundingResult(
-                    faithfulness=1.0, supported=0, total=0,
+                    faithfulness=1.0,
+                    supported=0,
+                    total=0,
                     reason="no hard claims to verify",
                 )
 
             context_blob = "\n\n".join(
-                f"[片段{i+1}] {c.strip()}" for i, c in enumerate(contexts) if c.strip()
+                f"[片段{i + 1}] {c.strip()}" for i, c in enumerate(contexts) if c.strip()
             )
 
             # Fan out all claims concurrently; isolate per-claim failures.
             verdicts = await asyncio.gather(
-                *[judge._aentail(c, context_blob) for c in hard_claims],
+                *[judge.aentail(c, context_blob) for c in hard_claims],
                 return_exceptions=True,
             )
 
             supported = 0
-            unsupported: List[str] = []
+            unsupported: list[str] = []
             judged = 0
             for claim, verdict in zip(hard_claims, verdicts):
                 if isinstance(verdict, Exception) or verdict is None:
@@ -220,7 +222,8 @@ class GroundingGuardrail:
 
             if judged == 0:
                 return GroundingResult(
-                    faithfulness=None, degraded=True,
+                    faithfulness=None,
+                    degraded=True,
                     reason="judge could not evaluate any claim",
                 )
 
@@ -234,15 +237,13 @@ class GroundingGuardrail:
             )
         except Exception as e:  # noqa: BLE001 - hot path must not crash
             log.warning(f"GroundingGuardrail acheck failed: {e}")
-            return GroundingResult(
-                faithfulness=None, degraded=True, reason=f"error: {e}"
-            )
+            return GroundingResult(faithfulness=None, degraded=True, reason=f"error: {e}")
 
 
-_guardrail: Optional[GroundingGuardrail] = None
+_guardrail: GroundingGuardrail | None = None
 
 
-def check_grounding(answer: str, contexts: List[str]) -> GroundingResult:
+def check_grounding(answer: str, contexts: list[str]) -> GroundingResult:
     """Module-level convenience: check grounding via the shared guardrail."""
     global _guardrail
     if _guardrail is None:
@@ -250,7 +251,7 @@ def check_grounding(answer: str, contexts: List[str]) -> GroundingResult:
     return _guardrail.check(answer, contexts)
 
 
-async def acheck_grounding(answer: str, contexts: List[str]) -> GroundingResult:
+async def acheck_grounding(answer: str, contexts: list[str]) -> GroundingResult:
     """Async module-level convenience: concurrent grounding check."""
     global _guardrail
     if _guardrail is None:

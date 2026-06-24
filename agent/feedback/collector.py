@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import json
 import os
 import sqlite3
 import threading
+from collections.abc import Iterator
 from contextlib import contextmanager
-from typing import Dict, Iterator, List, Optional
 
 from agent.feedback.types import FeedbackEntry, FeedbackType
 from utils.log_utils import log
@@ -72,7 +71,7 @@ class FeedbackCollector:
         log.debug(f"FeedbackCollector: recorded feedback {entry.id}")
         return entry.id
 
-    def get_feedback(self, session_id: str) -> List[FeedbackEntry]:
+    def get_feedback(self, session_id: str) -> list[FeedbackEntry]:
         with self._locked():
             rows = self._conn.execute(
                 "SELECT * FROM feedback WHERE session_id = ? ORDER BY timestamp DESC",
@@ -80,7 +79,7 @@ class FeedbackCollector:
             ).fetchall()
             return [self._row_to_entry(row) for row in rows]
 
-    def get_stats(self) -> Dict:
+    def get_stats(self) -> dict:
         with self._locked():
             total = self._conn.execute("SELECT COUNT(*) FROM feedback").fetchone()[0]
             by_type = {}
@@ -117,7 +116,7 @@ class FeedbackCollector:
                 pass
 
 
-_feedback_collector: Optional[FeedbackCollector] = None
+_feedback_collector: FeedbackCollector | None = None
 
 
 def get_feedback_collector() -> FeedbackCollector:

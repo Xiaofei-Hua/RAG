@@ -7,8 +7,6 @@ Tracks both per-run and cumulative statistics.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional
-
 from agent.metrics.types import (
     CostRecord,
     QualitySignal,
@@ -35,17 +33,17 @@ class MetricsCollector:
         # Per-run counters
         self._run_tokens: int = 0
         self._run_cost: float = 0.0
-        self._run_quality_signals: List[QualitySignal] = []
-        self._run_skill_durations: Dict[str, float] = {}
+        self._run_quality_signals: list[QualitySignal] = []
+        self._run_skill_durations: dict[str, float] = {}
 
         # Cumulative counters
         self._total_runs: int = 0
         self._cumulative_tokens: int = 0
         self._cumulative_cost: float = 0.0
-        self._cumulative_durations: Dict[str, List[float]] = {}
+        self._cumulative_durations: dict[str, list[float]] = {}
 
         # Full history
-        self._cost_records: List[CostRecord] = []
+        self._cost_records: list[CostRecord] = []
 
     # ------------------------------------------------------------------
     # Recording
@@ -74,9 +72,7 @@ class MetricsCollector:
         """
         self._run_cost += record.estimated_cost_usd
         self._cost_records.append(record)
-        log.debug(
-            f"Metrics: {record.skill_name} cost ${record.estimated_cost_usd:.6f}"
-        )
+        log.debug(f"Metrics: {record.skill_name} cost ${record.estimated_cost_usd:.6f}")
 
     def record_quality(self, signal: QualitySignal) -> None:
         """
@@ -87,8 +83,7 @@ class MetricsCollector:
         """
         self._run_quality_signals.append(signal)
         log.debug(
-            f"Metrics: {signal.skill_name} quality signal "
-            f"{signal.signal_type}={signal.value}"
+            f"Metrics: {signal.skill_name} quality signal {signal.signal_type}={signal.value}"
         )
 
     def record_duration(self, skill_name: str, duration_ms: float) -> None:
@@ -140,7 +135,7 @@ class MetricsCollector:
         self._run_quality_signals.clear()
         self._run_skill_durations.clear()
 
-    def get_cumulative_stats(self) -> Dict:
+    def get_cumulative_stats(self) -> dict:
         """
         Return totals across all completed runs.
 
@@ -148,7 +143,7 @@ class MetricsCollector:
             Dict with total_runs, total_tokens, total_cost_usd,
             avg_latency_per_skill, and total_cost_records.
         """
-        avg_latencies: Dict[str, float] = {}
+        avg_latencies: dict[str, float] = {}
         for skill_name, durations in self._cumulative_durations.items():
             if durations:
                 avg_latencies[skill_name] = sum(durations) / len(durations)
@@ -166,7 +161,7 @@ class MetricsCollector:
 # Module-level singleton
 # ----------------------------------------------------------------------
 
-_collector: Optional[MetricsCollector] = None
+_collector: MetricsCollector | None = None
 
 
 def get_metrics_collector() -> MetricsCollector:

@@ -8,21 +8,22 @@ Provides REST API and WebSocket endpoints for:
 - System monitoring
 """
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.staticfiles import StaticFiles
-from contextlib import asynccontextmanager
 import hashlib
 import os
-from pathlib import Path
 import time
+from contextlib import asynccontextmanager
+from pathlib import Path
 
-from utils.log_utils import log
-from api.routers import chat, documents, sessions, admin, feedback, retrieval
-from api.middleware.tracing import TracingMiddleware
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+
 from api.middleware.error_handler import ErrorHandlerMiddleware
+from api.middleware.tracing import TracingMiddleware
+from api.routers import admin, chat, documents, feedback, retrieval, sessions
 from core.prompts.aircraft_prompts import GENERATE_SYSTEM_PROMPT
+from utils.log_utils import log
 
 
 @asynccontextmanager
@@ -57,8 +58,8 @@ async def lifespan(app: FastAPI):
         )
 
     # Initialize core components (lazy)
-    from core.memory.redis_memory import get_session_memory
     from core.fallback.circuit_breaker import get_llm_circuit, get_retriever_circuit
+    from core.memory.redis_memory import get_session_memory
 
     # Pre-initialize session memory
     _ = get_session_memory()
@@ -73,9 +74,11 @@ async def lifespan(app: FastAPI):
     log.info(f"PHM Prompt Profile: phm_diagnosis_v1 (sig={prompt_sig})")
 
     from agent.harness import get_agent_harness
+
     await get_agent_harness().astart()
 
     from utils.env_utils import RERANKER_ENABLED, RERANKER_WARMUP
+
     if RERANKER_ENABLED and RERANKER_WARMUP:
         from core.retrieval.reranker import get_reranker
 
@@ -91,10 +94,12 @@ async def lifespan(app: FastAPI):
 
     # Close connections
     from core.memory.redis_memory import get_session_memory
+
     memory = get_session_memory()
     await memory.close()
 
     from agent.harness import get_agent_harness
+
     await get_agent_harness().aclose()
 
     # Release the hybrid retriever's parallel-retrieval thread pool (F11 —
@@ -102,6 +107,7 @@ async def lifespan(app: FastAPI):
     # lifetime; it is now instance-scoped and shut down here).
     try:
         from core.retrieval.hybrid_retriever import get_hybrid_retriever
+
         get_hybrid_retriever().close()
     except Exception as e:  # noqa: BLE001
         log.debug(f"Hybrid retriever close skipped: {e}")
@@ -112,6 +118,7 @@ async def lifespan(app: FastAPI):
     # (surfaced as ResourceWarning: unclosed database).
     try:
         from agent.eval.judge import reset_judge
+
         reset_judge()
     except Exception as e:  # noqa: BLE001
         log.debug(f"Judge close skipped: {e}")
@@ -120,26 +127,31 @@ async def lifespan(app: FastAPI):
     # agent_memory.db; without these closes their connections leak on shutdown.
     try:
         from agent.memory.store import reset_memory_store
+
         reset_memory_store()
     except Exception as e:  # noqa: BLE001
         log.debug(f"Memory store close skipped: {e}")
     try:
         from agent.feedback.collector import reset_feedback_collector
+
         reset_feedback_collector()
     except Exception as e:  # noqa: BLE001
         log.debug(f"Feedback collector close skipped: {e}")
     try:
         from agent.feedback.escalation import reset_escalation_manager
+
         reset_escalation_manager()
     except Exception as e:  # noqa: BLE001
         log.debug(f"Escalation manager close skipped: {e}")
     try:
         from documents.parent_store import reset_parent_store
+
         reset_parent_store()
     except Exception as e:  # noqa: BLE001
         log.debug(f"Parent store close skipped: {e}")
     try:
         from documents.document_registry import reset_document_registry
+
         reset_document_registry()
     except Exception as e:  # noqa: BLE001
         log.debug(f"Document registry close skipped: {e}")
@@ -178,9 +190,7 @@ def create_app() -> FastAPI:
     # explicitly.
     _default_origins = "http://localhost:5173,http://127.0.0.1:5173"
     _allowed_origins = [
-        o.strip()
-        for o in os.getenv("ALLOWED_ORIGINS", _default_origins).split(",")
-        if o.strip()
+        o.strip() for o in os.getenv("ALLOWED_ORIGINS", _default_origins).split(",") if o.strip()
     ]
     # ``allow_credentials`` is only meaningful with a concrete origin list
     # (never with "*"); keep it on so cookies/auth headers work in production.
@@ -205,6 +215,7 @@ def create_app() -> FastAPI:
     application.include_router(retrieval.router, prefix="/api/retrieval", tags=["Retrieval"])
 
     from core.tracing import instrument_fastapi
+
     instrument_fastapi(application)
 
     # Health check endpoint
@@ -222,7 +233,7 @@ def create_app() -> FastAPI:
             "circuits": {
                 "llm": llm_circuit.state.value,
                 "retriever": retriever_circuit.state.value,
-            }
+            },
         }
 
     # API information endpoint
@@ -257,6 +268,7 @@ def create_app() -> FastAPI:
                 return FileResponse(requested)
             return FileResponse(web_index)
     else:
+
         @application.get("/", tags=["Root"])
         async def root():
             """Return API information when the frontend has not been built."""
@@ -272,6 +284,7 @@ app = create_app()
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(
         "api.main:app",
         host="0.0.0.0",

@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Optional
 
 
 def _env_bool(name: str, default: bool) -> bool:
@@ -38,7 +37,7 @@ class GuardrailResult:
 
     action: GuardrailAction
     reason: str = ""
-    sanitized_content: Optional[str] = None
+    sanitized_content: str | None = None
     confidence: float = 1.0
     metadata: dict = field(default_factory=dict)
 
