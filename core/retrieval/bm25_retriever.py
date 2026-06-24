@@ -32,7 +32,13 @@ class BM25Config:
     k1: float = 1.5  # Term frequency saturation
     b: float = 0.75  # Document length normalization
     top_k: int = 5  # Number of results
-    min_token_length: int = 1
+    # Token-length floors split by script: Chinese tokens (containing CJK) use
+    # min_token_length_zh so high-value aviation single-character terms
+    # (泵/阀/轴/桨/油) survive; English tokens use min_token_length_en to drop
+    # single-letter noise. A single min_token_length would mis-handle one or
+    # the other (dropping Chinese单字 at >=2, or keeping English 'a' at 1).
+    min_token_length_zh: int = 1
+    min_token_length_en: int = 2
 
 
 class BM25Retriever:
@@ -94,15 +100,27 @@ class BM25Retriever:
 
             tokens = list(jieba.cut(text))
         except ImportError:
-            # Fallback for Chinese + English mixed text
+            # Visible degradation: jieba missing collapses Chinese into single
+            # whole-sentence tokens (no shared terms with documents), silently
+            # crippling the sparse retrieval leg. Warn loudly so this never
+            # regresses unnoticed again.
+            log.warning(
+                "jieba not installed, BM25 falling back to regex tokenizer "
+                "— Chinese retrieval will be degraded (whole-sentence tokens)"
+            )
             tokens = re.findall(r"[a-zA-Z0-9_]+|[\u4e00-\u9fff]+", text.lower())
 
-        # Filter short tokens
-        min_len = self.config.min_token_length
+        # Filter short tokens, with script-aware length floors: CJK-containing
+        # tokens keep single chars (泵/阀/轴), latin tokens drop single letters.
+        zh_floor = self.config.min_token_length_zh
+        en_floor = self.config.min_token_length_en
         clean_tokens = []
         for t in tokens:
             token = t.strip().lower()
-            if not token or len(token) < min_len:
+            if not token:
+                continue
+            floor = zh_floor if re.search(r"[\u4e00-\u9fff]", token) else en_floor
+            if len(token) < floor:
                 continue
             clean_tokens.append(token)
         return clean_tokens

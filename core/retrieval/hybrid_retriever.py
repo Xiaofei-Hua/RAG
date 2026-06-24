@@ -50,8 +50,10 @@ class HybridRetrieverConfig:
     # RRF parameters
     rrf_k: int = 60  # RRF constant
 
-    # Final results
-    final_top_k: int = RERANKER_TOP_K if RERANKER_ENABLED else 3
+    # Final results. Without a reranker, RRF+MMR output is the final ranking —
+    # 3 is too aggressive a cut (loses relevant-but-lower-ranked evidence);
+    # 5 matches the reranker-off candidate pool above.
+    final_top_k: int = RERANKER_TOP_K if RERANKER_ENABLED else 5
     enable_reranker: bool = RERANKER_ENABLED
 
     # MMR de-redundancy (applied after RRF, optionally after reranker).

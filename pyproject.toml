@@ -53,6 +53,7 @@ dependencies = [
     "opentelemetry-instrumentation-fastapi>=0.63b1",
     "datasets>=5.0.0",
     "aiosqlite>=0.20,<1.0",
+    "jieba>=0.42.1",
 ]
 
 [project.optional-dependencies]

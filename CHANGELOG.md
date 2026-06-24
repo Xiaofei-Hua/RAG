@@ -7,6 +7,31 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Fixed — Chinese retrieval stack (`retrieval-stack-bm25-reranker`, stage A)
+
+- Restored the BM25 sparse retrieval leg for Chinese: `jieba` was never declared
+  as a dependency, so `bm25_retriever._tokenize` silently fell back to a regex
+  that collapsed whole Chinese sentences into a single token — Chinese queries
+  shared zero terms with documents (BM25 score always 0, sparse leg empty,
+  hybrid retrieval degraded to dense-only). Declaring `jieba` makes the
+  already-written jieba path run; the regex fallback now `log.warning`s instead
+  of degrading silently. (REQ-RS-001/002/006)
+- `BM25Config.min_token_length` split into `min_token_length_zh=1` /
+  `min_token_length_en=2` (script-aware): high-value aviation单字 (泵/阀/轴)
+  survive while English single letters are dropped. (REQ-RS-003)
+- Measured: CMRC2018 hit_rate 0.5→1.0, recall 0.5→1.0, answer_overlap
+  0.835→0.967. (context_precision unchanged at 0.25 — a chunking bottleneck,
+  not a ranking problem; deferred to stage B.)
+
+### [breaking] — multilingual reranker (`retrieval-stack-bm25-reranker`, stage A)
+
+- Switched the reranker from the English-only `cross-encoder/ms-marco-MiniLM-L-6-v2`
+  to the multilingual `BAAI/bge-reranker-v2-m3`. The English model emitted noise
+  logits on Chinese and reordered RRF output worse than chance. `.env` keys
+  changed: `RERANKER_MODEL`, `RERANKER_MODEL_PATH`, `RERANKER_BATCH_SIZE` 8→4
+  (CPU OOM defence, bge is ~568MB vs ms-marco 90MB). Air-gapped deployments must
+  bundle the new model. (REQ-RS-004/005)
+
 ### Added — domain-adaptive agent (`domain-adaptive-profile`)
 
 - New `core/prompts/domain_profile.py` `DomainProfile` layer + loader. The agent
