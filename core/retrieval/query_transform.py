@@ -33,32 +33,54 @@ __all__ = ["hyde", "multi_query_retrieve"]
 # ---------------------------------------------------------------------------
 
 # LRU cache for transform prompts so the rewrite loop (which re-transforms the
-# same/near-same query across retries) doesn't re-hit the LLM. Keyed on prompt;
-# failures (None) are not cached. Small bound — transforms are per-query.
+# same/near-same query across retries) doesn't re-hit the LLM. Keyed on
+# (prompt, model) per AGENTS.md §6 cache-key convention so a model switch
+# invalidates correctly; failures (None) are not cached. Small bound.
+import hashlib as _hashlib
+import threading as _threading
 from collections import OrderedDict as _OrderedDict
 
-_LLM_CACHE: _OrderedDict[str, str] = _OrderedDict()
+_LLM_CACHE: _OrderedDict[tuple[str, str], str] = _OrderedDict()
 _LLM_CACHE_MAX = 128
+_LLM_CACHE_LOCK = _threading.Lock()
 
 
-def _cache_get(prompt: str) -> str | None:
-    if prompt in _LLM_CACHE:
-        _LLM_CACHE.move_to_end(prompt)  # mark recently used
-        return _LLM_CACHE[prompt]
+def _cache_key(prompt: str, model: str) -> tuple[str, str]:
+    return (_hashlib.sha1(prompt.encode("utf-8")).hexdigest()[:16], model)
+
+
+def _cache_get(prompt: str, model: str) -> str | None:
+    key = _cache_key(prompt, model)
+    with _LLM_CACHE_LOCK:
+        if key in _LLM_CACHE:
+            _LLM_CACHE.move_to_end(key)  # mark recently used
+            return _LLM_CACHE[key]
     return None
 
 
-def _cache_put(prompt: str, value: str) -> None:
-    _LLM_CACHE[prompt] = value
-    _LLM_CACHE.move_to_end(prompt)
-    while len(_LLM_CACHE) > _LLM_CACHE_MAX:
-        _LLM_CACHE.popitem(last=False)
+def _cache_put(prompt: str, model: str, value: str) -> None:
+    key = _cache_key(prompt, model)
+    with _LLM_CACHE_LOCK:
+        _LLM_CACHE[key] = value
+        _LLM_CACHE.move_to_end(key)
+        while len(_LLM_CACHE) > _LLM_CACHE_MAX:
+            _LLM_CACHE.popitem(last=False)
+
+
+def _resolve_model() -> str:
+    try:
+        from utils.env_utils import LLM_MODEL
+
+        return LLM_MODEL or "unknown"
+    except Exception:  # noqa: BLE001
+        return "unknown"
 
 
 def _llm_invoke(prompt: str) -> str | None:
     """Best-effort single LLM call. Returns None on any failure. LRU-cached
-    by prompt so the rewrite loop doesn't re-call for the same query."""
-    cached = _cache_get(prompt)
+    by (prompt, model) so the rewrite loop doesn't re-call for the same query."""
+    model = _resolve_model()
+    cached = _cache_get(prompt, model)
     if cached is not None:
         return cached
     try:
@@ -71,7 +93,7 @@ def _llm_invoke(prompt: str) -> str | None:
         text = resp.content if hasattr(resp, "content") else str(resp)
         result = (text or "").strip() or None
         if result is not None:
-            _cache_put(prompt, result)
+            _cache_put(prompt, model, result)
         return result
     except Exception as e:  # noqa: BLE001
         log.debug(f"query-transform LLM call failed: {e}")
@@ -79,7 +101,8 @@ def _llm_invoke(prompt: str) -> str | None:
 
 
 async def _allm_invoke(prompt: str) -> str | None:
-    cached = _cache_get(prompt)
+    model = _resolve_model()
+    cached = _cache_get(prompt, model)
     if cached is not None:
         return cached
     try:
@@ -92,7 +115,7 @@ async def _allm_invoke(prompt: str) -> str | None:
         text = resp.content if hasattr(resp, "content") else str(resp)
         result = (text or "").strip() or None
         if result is not None:
-            _cache_put(prompt, result)
+            _cache_put(prompt, model, result)
         return result
     except Exception as e:  # noqa: BLE001
         log.debug(f"query-transform async LLM call failed: {e}")

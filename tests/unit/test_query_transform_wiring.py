@@ -110,35 +110,36 @@ class TestTransformDegradation:
 
 
 class TestLRUCache:
-    def test_repeated_prompt_hits_cache_not_llm(self, monkeypatch):
-        """A repeated prompt MUST be served from cache (no second LLM call)."""
+    def test_repeated_prompt_hits_cache(self):
+        """A repeated (prompt, model) pair is served from cache."""
         from core.retrieval import query_transform
 
         query_transform._LLM_CACHE.clear()
-        calls = []
-        monkeypatch.setattr(
-            query_transform,
-            "_llm_invoke",
-            lambda p: (calls.append(p), "cached-result")[1],
-        )
-        query_transform._cache_put("p1", "first")  # pretend first call populated
-        # Simulate: _llm_invoke checks cache first via _cache_get
-        from core.retrieval.query_transform import _cache_get, _cache_put
+        query_transform._cache_put("p1", "m1", "first")
+        query_transform._cache_put("p2", "m1", "second")
+        assert query_transform._cache_get("p1", "m1") == "first"
+        assert query_transform._cache_get("p2", "m1") == "second"
 
-        assert _cache_get("p1") == "first"
-        _cache_put("p2", "second")
-        assert _cache_get("p2") == "second"
+    def test_model_change_invalidates_cache(self):
+        """Cache key MUST include model (AGENTS.md §6) so a model switch doesn't
+        serve stale results from the old model (critic F-RB-07)."""
+        from core.retrieval import query_transform
+
+        query_transform._LLM_CACHE.clear()
+        query_transform._cache_put("same-prompt", "model_a", "result_a")
+        assert query_transform._cache_get("same-prompt", "model_a") == "result_a"
+        # Different model -> miss (must re-call LLM)
+        assert query_transform._cache_get("same-prompt", "model_b") is None
 
     def test_failure_not_cached(self, monkeypatch):
         """LLM failures (None) are NOT cached so a retry can succeed later."""
         from core.retrieval import query_transform
 
         query_transform._LLM_CACHE.clear()
-        # _llm_invoke returns None on failure and must not populate cache.
         monkeypatch.setattr(query_transform, "_llm_invoke", lambda p: None)
         result = query_transform._llm_invoke("fail-prompt")
         assert result is None
-        assert "fail-prompt" not in query_transform._LLM_CACHE
+        assert len(query_transform._LLM_CACHE) == 0
 
 
 if __name__ == "__main__":

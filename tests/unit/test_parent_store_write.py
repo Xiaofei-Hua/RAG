@@ -202,5 +202,38 @@ class TestExpandConditionalDefault:
         assert result == [child]
 
 
+# ===========================================================================
+# F-RB-01 — MCP path must carry parent_id end-to-end
+# ===========================================================================
+
+
+class TestMCPParentIdPassthrough:
+    def test_mcp_format_documents_carries_parent_id(self):
+        """The MCP retrieval server MUST carry parent_id in its serialized
+        output, otherwise _maybe_expand_parents no-ops on MCP deployments
+        (critic F-RB-01: precision small-to-big silently broken in production)."""
+        from agent.mcp.retrieval_server import MCPRetrievalServer
+
+        doc = Document(
+            page_content="child chunk",
+            metadata={"source": "s", "title": "t", "score": 1.0, "parent_id": "p_abc"},
+        )
+        out = MCPRetrievalServer._format_documents([doc])
+        assert out[0]["parent_id"] == "p_abc", "MCP server dropped parent_id"
+
+    def test_mcp_raw_to_documents_restores_parent_id(self):
+        """The retrieve skill's MCP client MUST restore parent_id from the raw
+        dict so _maybe_expand_parents sees it."""
+        from agent.skills.retrieve.skill import RetrieveSkill
+
+        raw = [
+            {"content": "x", "source": "s", "title": "t", "score": 1.0, "parent_id": "p_def"}
+        ]
+        docs = RetrieveSkill._raw_to_documents(raw)
+        assert docs[0].metadata.get("parent_id") == "p_def", (
+            "MCP client dropped parent_id — expand would no-op"
+        )
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])

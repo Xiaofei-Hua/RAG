@@ -164,3 +164,18 @@ def _decide_transform(self, query, shared):
 
 ## 13. 安全影响
 无(不触及 §8 基线)。parent_store 存文档内容(已有数据,无新增泄露面)。
+
+## 14. 已知遗留(critic backlog,转后续 stage)
+
+| ID | 遗留 | 处置 | 转移 |
+|---|---|---|---|
+| F-RB-03 | expand 后大父段(>budget)被 `_apply_context_budget` 截断(只留首父段)。这是既有 token budget(2048)的预期行为,非 Stage B 引入;但 expand 放大了可见后果。 | 接受(既有 budget 兜底,首父段完整保留);budget 策略评估转 Stage C(生成质量) | Stage C |
+| F-RB-04 | 非 md 路径整篇源文档单 parent_id(长 pdf expand 返回全文);`delete_document` 不清理 parent_store(信息残留,需先突破文件系统权限) | 记 backlog:defender 实测单文件段落 ~100 + `_check_duplicate` 拒同文件重入库,实际风险低;delete 联动清理 + 非 md 段落级 parent_id 留后续 | 后续 |
+| F-RB-09 | benchmark source 修正只修 cmrc,msmarco 仍 `"msmarco"` 数据集级(dedup-source 失真);hotpot 已是文档级 | 记 backlog:msmarco 的 source 改 query 级;本 stage 验收用 cmrc | 后续 |
+| F-RB-08 | parent_store 写入失败静默 warning(child 带 parent_id 但 store 空 → expand fallback)。降级安全(不返回空)但不可观测。 | 接受(降级正确);health_check 探活 + ParserStats 计数转后续 | 后续 |
+| F-RB-06 | sync multi_query 子检索串行(vs async 并行),sync 路径延迟高 | 接受(生产走 async);sync 并行化留后续 | 后续 |
+| F-RB-05 | HyDE 启发式词表窄(口语诊断词/航空症状词覆盖),defender 实测准确率 72% | 接受(降级安全:误判回原 query);词表外提 profile 可配 + 航空术语扩充转后续 | 后续 |
+
+> 评审价值记录:后台 critic F-RB-01(MCP 路径丢 parent_id,Critical)是父 Agent 完全漏掉的
+> 真实漏洞——MCP 部署下 expand 静默 no-op,precision 治本失效。已修复(server 透传 + client
+> 重建 + 测试)。这是独立上下文评审的价值:发现确认偏误盲点。

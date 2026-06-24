@@ -522,6 +522,13 @@ class RetrieveSkill(BaseSkill):
                         "source": item.get("source", "unknown"),
                         "title": item.get("title", "unknown"),
                         "score": item.get("score", 0.0),
+                        # Restore parent_id so _maybe_expand_parents works over
+                        # the MCP path (critic F-RB-01: server now carries it).
+                        **(
+                            {"parent_id": item["parent_id"]}
+                            if item.get("parent_id")
+                            else {}
+                        ),
                     },
                 )
                 documents.append(doc)
