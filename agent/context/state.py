@@ -113,10 +113,11 @@ class GraphMetadata(TypedDict, total=False):
 class Grade(BaseModel):
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
-    binary_score: str = Field(
-        default="no",
-        description="相关性评分: 'yes' 表示文档与问题相关，'no' 表示不相关。"
-        "默认 'no'(保守):当 LLM 返回的 key 不匹配时偏向 rewrite(重新检索)而非幻觉。",
+    binary_score: str | None = Field(
+        default=None,
+        description="相关性评分: 'yes'/'no'。None 表示未设置(保守→not relevant)。"
+        "默认 None 而非 'yes':json_mode 下 LLM 返回未知 key 时,字段保持 None,"
+        "is_relevant 回落 False(偏向 rewrite 而非幻觉)。",
     )
     answer: str | None = Field(
         default=None, description="备选字段，部分模型（如Qwen3）可能使用此字段返回yes/no"
@@ -124,8 +125,17 @@ class Grade(BaseModel):
 
     @property
     def is_relevant(self) -> bool:
-        score = self.binary_score or self.answer or ""
-        return score.lower() in ("yes", "true", "relevant")
+        # Both fields may carry the verdict (Qwen3 sometimes uses only `answer`).
+        # An explicit "yes"/"true" in EITHER field wins; otherwise fall to
+        # binary_score (default "no" -> conservative not-relevant).
+        for val in (self.binary_score, self.answer):
+            if val:
+                v = val.strip().lower()
+                if v in ("yes", "true", "relevant"):
+                    return True
+                if v in ("no", "false", "not relevant", "irrelevant"):
+                    return False
+        return False
 
 
 class RewrittenQuery(BaseModel):

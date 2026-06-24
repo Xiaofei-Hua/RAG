@@ -50,7 +50,7 @@ _should_refuse(skill.py:714-727)分数来自 RRF(~0.01)或 relevance_scores
 | `agent/skills/generate/skill.py:513-522` | max_tokens 4096→6144(generate 路径) | REQ-RC-005 | P1 |
 | `agent/skills/generate/skill.py:524` | 加 finish_reason=="length" 检测 + /no_think 重生成 | REQ-RC-006 | P1 |
 | `agent/guardrails/output_guardrails.py:61` | 结构校验改检查末段 | REQ-RC-007 | P1 |
-| `agent/skills/generate/skill.py:714-727` | _should_refuse:无分数拒绝 + 分数归一化 | REQ-RC-008/009 | P1 |
+| `agent/skills/generate/skill.py:714-727` | _should_refuse:无分数拒绝(REQ-RC-008);有分数信任 grade 不拒绝(撤回归一化,见 §6) | REQ-RC-008/009 | P1 |
 
 ## 3. grade 修复详述
 

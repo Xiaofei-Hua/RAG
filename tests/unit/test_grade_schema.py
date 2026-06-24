@@ -25,14 +25,24 @@ sys.path.insert(0, ".")
 
 
 class TestGradeYesDefault:
-    def test_grade_defaults_to_no(self):
-        """Grade() with no args MUST default binary_score to 'no' (not 'yes'),
-        so an unrecognised LLM key biases toward rewrite, not hallucination."""
+    def test_grade_defaults_conservative(self):
+        """Grade() with no args MUST be conservative (not relevant), so an
+        unrecognised LLM key biases toward rewrite, not hallucination.
+        binary_score is None by default (F-05: lets the answer field work)."""
         from agent.context.state import Grade
 
         g = Grade()
-        assert g.binary_score == "no", "binary_score still defaults to 'yes'"
+        assert g.binary_score is None
         assert g.is_relevant is False
+
+    def test_answer_field_works_when_binary_score_unset(self):
+        """F-05 regression: Qwen3 may return only {'answer': 'yes'}; the answer
+        field MUST be honoured when binary_score is unset (was short-circuited
+        by a non-empty default)."""
+        from agent.context.state import Grade
+
+        assert Grade(answer="yes").is_relevant is True
+        assert Grade(answer="no").is_relevant is False
 
     def test_explicit_yes_still_works(self):
         from agent.context.state import Grade

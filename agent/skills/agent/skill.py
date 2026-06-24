@@ -124,6 +124,32 @@ class AgentSkill(BaseSkill):
                     ]
                     continue
 
+                # Nudge exhausted but still no tool_call: do NOT pass through the
+                # LLM's direct answer — it skipped retrieval/grounding/refusal and
+                # the output guardrail won't catch it (non-generate node). Return a
+                # safe nudge instead so the unverified answer is never shown as-is
+                # (critic F-RC-02: was `return SUCCESS(response)`).
+                if not tool_calls and content and no_tool_call_retries >= max_no_tool_call_retries:
+                    log.warning(
+                        "AgentSkill: no tool_calls after %d nudge(s); returning safe "
+                        "nudge instead of an unverified direct answer",
+                        no_tool_call_retries,
+                    )
+                    return SkillResult(
+                        status=SkillStatus.SUCCESS,
+                        messages=[
+                            AIMessage(
+                                content="我需要先检索相关文档才能准确回答您的问题。请稍候，正在为您查询维修手册中的相关内容。"
+                            )
+                        ],
+                        metadata={
+                            "attempt": attempt,
+                            "elapsed_ms": elapsed,
+                            "no_tool_call_nudged": no_tool_call_retries,
+                            "no_tool_call_unrecovered": True,
+                        },
+                    )
+
                 return SkillResult(
                     status=SkillStatus.SUCCESS,
                     messages=[response],
@@ -204,6 +230,23 @@ class AgentSkill(BaseSkill):
                 ]
                 response = await self._ainvoke_model(nudged_msgs)
                 elapsed = (time.perf_counter() - start) * 1000
+                # After nudge, if STILL no tool_call, do not pass the direct answer
+                # through (critic F-RC-02). Return a safe nudge instead.
+                if not (getattr(response, "tool_calls", None) or []):
+                    log.warning("AgentSkill async: no tool_calls after nudge; safe nudge")
+                    return SkillResult(
+                        status=SkillStatus.SUCCESS,
+                        messages=[
+                            AIMessage(
+                                content="我需要先检索相关文档才能准确回答您的问题。请稍候，正在为您查询维修手册中的相关内容。"
+                            )
+                        ],
+                        metadata={
+                            "elapsed_ms": elapsed,
+                            "no_tool_call_nudged": nudged,
+                            "no_tool_call_unrecovered": True,
+                        },
+                    )
 
             return SkillResult(
                 status=SkillStatus.SUCCESS,
