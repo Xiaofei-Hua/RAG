@@ -114,7 +114,9 @@ class Grade(BaseModel):
     model_config = ConfigDict(extra="ignore", validate_assignment=True)
 
     binary_score: str = Field(
-        default="yes", description="相关性评分: 'yes' 表示文档与问题相关，'no' 表示不相关"
+        default="no",
+        description="相关性评分: 'yes' 表示文档与问题相关，'no' 表示不相关。"
+        "默认 'no'(保守):当 LLM 返回的 key 不匹配时偏向 rewrite(重新检索)而非幻觉。",
     )
     answer: str | None = Field(
         default=None, description="备选字段，部分模型（如Qwen3）可能使用此字段返回yes/no"

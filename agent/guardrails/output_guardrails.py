@@ -57,10 +57,30 @@ class OutputGuardrail:
         if len(answer) <= 50:
             return GuardrailResult(action=GuardrailAction.ALLOW)
 
-        # An answer is "structured" if it contains any expected section marker.
+        # An answer is "structured" if it contains the leading section marker.
         has_conclusion = any(f"【{s}】" in answer or s in answer for s in sections[:2])
 
-        if has_conclusion:
+        # Truncation signal (Stage C, REQ-RC-007): if the answer has a leading
+        # section but is missing the *last* sections (信息缺口/依据来源), it was
+        # likely cut mid-generation. Append the structure hint so the user sees
+        # the expected completion and the gap is visible (was: leading-only check
+        # let truncated answers pass silently).
+        last_sections = sections[-2:] if len(sections) >= 2 else sections
+        has_completion = any(f"【{s}】" in answer or s in answer for s in last_sections)
+
+        if has_conclusion and has_completion:
+            return GuardrailResult(action=GuardrailAction.ALLOW)
+
+        if has_conclusion and not has_completion:
+            # Leading section present but ending missing -> truncated; nudge.
+            hint = profile.structure_hint
+            if hint:
+                return GuardrailResult(
+                    action=GuardrailAction.SANITIZE,
+                    reason="回答疑似被截断(缺少末段结构)",
+                    sanitized_content=answer + hint,
+                    confidence=0.7,
+                )
             return GuardrailResult(action=GuardrailAction.ALLOW)
 
         # Short / unstructured answer -- append the profile's structure hint

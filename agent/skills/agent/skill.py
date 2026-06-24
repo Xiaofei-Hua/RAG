@@ -14,7 +14,7 @@ import time
 from dataclasses import dataclass
 from typing import Any
 
-from langchain_core.messages import AIMessage, BaseMessage, SystemMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.tools import BaseTool
 
 from agent.skills.agent.prompts import AGENT_SYSTEM_PROMPT
@@ -99,15 +99,39 @@ class AgentSkill(BaseSkill):
         log.info(f"AgentSkill: messages={len(messages)}, rewrites={rewrite_count}/{max_rewrites}")
 
         # Invoke with retry
+        no_tool_call_retries = 0
+        max_no_tool_call_retries = 1  # one nudge, then give up (avoid loops)
         for attempt in range(self._skill_config.max_retries + 1):
             try:
                 response = self._invoke_model(messages)
                 elapsed = (time.perf_counter() - start) * 1000
 
+                # Guard (Stage C, REQ-RC-004): if the LLM answered directly
+                # without a tool_call, the answer bypasses retrieval/grounding/
+                # refusal (tools_condition routes straight to END, and the output
+                # guardrail skips non-generate nodes). Nudge it to retrieve once.
+                tool_calls = getattr(response, "tool_calls", None) or []
+                content = (getattr(response, "content", "") or "").strip()
+                if not tool_calls and content and no_tool_call_retries < max_no_tool_call_retries:
+                    no_tool_call_retries += 1
+                    log.warning(
+                        "AgentSkill: LLM returned no tool_calls (direct answer); "
+                        "nudging to retrieve (attempt %d)", no_tool_call_retries
+                    )
+                    messages = list(messages) + [
+                        response,
+                        HumanMessage(content="请使用检索工具(rag_retriever)查询相关文档后再回答。"),
+                    ]
+                    continue
+
                 return SkillResult(
                     status=SkillStatus.SUCCESS,
                     messages=[response],
-                    metadata={"attempt": attempt, "elapsed_ms": elapsed},
+                    metadata={
+                        "attempt": attempt,
+                        "elapsed_ms": elapsed,
+                        "no_tool_call_nudged": no_tool_call_retries,
+                    },
                 )
 
             except Exception as e:
@@ -166,10 +190,25 @@ class AgentSkill(BaseSkill):
             response = await self._ainvoke_model(messages)
             elapsed = (time.perf_counter() - start) * 1000
 
+            # Guard (Stage C, REQ-RC-004): nudge once if the LLM answered
+            # directly without a tool_call (bypasses retrieval/grounding).
+            tool_calls = getattr(response, "tool_calls", None) or []
+            content = (getattr(response, "content", "") or "").strip()
+            nudged = False
+            if not tool_calls and content:
+                log.warning("AgentSkill async: no tool_calls; nudging to retrieve")
+                nudged = True
+                nudged_msgs = list(messages) + [
+                    response,
+                    HumanMessage(content="请使用检索工具(rag_retriever)查询相关文档后再回答。"),
+                ]
+                response = await self._ainvoke_model(nudged_msgs)
+                elapsed = (time.perf_counter() - start) * 1000
+
             return SkillResult(
                 status=SkillStatus.SUCCESS,
                 messages=[response],
-                metadata={"elapsed_ms": elapsed},
+                metadata={"elapsed_ms": elapsed, "no_tool_call_nudged": nudged},
             )
 
         except Exception as e:

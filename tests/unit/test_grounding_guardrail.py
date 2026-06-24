@@ -255,8 +255,8 @@ class TestCachedFaithReuse:
 
 class TestGuardrailManagerCachedFaith:
     def test_manager_passes_cached_faith_to_output(self):
-        from agent.guardrails.manager import GuardrailManager
         from agent.guardrails import grounding_guardrail as gg_mod
+        from agent.guardrails.manager import GuardrailManager
 
         captured = {}
 
@@ -273,7 +273,7 @@ class TestGuardrailManagerCachedFaith:
 
         def _spy_check(answer, sources=None, contexts=None, cached_faith=None):
             captured["cached_faith"] = cached_faith
-            from agent.guardrails.types import GuardrailResult, GuardrailAction
+            from agent.guardrails.types import GuardrailAction, GuardrailResult
             return GuardrailResult(action=GuardrailAction.ALLOW)
 
         gm = GuardrailManager()
@@ -289,7 +289,10 @@ class TestGuardrailManagerCachedFaith:
 # ===========================================================================
 
 class TestGenerateRefusal:
-    def test_refuses_when_all_relevance_below_threshold(self):
+    def test_does_not_refuse_when_scores_present(self):
+        # Stage C: scores parseable -> generation proceeds (relevance is the grade
+        # node's job; raw scores have no universal magnitude). Was: refuse when
+        # all below 0.3, which always-refused on RRF ~0.01 scale.
         from agent.skills.generate.skill import GenerateSkill
 
         messages = [
@@ -303,7 +306,7 @@ class TestGenerateRefusal:
             ),
         ]
         skill = GenerateSkill()
-        assert skill._should_refuse(messages, has_context=True) is True
+        assert skill._should_refuse(messages, has_context=True) is False
 
     def test_does_not_refuse_when_some_relevant(self):
         from agent.skills.generate.skill import GenerateSkill
@@ -327,13 +330,14 @@ class TestGenerateRefusal:
         skill = GenerateSkill()
         assert skill._should_refuse([], has_context=False) is False
 
-    def test_does_not_refuse_when_no_scores_available(self):
-        # Cannot judge relevance -> do not refuse (avoid false refusals).
+    def test_refuses_when_no_scores_over_context(self):
+        # Stage C REQ-RC-008: no parseable scores over a non-empty context ->
+        # refuse (was a silent pass-through to generate over unchecked evidence).
         from agent.skills.generate.skill import GenerateSkill
 
         messages = [HumanMessage(content="q"), ToolMessage(content="no scores here", tool_call_id="c1")]
         skill = GenerateSkill()
-        assert skill._should_refuse(messages, has_context=True) is False
+        assert skill._should_refuse(messages, has_context=True) is True
 
 
 class TestGenerateConfidence:
@@ -409,6 +413,7 @@ class TestGuardrailConfigEnv:
         monkeypatch.setenv("GROUNDING_THRESHOLD", "0.7")
         # Re-import to pick up env (module-level _env helpers read at class def).
         import importlib
+
         import agent.guardrails.types as types_mod
         importlib.reload(types_mod)
         cfg = types_mod.GuardrailConfig()

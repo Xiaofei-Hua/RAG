@@ -39,6 +39,7 @@ def test_reranker_preserves_retrieval_score_and_updates_final_score():
 
 def test_reranker_load_failure_is_not_retried(monkeypatch):
     import builtins
+
     from core.retrieval.reranker import Reranker
 
     attempts = 0
@@ -93,8 +94,8 @@ def test_reranker_cache_scan_is_reused_and_uses_configured_model(monkeypatch):
 
 
 def test_hybrid_reranker_is_controlled_by_feature_flag(monkeypatch):
-    from core.retrieval.hybrid_retriever import HybridRetriever, HybridRetrieverConfig
     from core.retrieval import reranker as reranker_module
+    from core.retrieval.hybrid_retriever import HybridRetriever, HybridRetrieverConfig
 
     documents = [
         Document(page_content="first"),
@@ -196,11 +197,12 @@ def test_harness_uses_native_async_graph_methods():
 
 
 def test_generate_skill_publishes_custom_token_events():
+    from langgraph.constants import END, START
+    from langgraph.graph import StateGraph
+
     from agent.context.state import AgentState
     from agent.skills.base import SkillContext
     from agent.skills.generate.skill import GenerateSkill
-    from langgraph.constants import START, END
-    from langgraph.graph import StateGraph
 
     class FakeChain:
         async def astream(self, values):
@@ -229,7 +231,12 @@ def test_generate_skill_publishes_custom_token_events():
                 {
                     "messages": [
                         HumanMessage(content="question"),
-                        ToolMessage(content="context", tool_call_id="call-1"),
+                        ToolMessage(
+                            # Provide scores so _should_refuse (Stage C: no-scores
+                            # now refuses) lets generation proceed.
+                            content=[{"text": "context", "score": 0.9}],
+                            tool_call_id="call-1",
+                        ),
                     ],
                     "rewrite_count": 0,
                     "max_rewrites": 0,

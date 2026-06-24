@@ -258,11 +258,23 @@ class GradeSkill(BaseSkill):
         - Grade pydantic model
         - dict (from non-standard JSON mode output)
         - Raw string
+
+        Conservative default: when the LLM returns an unrecognised key, treat as
+        NOT relevant (Grade.binary_score now defaults to "no") rather than the
+        old yes-default that let irrelevant docs through to generate.
         """
         if isinstance(result, Grade):
             return result.is_relevant
         elif isinstance(result, dict):
-            raw = str(result).lower()
-            return any(k in raw for k in ("yes", "true", "relevant"))
+            # Extract from known keys; do NOT whole-string substring-match
+            # ("not relevant" contains "relevant" -> old false-positive bug).
+            for key in ("binary_score", "score", "answer", "relevant", "relevance"):
+                val = str(result.get(key, "")).strip().lower()
+                if val in ("no", "false", "not relevant", "irrelevant", "0"):
+                    return False
+                if val in ("yes", "true", "relevant", "1"):
+                    return True
+            # No recognised key -> conservative not relevant (was yes-default).
+            return False
         else:
             return "yes" in str(result).lower()

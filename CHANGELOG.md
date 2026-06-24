@@ -7,6 +7,31 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Fixed — generation faithfulness (`generation-quality-faithfulness`, stage C)
+
+faithfulness is the dominant end-to-end eval dimension (weight 0.4). Four fixes:
+
+- **grade yes-default** (top killer): `Grade.binary_score` defaulted to `"yes"`,
+  so when the LLM returned an unrecognised JSON key (e.g. `{"score":"no"}`) the
+  doc was silently judged relevant and generated over → hallucination. Default
+  is now `"no"` (conservative: bias toward re-retrieval, not hallucination);
+  `_parse_relevance` extracts from known keys instead of whole-string substring
+  match (`{"score":"not relevant"}` no longer mis-read as relevant).
+- **agent tool-call fallback**: when the LLM answered directly without a
+  tool_call, `tools_condition` routed straight to END, bypassing retrieval /
+  grounding / refusal (output guardrail skips non-generate nodes) — an
+  unverified-answer hallucination path. AgentSkill now nudges one retry.
+- **thinking token budget + truncation detection**: Qwen3 thinking shared
+  `max_tokens=4096` between reasoning and content, truncating six-section
+  answers mid-【排查步骤】 with no `finish_reason` check. Generation budget is
+  now 6144; `finish_reason=="length"` triggers a `/no_think` regeneration; the
+  structure guardrail now checks the LAST section (truncation signal), not just
+  the first two.
+- **refusal no-evidence**: `_should_refuse` returned `False` (pass-through) when
+  retrieval returned context with no parseable scores → generated over
+  unchecked evidence. Now refuses. (Score-normalisation reverted: it broke the
+  "all-low-scores refuse" semantics; the absolute threshold is kept.)
+
 ### Added — recall quality + precision (small-to-big) (`recall-quality-hyde-parent-store`, stage B)
 
 - Wired `parent_store` small-to-big retrieval (was dead code: read side ready,

@@ -42,13 +42,17 @@ class GenerateSkillConfig:
     max_context_length: int = 2500
     system_prompt: str = GENERATE_SYSTEM_PROMPT
     human_prompt: str = GENERATE_HUMAN_PROMPT
-    # Refuse-to-answer: if every retrieved doc scores below this relevance,
-    # do not generate (avoid hallucinating over weak evidence).
+    # Refuse-to-answer: if every retrieved doc scores below this relevance
+    # (after min-max normalisation to [0,1]), do not generate.
     min_relevance_threshold: float = 0.3
     # Token-budget context packing. When > 0, the context is truncated by
     # estimated TOKEN count (not raw characters), avoiding mid-token cuts and
     # model-window overflow. Set to 0 to keep the legacy char-based truncation.
     max_context_tokens: int = 2048
+    # Generation output budget. Qwen3 thinking shares this between reasoning
+    # and content; 6144 leaves ~2000 for reasoning and ~4000 for the six-section
+    # answer (was 4096 shared, truncating answers mid-【排查步骤】).
+    max_generation_tokens: int = 6144
     # Composite confidence weights (retrieval / grounding / intent).
     confidence_w_retrieval: float = 0.4
     confidence_w_grounding: float = 0.4
@@ -494,7 +498,6 @@ class GenerateSkill(BaseSkill):
             from openai import OpenAI
 
             from utils.env_utils import (
-                LLM_MAX_TOKENS,
                 LLM_MODEL,
                 LLM_TEMPERATURE,
                 LLM_TIMEOUT,
@@ -517,13 +520,39 @@ class GenerateSkill(BaseSkill):
                     {"role": "user", "content": human_msg},
                 ],
                 temperature=LLM_TEMPERATURE,
-                max_tokens=LLM_MAX_TOKENS,
+                max_tokens=self._skill_config.max_generation_tokens,
                 timeout=LLM_TIMEOUT,
             )
 
             msg = resp.choices[0].message
             content = msg.content or ""
             reasoning = getattr(msg, "reasoning", "") or ""
+
+            # Truncation detection (Stage C, REQ-RC-006): if the model hit the
+            # token limit, the six-section answer is likely cut mid-structure.
+            # Regenerate once with /no_think so the full budget goes to content.
+            finish_reason = resp.choices[0].finish_reason if resp.choices else None
+            if finish_reason == "length" and content:
+                log.warning(
+                    "Generation truncated (finish_reason=length); "
+                    "regenerating with /no_think for full content budget"
+                )
+                no_think_human = human_msg.rstrip() + "\n\n/no_think"
+                resp2 = client.chat.completions.create(
+                    model=LLM_MODEL,
+                    messages=[
+                        {"role": "system", "content": system_msg},
+                        {"role": "user", "content": no_think_human},
+                    ],
+                    temperature=LLM_TEMPERATURE,
+                    max_tokens=self._skill_config.max_generation_tokens,
+                    timeout=LLM_TIMEOUT,
+                )
+                msg2 = resp2.choices[0].message
+                new_content = (msg2.content or "").strip()
+                if new_content and len(new_content) > len(content):
+                    content = new_content
+                    reasoning = ""  # /no_think produces no reasoning
 
             # Record token usage as an OTel span attribute (P3.5) when OTel
             # is enabled; falls back to a no-op span otherwise.
@@ -713,18 +742,27 @@ class GenerateSkill(BaseSkill):
 
     def _should_refuse(self, messages: list[BaseMessage], has_context: bool) -> bool:
         """
-        Decide whether to refuse answering due to weak retrieval evidence.
+        Decide whether to refuse answering due to weak/absent retrieval evidence.
 
-        Refuses when there IS some context but every retrieved document scores
-        below ``min_relevance_threshold``. No context at all is handled by the
-        existing empty-knowledge branch (a different message).
+        Refuses when:
+        - no context at all (handled by the empty-knowledge branch upstream);
+        - OR there IS context but no parseable relevance scores (cannot judge ->
+          refuse; Stage C REQ-RC-008: was a silent pass-through).
+
+        When scores ARE present, generation proceeds — document relevance is the
+        grade node's job (Stage C fixed its yes-default), and raw retrieval
+        scores have no universal magnitude (RRF ~0.01 vs reranker logits), so an
+        absolute threshold here would either always-refuse (RRF) or be arbitrary.
         """
         if not has_context:
             return False
         scores = self._extract_relevance_scores(messages)
         if not scores:
-            return False  # cannot judge relevance -> do not refuse
-        return all(s < self._skill_config.min_relevance_threshold for s in scores)
+            # No parseable scores over a non-empty context: don't generate over
+            # unchecked evidence. (Stage C REQ-RC-008: was `return False`.)
+            return True
+        # Scores present: trust the grade node's relevance judgement.
+        return False
 
     def _compute_confidence(
         self,
