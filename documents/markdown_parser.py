@@ -850,6 +850,31 @@ class MarkdownParser:
         small: list[Document] = []
         large: list[Document] = []
 
+        # parent_store small-to-big wiring (Stage B): every input doc is a
+        # "parent" section; chunks split from it carry its parent_id so
+        # expand_to_parents can swap them back for full-section context at
+        # retrieval time. compute once here so all split branches inherit it.
+        from documents.parent_store import get_parent_store, make_parent_id
+
+        parent_store = get_parent_store()
+
+        def _parent_id_for(doc: Document) -> str | None:
+            source = doc.metadata.get("source") or ""
+            section_index = doc.metadata.get("idx")
+            if not source or section_index is None:
+                return None
+            pid = make_parent_id(source, section_index)
+            try:
+                parent_store.store(
+                    pid,
+                    content=doc.page_content,
+                    source=source,
+                    title=doc.metadata.get("title", ""),
+                )
+            except Exception as e:
+                self.log.warning(f"[MarkdownParser] parent_store write failed: {e}")
+            return pid
+
         for doc in docs:
             text = doc.page_content or ""
             if text:
@@ -860,54 +885,53 @@ class MarkdownParser:
         semantic_fail = 0
         fallback_used = 0
 
-        result: list[Document] = list(small)
+        # small docs are kept as-is; tag each with its own parent_id (parent = self).
+        result: list[Document] = []
+        for doc in small:
+            pid = _parent_id_for(doc)
+            if pid:
+                doc.metadata["parent_id"] = pid
+            result.append(doc)
 
         if not large:
             return result, 0, 0, 0, 0
 
-        batch_size = max(1, int(self.cfg.semantic_batch_size))
+        splitter = self.semantic_splitter
 
-        for batch in self._batched(large, batch_size):
-            # Try batch semantic split
-            splitter = self.semantic_splitter
+        # Split each parent doc individually (not batched) so we can reliably tag
+        # the resulting chunks with the parent's parent_id for small-to-big
+        # expand. Batching loses the doc->chunks mapping.
+        for doc in large:
+            pid = _parent_id_for(doc)
+            pieces: list[Document] = []
+            split_done = False
+
             if splitter is not None:
                 try:
-                    pieces = splitter.split_documents(list(batch))
-                    result.extend(pieces)
+                    pieces = splitter.split_documents([doc])
                     semantic_out += len(pieces)
-                    continue
+                    split_done = True
                 except Exception as e:
-                    self.log.warning(f"[MarkdownParser] batch semantic split failed: {e}")
+                    semantic_fail += 1
+                    self.log.warning(f"[MarkdownParser] semantic split failed for doc: {e}")
 
-            # Fallback: process individually or use fallback splitter
-            for doc in batch:
-                split_done = False
-                if splitter is not None:
+            if not split_done:
+                self._ensure_fallback_splitter()
+                if self._fallback_splitter is not None:
                     try:
-                        pieces = splitter.split_documents([doc])
-                        result.extend(pieces)
-                        semantic_out += len(pieces)
+                        pieces = self._fallback_splitter.split_documents([doc])
+                        fallback_used += 1
                         split_done = True
-                        continue
-                    except Exception as e:
-                        semantic_fail += 1
-                        self.log.warning(f"[MarkdownParser] semantic split failed for doc: {e}")
+                    except Exception as e2:
+                        self.log.warning(f"[MarkdownParser] fallback split failed: {e2}")
 
-                if not split_done:
-                    # Try fallback splitter
-                    self._ensure_fallback_splitter()
-                    if self._fallback_splitter is not None:
-                        try:
-                            pieces = self._fallback_splitter.split_documents([doc])
-                            result.extend(pieces)
-                            fallback_used += 1
-                            continue
-                        except Exception as e2:
-                            self.log.warning(f"[MarkdownParser] fallback split failed: {e2}")
+            if not pieces and self.cfg.keep_original_on_split_error:
+                pieces = [doc]
 
-                    # Last resort: keep original
-                    if self.cfg.keep_original_on_split_error:
-                        result.append(doc)
+            for piece in pieces:
+                if pid:
+                    piece.metadata["parent_id"] = pid
+                result.append(piece)
 
         return result, semantic_in, semantic_out, semantic_fail, fallback_used
 

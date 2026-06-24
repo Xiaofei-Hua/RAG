@@ -7,6 +7,33 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Added — recall quality + precision (small-to-big) (`recall-quality-hyde-parent-store`, stage B)
+
+- Wired `parent_store` small-to-big retrieval (was dead code: read side ready,
+  write side never connected). `markdown_parser._chunk_documents` and
+  `documents._split_documents` now tag every chunk with a `parent_id` and store
+  the parent section text, so `expand_to_parents` swaps small-chunk hits for
+  full-section context at retrieval time — improves both precision (small chunk
+  hits the gold id) and generation quality (parent gives full context).
+- `_maybe_expand_parents` now defaults ON when chunks carry `parent_id`
+  (callers can still opt out via `shared_state["expand_parents"]=False`); old
+  indexes without parent_id are a no-op.
+- Wired HyDE / multi_query query transforms (were implemented but never
+  triggered — `shared_state["query_transform"]` had no producer).
+  `RetrieveSkill._decide_transform` picks a transform by heuristic: ATA/fault
+  code -> none (precise anchor); diagnostic question -> hyde; short abstract
+  symptom -> multi_query. Explicit `shared_state["query_transform"]` overrides.
+- Added an LRU cache for query-transform LLM calls so the rewrite loop doesn't
+  re-transform the same query.
+
+### Fixed — benchmark source granularity (`recall-quality-hyde-parent-store`, stage B)
+
+- `scripts/prepare_benchmark.py` set `source` to the dataset name ("cmrc2018"),
+  so `--dedup-source` collapsed every article into one chunk — a metric artifact,
+  not a recall gain. Now uses document-level `source` (`cmrc2018_wiki_{i}`) so
+  dedup-source collapses only sibling chunks of the same article. Precision
+  numbers measured before this fix were not meaningful.
+
 ### Fixed — Chinese retrieval stack (`retrieval-stack-bm25-reranker`, stage A)
 
 - Restored the BM25 sparse retrieval leg for Chinese: `jieba` was never declared

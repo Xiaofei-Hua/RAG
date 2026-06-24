@@ -256,7 +256,11 @@ def _try_cmrc2018(limit: int) -> tuple[list[dict], list[dict]] | None:
             corpus.append(
                 {
                     "id": cid,
-                    "source": "cmrc2018",
+                    # source at document granularity so --dedup-source collapses
+                    # sibling chunks of the SAME article (not the whole dataset).
+                    # Was "cmrc2018" (dataset name) which made dedup-source collapse
+                    # every article into one chunk — a metric artifact, not recall.
+                    "source": f"cmrc2018_wiki_{i}",
                     "title": f"wiki_{i}",
                     "text": stored,
                 }

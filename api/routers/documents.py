@@ -136,10 +136,39 @@ def _split_documents(documents: list[Document]) -> list[Document]:
         else:
             small.append(doc)
 
-    if not large:
-        return small
+    # parent_store small-to-big wiring (Stage B): tag each parent doc's chunks
+    # with parent_id so expand_to_parents can swap them for full-doc context.
+    import hashlib
 
-    result: list[Document] = list(small)
+    from documents.parent_store import get_parent_store, make_parent_id
+
+    parent_store = get_parent_store()
+
+    def _tag_parent(doc: Document) -> str | None:
+        source = doc.metadata.get("source") or ""
+        if not source:
+            return None
+        # Stable int section index from the content hash (make_parent_id
+        # requires an int). Same doc -> same pid (idempotent INSERT OR REPLACE).
+        content_hash = hashlib.sha1(doc.page_content.encode()).hexdigest()[:8]
+        section_index = int(content_hash, 16)
+        pid = make_parent_id(source, section_index)
+        try:
+            parent_store.store(pid, content=doc.page_content, source=source, title="")
+        except Exception as e:
+            log.warning(f"parent_store write failed: {e}")
+        return pid
+
+    # small docs are kept intact; tag each with its own parent_id (parent = self)
+    result: list[Document] = []
+    for doc in small:
+        pid = _tag_parent(doc)
+        if pid:
+            doc.metadata["parent_id"] = pid
+        result.append(doc)
+
+    if not large:
+        return result
 
     # Stage 2: semantic chunking for large docs
     semantic_splitter = None
@@ -155,18 +184,10 @@ def _split_documents(documents: list[Document]) -> list[Document]:
         except Exception as e:
             log.debug(f"SemanticChunker init failed: {e}")
 
-    if semantic_splitter is not None:
-        try:
-            pieces = semantic_splitter.split_documents(large)
-            result.extend(pieces)
-            log.info(f"Semantic split: {len(large)} docs -> {len(pieces)} chunks")
-            return result
-        except Exception as e:
-            log.warning(f"Semantic split failed: {e}, falling back to recursive splitter")
-
-    # Stage 3: fallback to RecursiveCharacterTextSplitter
+    # Stage 3: recursive fallback splitter (if semantic unavailable/failed)
+    recursive_splitter = None
     if RecursiveCharacterTextSplitter is not None:
-        splitter = RecursiveCharacterTextSplitter(
+        recursive_splitter = RecursiveCharacterTextSplitter(
             chunk_size=900,
             chunk_overlap=120,
             separators=[
@@ -186,11 +207,32 @@ def _split_documents(documents: list[Document]) -> list[Document]:
                 "",
             ],
         )
-        pieces = splitter.split_documents(large)
-        result.extend(pieces)
-        log.info(f"Fallback split: {len(large)} docs -> {len(pieces)} chunks")
-    else:
-        result.extend(large)
+
+    # Split each large parent doc individually so chunks can be tagged with the
+    # parent's parent_id (batched split loses the doc->chunks mapping).
+    for doc in large:
+        pid = _tag_parent(doc)
+        pieces: list[Document] = []
+        if semantic_splitter is not None:
+            try:
+                pieces = semantic_splitter.split_documents([doc])
+                log.info(f"Semantic split: 1 doc -> {len(pieces)} chunks")
+            except Exception as e:
+                log.warning(f"Semantic split failed for doc: {e}")
+                pieces = []
+        if not pieces and recursive_splitter is not None:
+            try:
+                pieces = recursive_splitter.split_documents([doc])
+                log.info(f"Fallback split: 1 doc -> {len(pieces)} chunks")
+            except Exception as e2:
+                log.warning(f"Fallback split failed: {e2}")
+                pieces = []
+        if not pieces:
+            pieces = [doc]
+        for piece in pieces:
+            if pid:
+                piece.metadata["parent_id"] = pid
+            result.append(piece)
 
     return result
 

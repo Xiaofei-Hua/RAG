@@ -11,6 +11,7 @@ This skill is used in both:
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from typing import Any
@@ -87,7 +88,7 @@ class RetrieveSkill(BaseSkill):
 
             # Retrieve documents (optional metadata filter + transform from shared_state)
             filter_expr = self._extract_filter(context)
-            transform = self._extract_transform(context)
+            transform = self._decide_transform(context, query)
             documents = self._retrieve(query, filter_expr=filter_expr, transform=transform)
             documents = self._maybe_expand_parents(context, documents)
             documents = self._inject_memories(context, documents)
@@ -152,7 +153,7 @@ class RetrieveSkill(BaseSkill):
 
             # Try MCP client first
             filter_expr = self._extract_filter(context)
-            transform = self._extract_transform(context)
+            transform = self._decide_transform(context, query)
             if self._mcp_client is not None:
                 try:
                     raw_results = await self._mcp_client.call_tool(
@@ -275,6 +276,49 @@ class RetrieveSkill(BaseSkill):
             return val.strip()
         return None
 
+    # --- HyDE / multi_query heuristic wiring (Stage B) ---------------------
+    # Explicit shared_state["query_transform"] takes precedence (callers can
+    # force a mode); otherwise a domain heuristic decides based on query shape,
+    # so query transforms are finally exercised instead of dead code.
+    _ATA_RE = re.compile(r"\bata[\s\-_:]*\d{2}", re.IGNORECASE)
+    _FAULT_CODE_RE = re.compile(
+        # EICAS-style codes: E1A02, FQ01, HYD3... (letter(s)+digits, possibly
+        # interleaved) and explicit 故障码: XX markers.
+        r"\b[A-Z]\d[A-Z0-9]{1,}\b|[A-Z]{2,}\d{2,}|\u6545\u969c\u7801[:：]?\s*\S+",
+        re.IGNORECASE,
+    )
+    _DIAG_RE = re.compile(r"如何|为什么|原因|排查|怎样|怎么办|诊断|怎么处理")
+    _SYMPTOM_RE = re.compile(
+        r"振动|压力|低压|高压|温度|泄漏|报警|异常|故障|磨损|噪音|抖动|过热|失速|卡滞"
+    )
+
+    @classmethod
+    def _decide_transform(cls, context: SkillContext, query: str) -> str | None:
+        """Pick a query transform: explicit shared_state first, else heuristic.
+
+        - ATA chapter / fault code present -> no transform (precise anchor,
+          direct retrieval is enough, saves an LLM call).
+        - diagnostic question (如何/为什么/原因) -> hyde (hypothetical doc
+          closer to the answer distribution).
+        - short abstract symptom (振动异常/液压低压) -> multi_query (broaden
+          recall across phrasings).
+        - otherwise -> None (direct retrieval).
+        """
+        explicit = cls._extract_transform(context)
+        if explicit:
+            return explicit
+        if not query:
+            return None
+        q = query.strip()
+        if cls._ATA_RE.search(q) or cls._FAULT_CODE_RE.search(q):
+            return None
+        if cls._DIAG_RE.search(q):
+            return "hyde"
+        # Short, no diagnostic verb, but mentions a symptom -> abstract.
+        if len(q) <= 12 and cls._SYMPTOM_RE.search(q) and not cls._DIAG_RE.search(q):
+            return "multi_query"
+        return None
+
     async def _aretrieve(
         self,
         query: str,
@@ -351,18 +395,19 @@ class RetrieveSkill(BaseSkill):
     @staticmethod
     def _maybe_expand_parents(context: SkillContext, documents: list[Document]) -> list[Document]:
         """
-        Optionally expand small-chunk hits to their parent documents.
+        Expand small-chunk hits to their parent documents (small-to-big).
 
-        Enabled when ``shared_state["expand_parents"]`` is truthy AND the
-        retrieved chunks carry ``parent_id`` metadata. When no chunk has a
-        parent_id, this is a no-op (backward compatible with non-parent-child
-        indexes).
+        Strategy (Stage B): expand is ON by default when chunks carry
+        ``parent_id`` metadata — i.e. the index was built with parent_store
+        wiring. Callers may force it OFF via ``shared_state["expand_parents"]=False``.
+        Old indexes without parent_id are a no-op (backward compatible).
         """
         shared = getattr(context, "shared_state", None)
-        if not shared or not shared.get("expand_parents"):
+        # Explicit opt-out wins; absence or True both allow expand.
+        if shared and shared.get("expand_parents") is False:
             return documents
         if not any(isinstance(d.metadata, dict) and d.metadata.get("parent_id") for d in documents):
-            return documents  # nothing to expand
+            return documents  # old index without parent_id, no-op
         try:
             from documents.parent_store import expand_to_parents
 

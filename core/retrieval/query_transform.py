@@ -32,9 +32,35 @@ __all__ = ["hyde", "multi_query_retrieve"]
 # Shared LLM helper
 # ---------------------------------------------------------------------------
 
+# LRU cache for transform prompts so the rewrite loop (which re-transforms the
+# same/near-same query across retries) doesn't re-hit the LLM. Keyed on prompt;
+# failures (None) are not cached. Small bound — transforms are per-query.
+from collections import OrderedDict as _OrderedDict
+
+_LLM_CACHE: _OrderedDict[str, str] = _OrderedDict()
+_LLM_CACHE_MAX = 128
+
+
+def _cache_get(prompt: str) -> str | None:
+    if prompt in _LLM_CACHE:
+        _LLM_CACHE.move_to_end(prompt)  # mark recently used
+        return _LLM_CACHE[prompt]
+    return None
+
+
+def _cache_put(prompt: str, value: str) -> None:
+    _LLM_CACHE[prompt] = value
+    _LLM_CACHE.move_to_end(prompt)
+    while len(_LLM_CACHE) > _LLM_CACHE_MAX:
+        _LLM_CACHE.popitem(last=False)
+
 
 def _llm_invoke(prompt: str) -> str | None:
-    """Best-effort single LLM call. Returns None on any failure."""
+    """Best-effort single LLM call. Returns None on any failure. LRU-cached
+    by prompt so the rewrite loop doesn't re-call for the same query."""
+    cached = _cache_get(prompt)
+    if cached is not None:
+        return cached
     try:
         from langchain_core.messages import HumanMessage
 
@@ -43,13 +69,19 @@ def _llm_invoke(prompt: str) -> str | None:
         llm = create_custom_llm(temperature=0.0)
         resp = llm.invoke([HumanMessage(content=prompt)])
         text = resp.content if hasattr(resp, "content") else str(resp)
-        return (text or "").strip() or None
+        result = (text or "").strip() or None
+        if result is not None:
+            _cache_put(prompt, result)
+        return result
     except Exception as e:  # noqa: BLE001
         log.debug(f"query-transform LLM call failed: {e}")
         return None
 
 
 async def _allm_invoke(prompt: str) -> str | None:
+    cached = _cache_get(prompt)
+    if cached is not None:
+        return cached
     try:
         from langchain_core.messages import HumanMessage
 
@@ -58,7 +90,10 @@ async def _allm_invoke(prompt: str) -> str | None:
         llm = create_custom_llm(temperature=0.0)
         resp = await llm.ainvoke([HumanMessage(content=prompt)])
         text = resp.content if hasattr(resp, "content") else str(resp)
-        return (text or "").strip() or None
+        result = (text or "").strip() or None
+        if result is not None:
+            _cache_put(prompt, result)
+        return result
     except Exception as e:  # noqa: BLE001
         log.debug(f"query-transform async LLM call failed: {e}")
         return None
