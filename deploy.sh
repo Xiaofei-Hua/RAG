@@ -316,13 +316,13 @@ EMBEDDING_BATCH_SIZE=8
 
 # Optional Reranker Configuration
 RERANKER_ENABLED=false
-RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
-RERANKER_MODEL_PATH=models/local_models/reranker/ms-marco-MiniLM-L-6-v2
+RERANKER_MODEL=BAAI/bge-reranker-v2-m3
+RERANKER_MODEL_PATH=models/local_models/reranker/bge-reranker-v2-m3
 RERANKER_DEVICE=cpu
 RERANKER_WARMUP=false
 RERANKER_CANDIDATE_TOP_K=10
 RERANKER_TOP_K=5
-RERANKER_BATCH_SIZE=8
+RERANKER_BATCH_SIZE=4
 
 # Optional OpenTelemetry Configuration
 OTEL_ENABLED=false

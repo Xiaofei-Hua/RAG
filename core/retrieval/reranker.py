@@ -133,6 +133,13 @@ class Reranker:
 
     def status(self) -> dict:
         """Return runtime state without triggering a model download."""
+        loaded = self._model is not None
+        # "degraded" = load was attempted but failed and is now sticky for the
+        # process lifetime (see _load_attempted). Every retrieval then falls back
+        # to RRF order — retrieval still works, but precision reranking is off.
+        # Surfaced so /api/admin/health can alert on it rather than silently
+        # serving lower-quality results (critic F-RS-002).
+        degraded = (not loaded) and self._load_attempted and self._load_error is not None
         return {
             "model": self.config.model_name,
             "model_source": self.config.model_source,
@@ -142,7 +149,8 @@ class Reranker:
                 self.config.model_path,
             ),
             "load_attempted": self._load_attempted,
-            "loaded": self._model is not None,
+            "loaded": loaded,
+            "degraded": degraded,
             "load_error": self._load_error,
         }
 

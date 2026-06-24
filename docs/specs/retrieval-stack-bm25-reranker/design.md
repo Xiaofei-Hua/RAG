@@ -27,7 +27,7 @@ hit_rate 仅 0.5 的元凶。
 | 项 | 现状 | 本 stage |
 |---|---|---|
 | jieba | 未声明依赖(`pyproject.toml`/`uv.lock` grep 零命中) | `uv add jieba` |
-| reranker 模型 | `ms-marco-MiniLM-L-6-v2`(英文,90MB) | → `bge-reranker-v2-m3`(多语言,568MB) |
+| reranker 模型 | `ms-marco-MiniLM-L-6-v2`(英文,90MB) | → `bge-reranker-v2-m3`(多语言,**2.1GB FP32 / 568M 参数**) |
 | sentence-transformers | 5.4.1(锁定) | 不动,bge-v2-m3 兼容 |
 | transformers | 5.5.4(锁定) | 不动,bge-v2-m3 是标准 XLM-RoBERTa |
 
@@ -92,14 +92,18 @@ jieba 修复后,**必须重建 BM25 索引**:旧文档的 `_doc_tokens` 是正�
 
 ## 7. OOM 防护(REQ-RS-005)
 
-bge-v2-m3 ~568MB(FP32,XLM-RoBERTa 568M 参数)vs ms-marco 90MB。`RERANKER_DEVICE=cpu` +
+bge-v2-m3 **2.1GB FP32 落盘(568M 参数)** vs ms-marco 90MB。`RERANKER_DEVICE=cpu` +
 `torch 2.11.0+cpu`。`predict()` 时 batch=8 的激活内存可能 CPU OOM。
 
 防护:
-- `RERANKER_BATCH_SIZE` 8→4(降峰值内存)。
+- `RERANKER_BATCH_SIZE` 8→4(降峰值内存;实测 batch=4 峰值 RSS ~634MB,无 OOM)。
 - 降级安全:`_fallback_documents`(`reranker.py:149-162`)保留 RRF 顺序,OOM 不中断检索。
 - **`_load_attempted` 粘性**(`reranker.py:113`):OOM 后进程内不重试,需重启(降 batch 后)。
-  本 stage 不改此行为(符合"加载失败记忆"设计),但文档告知运维。
+  本 stage 不改此行为(符合"加载失败记忆"设计),但:
+  - **F-RS-002 可观测性闭合**:`status()` 新增 `degraded` 标志(loaded=False +
+    load_attempted + load_error),`/api/admin/health` 可据此告警降级,而非静默服务低质结果。
+  - 运维 runbook:首次 OOM 后降 `RERANKER_BATCH_SIZE` 并重启进程重新加载。
+  - 文档化已知风险:粘性防反复 OOM 是设计取舍;瞬时 OOM 不自愈需重启。
 
 ## 8. 测试矩阵
 

@@ -44,8 +44,8 @@
 
 ## 非功能要求
 
-- **离线/气隙**:`bge-reranker-v2-m3`(~568MB)MUST 预下载到 `models/local_models/reranker/`,
-  纳入离线 bundle。`jieba` 是纯 Python 包,可预下载。
+- **离线/气隙**:`bge-reranker-v2-m3`(**~2.1GB FP32 落盘**,568M 参数)MUST 预下载到
+  `models/local_models/reranker/`,纳入离线 bundle。`jieba` 是纯 Python 包,可预下载。
 - **降级**:jieba ImportError → 正则(加 warning,可见);reranker OOM → `_fallback_documents`
   (保留 RRF 顺序,已有);BM25 分词失败可见性提升。
 - **性能**:bge-v2-m3 CPU 推理比 ms-marco 慢(~6 倍参数),batch 降 4 缓解;jieba 首次加载

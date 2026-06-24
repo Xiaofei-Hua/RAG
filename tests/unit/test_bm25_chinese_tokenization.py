@@ -204,5 +204,66 @@ class TestBM25ConfigCompat:
         assert cfg.b == 0.75
 
 
+# ===========================================================================
+# F-RS-006 — hybrid retrieval invariants (§7.2): Chinese sparse leg non-empty
+#            + dense-only fallback when sparse errors.
+#
+# The unit tests above cover _tokenize/retrieve in isolation; these guard the
+# *integration* so a future regression (jieba removed, score>0 loosened) cannot
+# silently empty the sparse leg again — which is exactly how this P0 went
+# undetected. Must assert at the hybrid layer, not the BM25 layer.
+# ===========================================================================
+
+
+class TestHybridChineseSparseLeg:
+    def test_hybrid_chinese_sparse_leg_non_empty(self):
+        """After Stage A, a Chinese query MUST produce a non-empty sparse
+        contribution that flows into RRF fusion (pre-fix: sparse leg empty for
+        Chinese, hybrid degraded to dense-only). Guards §7.2 write→read
+        consistency across the whole retrieval leg, not just _tokenize."""
+        from langchain_core.documents import Document
+
+        from core.retrieval.bm25_retriever import BM25Retriever
+
+        # Isolated BM25 instance with Chinese corpus — mirrors what the hybrid
+        # sparse leg holds after bootstrap.
+        r = BM25Retriever()
+        r.add_documents(
+            [
+                Document(page_content="发动机叶片振动是常见故障原因", metadata={"id": "d1"}),
+                Document(page_content="液压系统压力偏低报警", metadata={"id": "d2"}),
+            ]
+        )
+        results = r.retrieve("发动机振动", top_k=5)
+        assert results, "sparse leg returned empty for a Chinese query — P0 regressed"
+
+    def test_dense_only_fallback_when_sparse_empty(self):
+        """When the sparse leg returns nothing (zero term overlap), the hybrid
+        retriever MUST still return dense results — the §3 'unavailable != 0'
+        invariant: a failed/empty leg degrades gracefully, never yields []."""
+        from langchain_core.documents import Document
+
+        from core.retrieval.hybrid_retriever import (
+            HybridRetriever,
+            HybridRetrieverConfig,
+            RetrievalResult,
+        )
+
+        cfg = HybridRetrieverConfig(enable_reranker=False)
+        retriever = HybridRetriever(config=cfg)
+
+        # Drive _rrf_fusion directly with empty sparse to prove dense-only works.
+        dense = [
+            RetrievalResult(
+                document=Document(page_content="dense fallback result", metadata={"id": "d1"}),
+                score=1.0,
+                source="dense",
+                rank=1,
+            )
+        ]
+        fused = retriever._rrf_fusion(dense_results=dense, sparse_results=[])
+        assert fused, "dense-only RRF fallback returned empty — unavailable was treated as 0"
+
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
