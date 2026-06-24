@@ -19,6 +19,7 @@ Key fixes vs. the original implementation:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import time
 from typing import Any
 
@@ -30,6 +31,15 @@ __all__ = ["EvalRunner", "DEFAULT_PASS_THRESHOLD", "DEFAULT_CONCURRENCY"]
 
 DEFAULT_PASS_THRESHOLD = 0.6
 DEFAULT_CONCURRENCY = 4
+
+
+def _content_id(text: str) -> str:
+    """Deterministic chunk id from text content (mirrors scripts/run_benchmark
+    _content_id and prepare_benchmark _chunk_id): sha1 of normalised text[:12].
+    Used so golden expected_context_ids (computed the same way) align with the
+    ids extracted from retrieved contexts at eval time."""
+    norm = " ".join((text or "").strip().split())
+    return hashlib.sha1(norm.encode("utf-8")).hexdigest()[:12]
 
 
 def _extract_contexts(messages: list) -> list[str]:
@@ -113,15 +123,19 @@ class EvalRunner:
     # ------------------------------------------------------------------ extract
 
     @staticmethod
-    def _extract_result(result: dict[str, Any] | None):
+    def _extract_result(result: dict[str, Any] | None, query: str = ""):
         """
-        Pull (answer, intent, sources, contexts) out of a graph result dict.
+        Pull (answer, intent, sources, contexts, context_ids) out of a graph result.
 
-        The graph returns keys like 'messages', '_fast_mode', '_sources'. We
-        normalise both the full-graph and fast-mode shapes here.
+        Stage D fixes:
+        - context_ids: computed from each retrieved context via _content_id so
+          golden expected_context_ids (same algorithm) can be matched.
+        - intent: the graph has no intent node; classify the query directly with
+          the real intent classifier (same one the API router uses) instead of
+          guessing "rag_query".
         """
         if not result:
-            return "", "", 0, []
+            return "", "", 0, [], []
 
         messages = result.get("messages", []) or []
         answer = ""
@@ -144,16 +158,30 @@ class EvalRunner:
         else:
             sources_count = _count_sources(messages)
 
-        # Intent: the graph does not write intent into the result; fast-mode
-        # rows are rag_query by definition, otherwise unknown. We surface an
-        # empty string and let rule-based intent scoring degrade gracefully.
-        intent = result.get("_intent", "")
-        if not intent:
-            # Fast-mode rows are always rag_query.
-            if result.get("_fast_mode"):
-                intent = "rag_query"
+        # Deterministic chunk ids from the retrieved context texts (Stage D
+        # REQ-RD-001). Mirrors the golden expected_context_ids algorithm so the
+        # set-overlap precision/recall in scorer.score_context_ids works.
+        context_ids = [_content_id(c) for c in contexts if c]
 
-        return answer, intent, sources_count, contexts
+        # Intent: classify the query directly (Stage D REQ-RD-003). The graph
+        # has no intent node, and eval bypasses the API router where intent is
+        # normally classified — so we run the same classifier here. This makes
+        # intent_accuracy reflect a real classification, not a constant.
+        intent = ""
+        if result.get("_fast_mode"):
+            intent = "rag_query"
+        elif query:
+            try:
+                from core.intent.classifier import get_intent_classifier
+
+                ic = get_intent_classifier()
+                ir = ic.classify(query)
+                intent = getattr(getattr(ir, "intent", None), "value", "") or ""
+            except Exception as e:  # noqa: BLE001
+                log.debug(f"eval intent classification failed: {e}")
+                intent = ""
+
+        return answer, intent, sources_count, contexts, context_ids
 
     # ------------------------------------------------------------------ sync
 
@@ -163,7 +191,7 @@ class EvalRunner:
         try:
             harness = self._get_harness(case)
             result = harness.invoke(case.query, thread_id=f"eval_{case.id}")
-            answer, intent, sources, contexts = self._extract_result(result)
+            answer, intent, sources, contexts, context_ids = self._extract_result(result, case.query)
 
             score = self._scorer.score(
                 case=case,
@@ -171,6 +199,7 @@ class EvalRunner:
                 actual_intent=intent,
                 actual_sources=sources,
                 retrieved_contexts=contexts,
+                retrieved_context_ids=context_ids,
             )
             elapsed_ms = (time.perf_counter() - start) * 1000
             return EvalResult(
@@ -211,7 +240,7 @@ class EvalRunner:
         try:
             harness = self._get_harness(case)
             result = await harness.ainvoke(case.query, thread_id=f"eval_{case.id}")
-            answer, intent, sources, contexts = self._extract_result(result)
+            answer, intent, sources, contexts, context_ids = self._extract_result(result, case.query)
 
             score = self._scorer.score(
                 case=case,
@@ -219,6 +248,7 @@ class EvalRunner:
                 actual_intent=intent,
                 actual_sources=sources,
                 retrieved_contexts=contexts,
+                retrieved_context_ids=context_ids,
             )
             elapsed_ms = (time.perf_counter() - start) * 1000
             return EvalResult(

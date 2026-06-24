@@ -14,6 +14,42 @@ import re
 from agent.eval.judge import LLMJudge
 from agent.eval.types import EvalCase, EvalScore
 
+# Caveat prefixes appended by output_guardrails / generate skill that have no
+# grounding evidence; removing them from the answer fed to the judge stops them
+# from becoming unsupported faithfulness claims (Stage D REQ-RD-004).
+_CAVEAT_RE = re.compile(
+    r">\s*[⚠️🤔💡]\s*.*?(?=\n\n|\Z)|"
+    r"[⚠️🤔💡]\s*[^。\n]*(?:推理|不确定性|假设|参考|仅[供为])[^。\n]*[。.\n]?",
+    flags=re.DOTALL,
+)
+
+
+def _strip_guardrail_boilerplate(answer: str) -> str:
+    """Remove guardrail/generate-appended template text from an answer before the
+    judge scores it. The judge's faithfulness NLI treats every claim in `answer`
+    as needing context support — appended disclaimers/structure hints/caveats
+    have no evidence and systematically drag faithfulness down.
+
+    Sources of boilerplate (Stage D REQ-RD-004):
+    - domain profile safety_disclaimer (appended by OutputGuardrail SANITIZE)
+    - domain profile structure_hint (appended on truncation/unstructured)
+    - grounding caveat ("> ⚠️ 提示...") and reflection caveat from generate skill
+    """
+    if not answer:
+        return answer
+    cleaned = answer
+    try:
+        from core.prompts.domain_profile import get_active_profile
+
+        profile = get_active_profile()
+        for boilerplate in (getattr(profile, "safety_disclaimer", ""), getattr(profile, "structure_hint", "")):
+            if boilerplate and boilerplate.strip():
+                cleaned = cleaned.replace(boilerplate.strip(), "")
+    except Exception:  # noqa: BLE001
+        pass
+    cleaned = _CAVEAT_RE.sub("", cleaned)
+    return cleaned.strip()
+
 
 class EvalScorer:
     """Score an (answer, contexts) pair against a case."""
@@ -95,9 +131,13 @@ class EvalScorer:
         judge = self.judge
         if judge is not None and judge.available:
             contexts = retrieved_contexts or []
+            # Strip guardrail-appended boilerplate (disclaimers/hints/caveats)
+            # before the judge scores faithfulness — otherwise those unsupported
+            # template sentences become false-unfaithful claims (Stage D REQ-RD-004).
+            judge_answer = _strip_guardrail_boilerplate(actual_answer)
             metrics = judge.evaluate(
                 question=case.query,
-                answer=actual_answer,
+                answer=judge_answer,
                 contexts=contexts,
                 reference_answer=case.reference_answer,
             )

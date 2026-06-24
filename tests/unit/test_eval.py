@@ -241,10 +241,11 @@ class TestRunnerExtraction:
                 AIMessage(content="【诊断结论】振动偏高，建议动平衡。"),
             ]
         }
-        answer, intent, sources, contexts = EvalRunner._extract_result(result)
+        answer, intent, sources, contexts, context_ids = EvalRunner._extract_result(result)
         assert "振动偏高" in answer
         assert sources == 2
         assert len(contexts) == 2
+        assert len(context_ids) == 2  # Stage D: ids extracted from contexts
 
     def test_extract_result_fast_mode(self):
         from agent.eval.runner import EvalRunner
@@ -258,7 +259,7 @@ class TestRunnerExtraction:
                 {"source": "doc3", "content": "片段3"},
             ],
         }
-        answer, intent, sources, contexts = EvalRunner._extract_result(result)
+        answer, intent, sources, contexts, context_ids = EvalRunner._extract_result(result)
         assert sources == 3
         assert intent == "rag_query"
         assert len(contexts) == 3
@@ -266,10 +267,11 @@ class TestRunnerExtraction:
     def test_extract_result_empty(self):
         from agent.eval.runner import EvalRunner
 
-        answer, intent, sources, contexts = EvalRunner._extract_result(None)
+        answer, intent, sources, contexts, context_ids = EvalRunner._extract_result(None)
         assert answer == ""
         assert sources == 0
         assert contexts == []
+        assert context_ids == []
 
 
 # ---------------------------------------------------------------------------

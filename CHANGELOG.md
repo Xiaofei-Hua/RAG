@@ -7,6 +7,23 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Fixed — eval closure metric accuracy (`eval-closure-metric-accuracy`, stage D)
+
+Three metric-truthfulness fixes so Stage 0–C improvements are measurable:
+- **context_ids never passed**: EvalRunner._extract_result now extracts chunk ids
+  (sha1 of normalised text) from retrieved contexts and passes them to the scorer;
+  was always None (the scorer's `retrieved_context_ids` param was declared but never
+  fed). Deterministic context precision/recall now works when golden cases carry
+  `expected_context_ids`.
+- **intent_accuracy was always False**: the graph has no intent node and eval
+  bypasses the API router where intent is classified. EvalRunner now classifies
+  the query directly via the real intent classifier (`get_intent_classifier`),
+  so `intent_accuracy` reflects actual classification instead of a constant empty.
+- **judge faithfulness polluted by boilerplate**: the output guardrail appends
+  safety disclaimers / structure hints / caveats to the answer; the judge then
+  treats them as ungrounded claims → false-unfaithful. The scorer now strips
+  known boilerplate before feeding the judge.
+
 ### Fixed — generation faithfulness (`generation-quality-faithfulness`, stage C)
 
 faithfulness is the dominant end-to-end eval dimension (weight 0.4). Four fixes:
