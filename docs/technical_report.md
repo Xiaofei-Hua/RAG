@@ -484,15 +484,86 @@ START
 
 ---
 
-## 13. 优化建议
+## 13. 评测基准与回归实测
 
-### 13.1 LLM 性能优化
+本节记录在 `torch 2.12.1+cu132`（RTX 5070 Ti, compute capability `sm_120`）下的检索
+benchmark 与端到端 eval 实测，以及相对基线的回归对比。两组测试均全程 GPU 运行，零
+`cudaErrorNoKernelImageForDevice`。
+
+### 13.1 检索 Benchmark（纯检索栈，无 LLM）
+
+通过 `scripts/run_benchmark.py` 评测 Dense + BM25 + RRF 融合 + Cross-Encoder 重排的纯
+检索质量（`top_k=4`），不涉及 LLM 生成：
+
+| 数据集 | cases | 命中率（≥1 gold） | context_recall | answer_overlap | 耗时 |
+|--------|:---:|:---:|:---:|:---:|:---:|
+| CMRC2018（中文） | 30 | **100.0%** | **1.000** | 0.971 | 5.6s |
+| MSMARCO（英文） | 30 | **80.0%** | 0.800 | 0.945 | 4.3s |
+
+> **关于 precision**：`context_precision` 为 0.20/0.25 是 `top_k=4` 的数学上限——每个
+> query 返回 4 片段、命中 1 个 gold chunk，precision = 1/4 = 0.25，属设计取舍（保 recall），
+> 非质量问题。需要更高 precision 可加 `--dedup-source` 收敛同源片段。
+
+MSMARCO 未命中的 6 个 case（phloem 流向 / calomel 粉 / cpap 处方 / msn 邮箱等）均为冷门
+术语或专业领域 hard case，dense + BM25 都难召回，属数据集固有难点，非检索栈缺陷。
+
+### 13.2 端到端 Eval（含 LLM 生成，航空 PHM golden）
+
+通过 `scripts/run_eval.py --no-judge` 评测航空 PHM golden 数据集（15 cases，覆盖发动机 /
+液压 / 航电 / 闲聊 / 边缘 query），全链路 Thinking 模式（agent→retrieve→grade→rewrite→
+generate），并发 1：
+
+| 维度 | 结果 |
+|------|------|
+| 通过 / 失败 | **15 / 0** |
+| average_score | **0.911** |
+| intent_accuracy | 15/15（rag_query 全部正确分类） |
+| 超时降级 | 0（并发 1 稳定） |
+| 单 case 平均耗时 | ~75s（含多轮 LLM 调用） |
+
+### 13.3 回归对比（vs 基线）
+
+与基线 run（`run_20260624_123251`，commit `1fd17c6`，同 15 cases）逐 case 对比：
+
+| case | baseline | cu132 | delta |
+|------|:---:|:---:|:---:|
+| engine_vibration_01 | 0.650 | 1.000 | +0.350 |
+| engine_overheat_02 | 0.650 | 0.775 | +0.125 |
+| engine_fault_code_03 | 0.650 | 0.850 | +0.200 |
+| engine_oil_degradation_04 | 0.800 | 0.940 | +0.140 |
+| engine_performance_05 | 0.725 | 0.850 | +0.125 |
+| hydraulic_leak_06 | 0.725 | 0.925 | +0.200 |
+| hydraulic_pump_07 | 0.725 | 0.925 | +0.200 |
+| hydraulic_valve_08 | 0.800 | 1.000 | +0.200 |
+| avionics_signal_09 | 0.800 | 1.000 | +0.200 |
+| avionics_power_10 | 0.800 | 1.000 | +0.200 |
+| avionics_display_11 | 0.800 | 1.000 | +0.200 |
+| chat_greeting_12 | 0.800 | 0.800 | +0.000 |
+| chat_capability_13 | 0.800 | 0.800 | +0.000 |
+| edge_ambiguous_14 | 0.800 | 0.800 | +0.000 |
+| edge_short_15 | 0.800 | 1.000 | +0.200 |
+| **AVERAGE** | **0.755** | **0.911** | **+0.156** |
+
+**结论**：15 cases 全部不回归（0/15 regress），12 个 case 提升，平均分 +0.156。
+
+### 13.4 已知的环境瓶颈
+
+- **并发 LLM 调用受限**：本机 Qwen3:14b（context 4096）在 Thinking 模式多轮 LLM 调用下，
+  4 并发会触发 generate 超时降级（单次 6 分钟超时）。**并发 1 稳定**（零超时）。这是 LLM
+  推理硬件瓶颈，与检索栈无关；如需更高吞吐或开 LLM-as-judge，建议更强 GPU 或更低并发。
+- **复现命令**：`uv run python scripts/run_eval.py --dataset data/eval/golden.yaml --no-judge --concurrency 1`
+
+---
+
+## 14. 优化建议
+
+### 14.1 LLM 性能优化
 
 - **模型已升级**：从 Qwen3-8B（6.5GB 显存）升级至 Qwen3-14B（12GB 显存），参数量提升 80%，充分利用 RTX 5070 Ti 16GB 显存
 - **调整采样参数**：当前 Temperature=0.0，官方推荐思考模式用 0.6、非思考模式用 0.7
 - **Qwen3 Thinking 已集成**：Thinking 模式已开启推理过程捕获（通过 OpenAI SDK 直接读取 `reasoning` 字段），Fast 模式通过 `/no_think` 关闭推理以降低延迟
 
-### 13.2 检索质量优化
+### 14.2 检索质量优化
 
 - **升级 Embedding**：bge-small-zh-v1.5（512维）→ bge-large-zh-v1.5（1024维）或 bge-m3（多语言）
 - **两阶段重排序已接入**：Dense 与 BM25 扩大候选召回，经 RRF 融合后可选 Cross-Encoder 重排序；接口保留 `retrieval_score`、`rerank_score` 和 `rerank_applied` 便于排障
@@ -500,7 +571,7 @@ START
 - **增大上下文窗口**：当前 2,500 字符截断偏小，建议提升至 4,000-6,000 字符
 - **优化 BM25**：当前 BM25 召回为 0（中文分词未生效），需引入 jieba 分词
 
-### 13.3 架构优化
+### 14.3 架构优化
 
 - **意图分类去 LLM 化**：当前已实现关键词快捷路由，但仍走 LLM 回退路径，可完全改为规则匹配
 - **文档评分去 LLM 化**：用 embedding 相似度替代 LLM 评分，节省一次推理
