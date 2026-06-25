@@ -134,7 +134,9 @@ data/       # 运行时 SQLite（sessions/inferences/candidates/eval/judge_cache
 分层矩阵 + conftest 密封性 + 热路径纪律见 `tests/AGENTS.md`。补充全局纪律：
 - **确定性**：禁止 `sleep()` 等待异步，改用 Event/`fail_after(5)`/轮询；`filterwarnings=["error"]`。
 - **Golden/Snapshot**：prompt 渲染/结构化输出/置信度公式输出的改动配 golden test（`tests/fixtures/`），变更时 PR 单列 golden diff。
-- **MUST NOT** 为演示特性创建一次性示例文件（验证用 inline 脚本或 `tests/` 内测试）。
+- **一次性验证脚本纪律**：**MUST NOT** 为演示/验证某特性创建散落在业务模块（`agent/` `api/` `web/` 根等）的一次性脚本。
+  - 前端/浏览器验证（如 Playwright 一次性截图脚本）**MUST** 落 `tests/e2e_ui/`，跑完确认后即删，**不进 git**（见 `web/AGENTS.md` §2.2）。
+  - 后端快速验证用 inline `python -c` 或 `tests/` 内临时测试。**MUST NOT** 在仓库根/`web/` 根留 `demo_*.py`/`demo_*.cjs` 等一次性文件。
 
 ---
 

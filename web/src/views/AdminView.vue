@@ -7,7 +7,7 @@
         <p>监控系统状态、熔断器和性能指标</p>
       </div>
       <div class="header-actions">
-        <button class="btn-secondary" @click="refreshAll">
+        <button class="btn-secondary" @click="refreshAll" data-testid="admin-refresh">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M23 4v6h-6"/>
             <path d="M1 20v-6h6"/>
@@ -19,7 +19,7 @@
     </div>
 
     <!-- Health Status -->
-    <div class="section">
+    <div class="section" data-testid="admin-section-health">
       <div class="section-header">
         <h2>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -69,7 +69,7 @@
     </div>
 
     <!-- Circuit Breakers -->
-    <div class="section">
+    <div class="section" data-testid="admin-section-circuits">
       <div class="section-header">
         <h2>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -104,6 +104,7 @@
             class="btn-reset"
             @click="resetCircuitBreaker(name)"
             :disabled="stats.state === 'closed'"
+            data-testid="circuit-reset"
           >
             重置
           </button>
@@ -115,7 +116,7 @@
     </div>
 
     <!-- Degradation Mode -->
-    <div class="section">
+    <div class="section" data-testid="admin-section-degradation">
       <div class="section-header">
         <h2>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -133,6 +134,7 @@
             class="mode-btn"
             :class="{ active: degradationMode === mode.value }"
             @click="setDegradationMode(mode.value)"
+            :data-testid="'degradation-mode-' + mode.value"
           >
             <span class="mode-icon">{{ mode.icon }}</span>
             <span class="mode-label">{{ mode.label }}</span>
@@ -142,7 +144,7 @@
     </div>
 
     <!-- Metrics -->
-    <div class="section">
+    <div class="section" data-testid="admin-section-metrics">
       <div class="section-header">
         <h2>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">

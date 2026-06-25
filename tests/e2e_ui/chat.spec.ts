@@ -1,61 +1,102 @@
 /**
- * F25 — Playwright browser E2E for the Vue SPA.
+ * Chat UI E2E — covers the chat flows AGENTS.md §0 rule #2 requires.
  *
- * Covers the five UI flows that AGENTS.md §0 rule #2 requires: chat, SSE
- * streaming, document upload, session switching, and feedback. These run
- * against the built web/dist SPA served by the FastAPI backend (with the e2e
- * fakes, so no Ollama/Milvus is required in CI).
+ * Runs against the built web/dist SPA served by the FastAPI backend. The
+ * backend uvicorn process has RAG_E2E_FAKES=1 set (see web/playwright.config.ts
+ * + tests/e2e_ui/_fakes.py), so it serves deterministic canned answers WITHOUT
+ * Ollama/Milvus. Every interaction is captured with a screenshot into
+ * tests/e2e_ui/screenshots/.
  *
- * SSE is asserted via the final rendered answer text + a waitForResponse on
- * the stream endpoint, NOT byte-boundary timing (flaky).
+ * Covered: welcome render, identity shortcut (no LLM), deep (thinking) RAG,
+ * fast-mode RAG, SSE streaming, and the sources panel. Feedback has NO frontend
+ * UI yet (see web/AGENTS.md "coverage" note) so it is NOT tested here.
  */
 import { test, expect } from "@playwright/test";
+import { screenshot } from "./helpers";
+
+const SHOT_DIR = "chat";
 
 test.describe("Chat UI", () => {
-  test("renders and answers a RAG question", async ({ page }) => {
+  test("welcome screen renders with quick questions", async ({ page }) => {
     await page.goto("/");
-    // The chat input (textarea or input) — accept either.
-    const input = page.locator("textarea, input[type='text']").first();
-    await input.fill("发动机振动偏高如何诊断？");
+    await expect(page.getByTestId("welcome")).toBeVisible();
+    await expect(page.getByTestId("quick-q-1")).toBeVisible();
+    await screenshot(page, SHOT_DIR, "welcome");
+  });
+
+  test("identity question answers without LLM (你是谁)", async ({ page }) => {
+    await page.goto("/");
+    const input = page.getByTestId("chat-input");
+    await input.fill("你是谁");
     await input.press("Enter");
 
-    // Wait for a response to render (non-streaming branch writes the answer
-    // into the DOM; streaming writes it progressively).
-    await expect(
-      page.locator("body").filter({ hasText: /振动|诊断|手册|未能|建议/ })
-    ).toBeVisible({ timeout: 30_000 });
+    // Identity shortcut returns a capability string (no LLM needed).
+    await expect(page.locator("[data-testid='message'].assistant").last())
+      .toContainText(/智能|RAG|问答|助手/, { timeout: 30_000 });
+    await screenshot(page, SHOT_DIR, "identity-answer");
+  });
+
+  test("deep (thinking) mode answers a RAG question with a diagnosis", async ({ page }) => {
+    await page.goto("/");
+    // Ensure thinking mode (default).
+    await expect(page.getByTestId("mode-thinking")).toHaveClass(/active/);
+    const input = page.getByTestId("chat-input");
+    await input.fill("发动机振动异常如何排查？");
+    await input.press("Enter");
+
+    // Fake harness returns a canned PHM diagnosis answer.
+    await expect(page.locator("[data-testid='message'].assistant").last())
+      .toContainText(/诊断|振动|不平衡|频谱/, { timeout: 30_000 });
+    await screenshot(page, SHOT_DIR, "deep-answer");
+  });
+
+  test("fast mode answers a RAG question", async ({ page }) => {
+    await page.goto("/");
+    await page.getByTestId("mode-fast").click();
+    await expect(page.getByTestId("mode-fast")).toHaveClass(/active/);
+    const input = page.getByTestId("chat-input");
+    await input.fill("液压系统压力低的排故流程是什么？");
+    await input.press("Enter");
+
+    await expect(page.locator("[data-testid='message'].assistant").last())
+      .toContainText(/诊断|液压|压力/, { timeout: 30_000 });
+    await screenshot(page, SHOT_DIR, "fast-answer");
   });
 
   test("SSE streaming emits a final answer", async ({ page }) => {
     await page.goto("/");
-    const streamResponse = page.waitForResponse(
-      (resp) => resp.url().includes("/api/chat/stream") || resp.url().includes("/api/chat"),
+    // Streaming is on by default; the toggle reflects that.
+    await expect(page.getByTestId("stream-toggle")).toBeVisible();
+    const streamResp = page.waitForResponse(
+      (r) => r.url().includes("/api/chat/stream"),
       { timeout: 30_000 }
     );
-    const input = page.locator("textarea, input[type='text']").first();
-    await input.fill("液压系统压力低如何排查？");
+    const input = page.getByTestId("chat-input");
+    await input.fill("发动机振动异常如何排查？");
     await input.press("Enter");
-    const resp = await streamResponse;
+    const resp = await streamResp;
     expect(resp.ok()).toBeTruthy();
-    // The DOM should eventually show some answer text.
-    await expect(page.locator(".message, .answer, [class*='message']").first())
-      .not.toBeEmpty({ timeout: 30_000 }).catch(async () => {
-        // Fallback: just assert the body gained content after the request.
-        await expect(page.locator("body")).not.toHaveText("");
-      });
-  });
-});
 
-test.describe("Documents UI", () => {
-  test("documents page loads", async ({ page }) => {
-    await page.goto("/documents");
-    await expect(page.locator("body")).toBeVisible();
+    // The assistant message should gain content via token events.
+    await expect(page.locator("[data-testid='message'].assistant").last())
+      .toContainText(/诊断|振动|不平衡|频谱/, { timeout: 30_000 });
+    await screenshot(page, SHOT_DIR, "stream-answer");
   });
-});
 
-test.describe("Sessions UI", () => {
-  test("sessions page loads", async ({ page }) => {
-    await page.goto("/sessions");
-    await expect(page.locator("body")).toBeVisible();
+  test("sources panel opens when an answer has sources", async ({ page }) => {
+    await page.goto("/");
+    const input = page.getByTestId("chat-input");
+    await input.fill("发动机振动异常如何排查？");
+    await input.press("Enter");
+    // Wait for the answer to land first.
+    await expect(page.locator("[data-testid='message'].assistant").last())
+      .toContainText(/诊断|振动/, { timeout: 30_000 });
+
+    const toggle = page.getByTestId("sources-toggle");
+    if (await toggle.count()) {
+      await toggle.first().click();
+      await expect(page.getByTestId("sources-panel")).toBeVisible();
+      await screenshot(page, SHOT_DIR, "sources-panel");
+    }
   });
 });

@@ -25,11 +25,14 @@ export default defineConfig({
     { name: "chromium", use: { ...devices["Desktop Chrome"] } },
   ],
   webServer: {
-    // The CI job is expected to have built web/dist and to start the backend
-    // separately (with the e2e fakes). We only point Playwright at it here.
+    // Build web/dist first (npm run build), then start the backend. The
+    // RAG_E2E_FAKES=1 env triggers deterministic fake injection INTO this
+    // uvicorn subprocess (see tests/e2e_ui/_fakes.py + api/main.py hook) so
+    // browser E2E needs no Ollama/Milvus and stays hermetic. PYTEST_RUN=1 only
+    // skips the F05 production-config startup guard; it does NOT inject fakes.
     command: process.env.E2E_NO_WEBSERVER
       ? "echo 'using externally-started backend'"
-      : `cd .. && PYTEST_RUN=1 uv run uvicorn api.main:app --host 127.0.0.1 --port 8000`,
+      : `cd .. && PYTEST_RUN=1 RAG_E2E_FAKES=1 uv run uvicorn api.main:app --host 127.0.0.1 --port 8000`,
     url: BACKEND,
     reuseExistingServer: true,
     timeout: 120_000,

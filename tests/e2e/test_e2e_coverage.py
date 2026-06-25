@@ -251,16 +251,6 @@ class TestStreamingSequence:
         # or error (current fake). Both prove the SSE loop ran to completion.
         assert ("done" in types) or ("error" in types)
 
-    @pytest.mark.xfail(
-        reason="The conftest fake harness astream yields a bare "
-        "{'messages': [...]} dict (not LangGraph (mode, data) tuples), "
-        "so no node-name handler matches and full_response stays empty. "
-        "This is a fake-harness limitation, not a production bug — the "
-        "real B2/B4 fixes (dict guard + confidence) are covered by "
-        "tests/unit/test_bugfix_batch2.py. Remove once the fake emits "
-        "graph-shaped events.",
-        strict=True,
-    )
     def test_rag_stream_emits_tokens_and_full_response(self, client):
         with client.stream(
             "POST",

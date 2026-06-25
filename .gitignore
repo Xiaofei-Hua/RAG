@@ -52,6 +52,11 @@ Thumbs.db
 node_modules/
 web/dist/
 
+# Playwright runtime artifacts (过程截图 + 失败现场；基线快照 *-snapshots/ 不忽略，必须入库)
+tests/e2e_ui/screenshots/
+tests/e2e_ui/test-results/
+web/test-results/
+
 # Embedding model cache
 models/sentence-transformers_*/
 

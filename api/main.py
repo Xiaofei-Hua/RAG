@@ -11,6 +11,17 @@ Provides REST API and WebSocket endpoints for:
 import hashlib
 import os
 import time
+
+# Browser E2E fake injection (gated, production no-op). When RAG_E2E_FAKES=1 is
+# set (only by the Playwright webServer command), install deterministic fakes
+# into THIS process so tests run without Ollama/Milvus and stay hermetic. See
+# web/AGENTS.md §3 and tests/e2e_ui/_fakes.py. Runs before the app is built so
+# patched getters are picked up at first use. PYTEST_RUN=1 only skips the F05
+# startup guard below — it does NOT inject fakes.
+if os.getenv("RAG_E2E_FAKES", "") == "1":
+    from tests.e2e_ui._fakes import install as _install_e2e_fakes
+
+    _install_e2e_fakes()
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -280,6 +291,14 @@ def create_app() -> FastAPI:
 # Module-level app for `uvicorn api.main:app`. Built via the factory so the
 # in-process test client and uvicorn share one construction path.
 app = create_app()
+
+# Browser E2E: wire session-memory dependency overrides now that `app` exists.
+# No-op unless RAG_E2E_FAKES=1 (install() ran above); pairs with the import-time
+# hook at the top of this module. See tests/e2e_ui/_fakes.py.
+if os.getenv("RAG_E2E_FAKES", "") == "1":
+    from tests.e2e_ui._fakes import wire_overrides as _wire_e2e_overrides
+
+    _wire_e2e_overrides(app)
 
 
 if __name__ == "__main__":

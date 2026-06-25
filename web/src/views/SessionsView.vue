@@ -7,13 +7,13 @@
         <p>查看和管理历史对话记录</p>
       </div>
       <div class="header-actions">
-        <button class="btn-primary" @click="startNewSession">
+        <button class="btn-primary" @click="startNewSession" data-testid="session-new">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M12 5v14M5 12h14"/>
           </svg>
           新建对话
         </button>
-        <button class="btn-secondary" @click="loadSessions">
+        <button class="btn-secondary" @click="loadSessions" data-testid="session-refresh">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M23 4v6h-6"/>
             <path d="M1 20v-6h6"/>
@@ -25,7 +25,7 @@
     </div>
 
     <!-- Sessions Grid -->
-    <div v-if="sessions.length === 0" class="empty-state">
+    <div v-if="sessions.length === 0" class="empty-state" data-testid="session-empty">
       <div class="empty-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <circle cx="12" cy="12" r="10"/>
@@ -42,12 +42,13 @@
       </button>
     </div>
 
-    <div v-else class="sessions-grid">
+    <div v-else class="sessions-grid" data-testid="session-grid">
       <div
         v-for="session in sessions"
         :key="session.session_id"
         class="session-card"
         @click="openSession(session.session_id)"
+        data-testid="session-card"
       >
         <div class="session-header">
           <div class="session-icon">
@@ -58,7 +59,7 @@
           <div class="session-title-area">
             <div class="session-title">{{ session.title || session.session_id?.substring(0, 12) + '...' }}</div>
           </div>
-          <button class="btn-delete" @click.stop="deleteSession(session.session_id)" title="删除会话">
+          <button class="btn-delete" @click.stop="deleteSession(session.session_id)" title="删除会话" data-testid="session-delete">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polyline points="3 6 5 6 21 6"/>
               <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>

@@ -331,8 +331,38 @@ def fake_harness(fake_llm, fake_retriever):
             return _build_result()
 
         async def astream(self, query, thread_id=None, **kwargs):
-            # Emit a single "done" update.
-            yield {"messages": [AIMessage(content=canned_answer)]}
+            # Emit LangGraph-shaped (mode, data) tuples so the streaming
+            # endpoint's RAG branch assembles a non-empty full_response.
+            # Parity with tests/e2e_ui/_fakes.py:_FakeHarness.astream and the
+            # real graph update stream. Previously this yielded a bare
+            # {'messages': [...]} dict, which no node handler matched.
+            yield (
+                "updates",
+                {
+                    "retrieve": {
+                        "messages": [
+                            {
+                                "content": "发动机振动偏高时应进行频谱分析，1倍频主导通常指示不平衡。",
+                                "metadata": {"source": "engine_manual", "title": "振动诊断"},
+                            }
+                        ]
+                    }
+                },
+            )
+            yield ("custom", {"type": "token", "content": canned_answer})
+            yield (
+                "updates",
+                {
+                    "generate": {
+                        "messages": [
+                            AIMessage(
+                                content=canned_answer,
+                                additional_kwargs={"reasoning": "fake", "confidence": 0.85},
+                            )
+                        ]
+                    }
+                },
+            )
 
     return _FakeHarness()
 

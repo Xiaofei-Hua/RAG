@@ -25,6 +25,7 @@
       @drop.prevent="handleDrop"
       @dragover.prevent="isDragging = true"
       @dragleave.prevent="isDragging = false"
+      data-testid="upload-area"
     >
       <input
         type="file"
@@ -33,6 +34,7 @@
         accept=".md,.txt,.pdf"
         hidden
         multiple
+        data-testid="file-input"
       />
       <div class="upload-content" @click="($refs.fileInput as any)?.click()">
         <div class="upload-icon">
@@ -70,12 +72,12 @@
               <circle cx="11" cy="11" r="8"/>
               <path d="M21 21l-4.35-4.35"/>
             </svg>
-            <input type="text" v-model="searchQuery" placeholder="搜索文档..." />
+            <input type="text" v-model="searchQuery" placeholder="搜索文档..." data-testid="doc-search" />
           </div>
         </div>
       </div>
 
-      <div v-if="filteredDocuments.length === 0" class="empty-state">
+      <div v-if="filteredDocuments.length === 0" class="empty-state" data-testid="doc-empty">
         <div class="empty-icon">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -86,8 +88,8 @@
         <p>上传文档以开始构建知识库</p>
       </div>
 
-      <div v-else class="document-grid">
-        <div v-for="doc in filteredDocuments" :key="doc.id" class="document-card">
+      <div v-else class="document-grid" data-testid="doc-grid">
+        <div v-for="doc in filteredDocuments" :key="doc.id" class="document-card" data-testid="doc-card">
           <div class="doc-header">
             <div class="doc-icon" :class="getFileType(doc.filename)">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -96,7 +98,7 @@
               </svg>
             </div>
             <div class="doc-actions">
-              <button class="btn-icon-sm delete" @click="deleteDocument(doc.id)" title="删除">
+              <button class="btn-icon-sm delete" @click="deleteDocument(doc.id)" title="删除" data-testid="doc-delete">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <polyline points="3 6 5 6 21 6"/>
                   <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>

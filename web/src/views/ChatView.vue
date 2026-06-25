@@ -13,6 +13,7 @@
               :class="['mode-btn', { active: chatStore.mode === 'thinking' }]"
               @click="chatStore.mode = 'thinking'"
               title="深度思考模式：完整意图分析 + 文档评估 + 诊断回答"
+              data-testid="mode-thinking"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M12 2a8 8 0 0 1 8 8c0 3.4-2.1 6.3-5 7.5V20h-6v-2.5C6.1 16.3 4 13.4 4 10a8 8 0 0 1 8-8z"/>
@@ -24,6 +25,7 @@
               :class="['mode-btn', { active: chatStore.mode === 'fast' }]"
               @click="chatStore.mode = 'fast'"
               title="快速模式：直接检索 + 生成回答"
+              data-testid="mode-fast"
             >
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
@@ -31,13 +33,13 @@
               <span>快速</span>
             </button>
           </div>
-          <button class="btn-icon" @click="toggleStreamMode" :title="useStream ? '流式输出已开启' : '流式输出已关闭'">
+          <button class="btn-icon" @click="toggleStreamMode" :title="useStream ? '流式输出已开启' : '流式输出已关闭'" data-testid="stream-toggle">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>
             </svg>
             <span class="stream-indicator" :class="{ active: useStream }"></span>
           </button>
-          <button class="btn-new-session" @click="handleNewSession" title="新建会话">
+          <button class="btn-new-session" @click="handleNewSession" title="新建会话" data-testid="new-session">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 5v14M5 12h14"/>
             </svg>
@@ -49,7 +51,7 @@
       <!-- Messages Area -->
       <div class="messages-area" ref="messagesRef">
         <!-- Welcome Message -->
-        <div v-if="chatStore.messages.length === 0" class="welcome-message">
+        <div v-if="chatStore.messages.length === 0" class="welcome-message" data-testid="welcome">
           <div class="welcome-icon">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
               <path d="M12 2L2 7L12 12L22 7L12 2Z"/>
@@ -60,9 +62,9 @@
           <h3>欢迎使用航空排故智能问答系统</h3>
           <p>基于航空知识库的智能检索与故障诊断问答，支持多种文档格式。</p>
           <div class="quick-actions">
-            <button class="quick-btn" @click="askQuestion('发动机振动异常如何排查？')">发动机振动排查</button>
-            <button class="quick-btn" @click="askQuestion('液压系统压力低的排故流程是什么？')">液压系统排故</button>
-            <button class="quick-btn" @click="askQuestion('航电系统故障代码如何查询？')">故障代码查询</button>
+            <button class="quick-btn" @click="askQuestion('发动机振动异常如何排查？')" data-testid="quick-q-1">发动机振动排查</button>
+            <button class="quick-btn" @click="askQuestion('液压系统压力低的排故流程是什么？')" data-testid="quick-q-2">液压系统排故</button>
+            <button class="quick-btn" @click="askQuestion('航电系统故障代码如何查询？')" data-testid="quick-q-3">故障代码查询</button>
           </div>
         </div>
 
@@ -71,6 +73,7 @@
           v-for="(msg, index) in chatStore.messages"
           :key="index"
           :class="['message', msg.role]"
+          data-testid="message"
         >
           <div class="message-avatar">
             <div class="avatar-icon" :class="msg.role">
@@ -113,6 +116,7 @@
                 v-if="msg.sources && msg.sources.length > 0"
                 class="source-toggle-btn"
                 @click="openSources(msg.sources)"
+                data-testid="sources-toggle"
               >
                 查看依据来源 ({{ msg.sources.length }})
               </button>
@@ -162,6 +166,7 @@
             ref="textareaRef"
             :disabled="chatStore.isLoading || chatStore.isStreaming || uploadStore.isUploading"
             maxlength="2000"
+            data-testid="chat-input"
           ></textarea>
           <div class="input-actions">
             <div class="left-actions">
@@ -172,6 +177,7 @@
                 class="btn-send"
                 @click="handleSend"
                 :disabled="!inputText.trim() || chatStore.isLoading || chatStore.isStreaming || uploadStore.isUploading"
+                data-testid="chat-send"
               >
                 <span>发送</span>
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -186,7 +192,7 @@
 
     <!-- Sources Panel -->
     <transition name="slide">
-      <div v-if="showSources && sources.length > 0" class="sources-panel">
+      <div v-if="showSources && sources.length > 0" class="sources-panel" data-testid="sources-panel">
         <div class="sources-header">
           <h3>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
