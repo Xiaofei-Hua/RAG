@@ -131,10 +131,24 @@ ignore = [
 "scripts/**" = ["E402"]
 
 
+# torch 必须走 CUDA 专用索引以匹配 GPU 算力架构。
+# RTX 5070 Ti 为 Blackwell 架构 (compute capability sm_120)，cu126 wheel 的 arch_list
+# 仅到 sm_90，缺 sm_120 kernel 会触发 cudaErrorNoKernelImageForDevice。
+# cu132 wheel 原生编译了 sm_120，是 PyTorch 官方对 RTX 50 系列的推荐路线。
+# 阿里云镜像加速国内下载；其 pytorch-wheels 为 flat 平铺目录（非 PEP503 simple），
+# 必须用 format = "flat" 让 uv 正确解析目录列表。
 [tool.uv.sources]
-torch = [{ index = "pytorch-cu126" }]
+torch = [{ index = "pytorch-cu132" }]
+
+# 默认 PyPI 索引走阿里云镜像，加速 torch 的 nvidia-cu13 依赖
+# (cublas/cudnn/nccl 等合计 ~2GB，官方 PyPI 国内直连极慢) 及其他包下载。
+[[tool.uv.index]]
+name = "pypi-aliyun"
+url = "https://mirrors.aliyun.com/pypi/simple/"
+default = true
 
 [[tool.uv.index]]
-name = "pytorch-cu126"
-url = "https://download.pytorch.org/whl/cu126"
+name = "pytorch-cu132"
+url = "https://mirrors.aliyun.com/pytorch-wheels/cu132"
+format = "flat"
 explicit = true
