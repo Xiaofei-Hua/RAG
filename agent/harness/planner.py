@@ -1,20 +1,24 @@
 """
 Planner
 
-Determines the execution plan for an agent run:
-- Thinking mode: full graph (intent -> agent -> retrieve -> grade -> generate/rewrite)
+Determines the execution plan for an agent run based on the caller-provided
+``mode`` override (set by the chat router from the user's depth/fast toggle):
+- Thinking mode: full graph (agent -> retrieve -> grade -> generate/rewrite)
 - Fast mode: direct (retrieve -> generate) skipping agent, grade, rewrite
+- Direct mode: LLM-only, no retrieval
 
-The planner considers:
-1. User's explicit mode preference (if provided)
-2. Intent classification result
-3. Session history / configuration
+NOTE on intent routing: intent classification lives in the chat router
+(``api/routers/chat.py`` via ``core/intent/classifier.py``), which routes
+``general_chat`` to a direct LLM call and ``rag_query`` to the harness BEFORE
+the harness is ever invoked. The harness is therefore only reached for RAG
+queries, and the router never passes ``intent`` into it. Accordingly this
+Planner routes purely on ``mode``; the previously-stubbed intent branches were
+unreachable at runtime and have been removed to avoid misleading readers.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
 from utils.log_utils import log
 
@@ -79,15 +83,17 @@ class ExecutionPlan:
 
 class Planner:
     """
-    Determines the execution plan for a query.
+    Determines the execution plan from the caller-provided ``mode``.
+
+    The chat router performs intent classification and routes general_chat to a
+    direct LLM call without touching the harness; only RAG queries (and the
+    explicit fast/direct mode overrides) reach here. This planner therefore maps
+    ``mode`` to an :class:`ExecutionPlan`:
 
     Decision logic:
-    1. If mode is explicitly "fast" -> fast plan
-    2. If intent is general_chat -> direct plan
-    3. Otherwise -> thinking plan (default)
-
-    The planner is used by the orchestrator before building/executing
-    the graph to decide which path to take.
+    1. If mode is explicitly "fast" (and fast mode enabled) -> fast plan
+    2. If mode is explicitly "direct" -> direct plan
+    3. Otherwise -> default plan (thinking, or fast if configured as default)
     """
 
     def __init__(
@@ -101,20 +107,18 @@ class Planner:
     def plan(
         self,
         query: str = "",
-        intent: str | None = None,
         mode: str | None = None,
         **kwargs,
     ) -> ExecutionPlan:
         """
-        Determine the execution plan.
+        Determine the execution plan from ``mode``.
 
         Args:
-            query: User's query (for future heuristics)
-            intent: Intent classification result (e.g., 'rag_query', 'general_chat')
-            mode: Explicit mode override ('thinking', 'fast', 'direct')
+            query: User's query (unused for routing; retained for API stability).
+            mode: Explicit mode override ('thinking', 'fast', 'direct').
 
         Returns:
-            ExecutionPlan describing the skill chain
+            ExecutionPlan describing the skill chain.
         """
         # Explicit mode override
         if mode == "fast" and self._enable_fast_mode:
@@ -125,49 +129,10 @@ class Planner:
             log.info("Planner: direct mode (explicit)")
             return ExecutionPlan.direct_plan()
 
-        # Intent-based routing
-        if intent is not None:
-            if intent == "general_chat":
-                log.info("Planner: direct mode (general_chat intent)")
-                return ExecutionPlan.direct_plan()
-
-            if intent == "rag_query" and self._enable_fast_mode:
-                # Check if the query suggests fast mode
-                # (short, factual queries can use fast mode)
-                # For now, use thinking mode as default for rag_query
-                pass
-
-        # Default to thinking mode
+        # Default plan
         if self._default_mode == "fast" and self._enable_fast_mode:
             log.info("Planner: fast mode (default)")
             return ExecutionPlan.fast_plan()
 
         log.info("Planner: thinking mode (default)")
         return ExecutionPlan.thinking_plan()
-
-    def plan_from_context(
-        self,
-        context: Any | None = None,
-        **kwargs,
-    ) -> ExecutionPlan:
-        """
-        Plan from a SkillContext or similar object.
-
-        Extracts mode and intent metadata from context if available.
-        """
-        mode = kwargs.get("mode")
-
-        intent = None
-        if context is not None:
-            # Try to get intent from context shared_state
-            if hasattr(context, "shared_state"):
-                intent = context.shared_state.get("intent")
-            # Try to get mode from context
-            if hasattr(context, "mode") and mode is None:
-                mode = context.mode
-
-        return self.plan(
-            query=kwargs.get("query", ""),
-            intent=intent,
-            mode=mode,
-        )
