@@ -505,7 +505,18 @@ def client(tmp_data_dir, fake_llm, fake_retriever, fake_harness, fake_session_me
     # and avoid reranker warmup by disabling it.
     monkeypatch.setattr("utils.env_utils.RERANKER_WARMUP", False)
 
-    with TestClient(app, raise_server_exceptions=True) as c:
+    # When ADMIN_API_KEY is configured (e.g. loaded from a local .env), admin
+    # endpoints gated by require_admin need a matching X-Admin-Key header. Give
+    # the test client a default header carrying the configured key so admin
+    # tests pass regardless of whether a key is set. (When no key is set,
+    # require_admin allows the "testclient" loopback identity, so the header is
+    # harmless.)
+    _admin_key = os.getenv("ADMIN_API_KEY", "").strip()
+    _client_kwargs = {"raise_server_exceptions": True}
+    if _admin_key:
+        _client_kwargs["headers"] = {"X-Admin-Key": _admin_key}
+
+    with TestClient(app, **_client_kwargs) as c:
         yield c
 
     app.dependency_overrides.clear()
