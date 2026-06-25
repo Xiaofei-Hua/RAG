@@ -7,7 +7,7 @@
 
 ```
 web/
-├── src/                # Vue SPA 源码（components / stores / api / views）
+├── src/                # Vue SPA 源码（stores / views）
 ├── dist/               # 构建产物（Playwright E2E 与生产静态部署依赖）
 ├── package.json
 ├── playwright.config.ts
@@ -144,6 +144,9 @@ cd web && NODE_PATH=$(pwd)/node_modules node <一次性脚本.cjs>
 
 - 组件命名 PascalCase，组合式 API（`<script setup lang="ts">`）。
 - 状态管理用 Pinia store；跨组件共享状态禁止用全局变量。
-- HTTP 调用统一走 `src/api/` 封装；SSE 流式处理集中在 chat 模块。
+- **HTTP 调用**：各 view/store 直接用 `fetch()`（非 axios 封装）；SSE 流式解析集中在
+  `stores/chat.ts`。新增端点调用时，在对应 store/view 内就近写 `fetch`，保持与现状一致；
+  复杂的重复请求逻辑（鉴权头、错误处理）可抽 helper，但**不要**重新引入一个未被使用的全局
+  HTTP 客户端抽象（曾经存在过的 `src/api/index.ts` axios 客户端零调用方，已删除）。
 - 代码无 emoji（与后端约定一致）。
-- 遇到后端 API 变更，同步更新 `src/api/` 类型定义与对应 E2E 用例。
+- 遇到后端 API 变更，同步更新调用处的请求/响应类型与对应 E2E 用例。
