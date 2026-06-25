@@ -29,7 +29,12 @@ __all__ = [
     "EmbeddingRegistry",
     "get_registry",
     "check_collection_compatible",
+    "DEFAULT_DB_PATH",
 ]
+
+# Module-level path attribute (AGENTS.md §6/§10 persistence contract) so
+# tests/conftest.py and tests/e2e_ui/_fakes.py can redirect it to tmp_path.
+DEFAULT_DB_PATH = os.getenv("EMBEDDING_REGISTRY_DB", "./data/embedding_registry.db")
 
 
 def fingerprint(model_name: str, dimension: int) -> str:
@@ -41,7 +46,7 @@ def fingerprint(model_name: str, dimension: int) -> str:
 class EmbeddingRegistry:
     """Thread-safe SQLite registry of embedding fingerprints per collection."""
 
-    def __init__(self, db_path: str = "./data/embedding_registry.db"):
+    def __init__(self, db_path: str = DEFAULT_DB_PATH):
         self._db_path = db_path
         self._lock = threading.RLock()
         os.makedirs(os.path.dirname(db_path), exist_ok=True)

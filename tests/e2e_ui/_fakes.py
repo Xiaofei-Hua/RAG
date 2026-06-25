@@ -351,11 +351,11 @@ def _redirect_paths(root: str):
     _set("agent.harness.orchestrator", "DEFAULT_CHECKPOINT_PATH", os.path.join(root, "checkpoints.db"))
     _set("api.routers.documents", "UPLOAD_TMP_DIR", os.path.join(root, "uploads"))
 
-    # NOTE: session-memory SQLite path uses an inline constructor default in
-    # core/memory/redis_memory.py (_SQLiteStore) with no module-level attribute
-    # (tracked as a P2 persistence-contract gap). It is NOT redirected here;
-    # instead the session-memory dependency is overridden below with an in-memory
-    # fake, so the real SQLite store is never constructed on this path.
+    # Session-memory SQLite fallback path (core/memory/redis_memory.py). Redirect
+    # it for defense-in-depth even though the session-memory dependency is also
+    # overridden below with an in-memory fake (so the real _SQLiteStore is not
+    # constructed on this path).
+    _set("core.memory.redis_memory", "DEFAULT_SESSION_DB_PATH", os.path.join(root, "sessions.db"))
 
     # Milvus Lite URI. env_utils reads it once at import; set env + the constant.
     milvus_path = os.path.join(root, "milvus_data.db")
@@ -441,8 +441,9 @@ def install():
     llm_mod.get_llm = lambda *a, **k: llm
     llm_mod.create_custom_llm = lambda *a, **k: llm
 
-    import core.fast_mode as fast_mod
     from types import SimpleNamespace
+
+    import core.fast_mode as fast_mod
 
     async def _fake_fast_generate_async(query, **kwargs):
         docs = retriever.retrieve(query)

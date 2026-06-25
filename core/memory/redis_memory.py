@@ -10,6 +10,7 @@ Provides persistent session storage with:
 from __future__ import annotations
 
 import json
+import os
 import threading
 import time
 from dataclasses import dataclass
@@ -22,7 +23,15 @@ from utils.log_utils import log
 __all__ = [
     "RedisSessionMemory",
     "SessionConfig",
+    "DEFAULT_SESSION_DB_PATH",
 ]
+
+# Module-level path attribute (AGENTS.md §6/§10 persistence contract) for the
+# SQLite fallback store, so tests/conftest.py and tests/e2e_ui/_fakes.py can
+# redirect it to tmp_path. (The in-process client fixture overrides
+# get_session_memory via dependency_overrides, so this path is only hit by the
+# real uvicorn process when Redis is unavailable.)
+DEFAULT_SESSION_DB_PATH = os.getenv("SESSIONS_DB", "./data/sessions.db")
 
 
 @dataclass
@@ -238,8 +247,7 @@ class _SQLiteStore:
     Data survives restarts. No TTL — sessions persist until manually deleted.
     """
 
-    def __init__(self, db_path: str = "./data/sessions.db"):
-        import os
+    def __init__(self, db_path: str = DEFAULT_SESSION_DB_PATH):
         import sqlite3
 
         os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else ".", exist_ok=True)
