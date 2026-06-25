@@ -11,6 +11,7 @@ export interface ChatMessage {
   processingTime?: number
   metadata?: Record<string, any>
   diagnosis?: PHMDiagnosis | null
+  feedbackSubmitted?: boolean
 }
 
 export interface SourceDocument {
@@ -333,6 +334,45 @@ export const useChatStore = defineStore('chat', () => {
     currentNode.value = ''
   }
 
+  /**
+   * Submit user feedback on an assistant message. Posts to /api/feedback with
+   * the trace_id/message_id carried in the message metadata (needed by the eval
+   * flywheel's on_negative_feedback arm). Marks the message as feedbackSubmitted
+   * on success so the UI can disable the buttons. Returns true on success.
+   */
+  async function submitFeedback(
+    msg: ChatMessage,
+    feedbackType: 'THUMBS_UP' | 'THUMBS_DOWN' | 'CORRECTION' | 'FLAG',
+    correctedAnswer?: string,
+  ): Promise<boolean> {
+    const messageId = msg.metadata?.message_id || ''
+    const traceId = msg.metadata?.trace_id || ''
+    const body: Record<string, string> = {
+      session_id: sessionId.value,
+      message_id: messageId,
+      trace_id: traceId,
+      feedback_type: feedbackType,
+      content: '',
+      original_answer: msg.content,
+      corrected_answer: correctedAnswer || '',
+    }
+    try {
+      const resp = await fetch('/api/feedback', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!resp.ok) {
+        throw new Error(`HTTP error! status: ${resp.status}`)
+      }
+      msg.feedbackSubmitted = true
+      return true
+    } catch (e) {
+      console.error('Feedback submit error:', e)
+      return false
+    }
+  }
+
   return {
     // State
     messages,
@@ -353,6 +393,7 @@ export const useChatStore = defineStore('chat', () => {
     loadHistory,
     clearMessages,
     newSession,
+    submitFeedback,
   }
 })
 

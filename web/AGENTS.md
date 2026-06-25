@@ -135,10 +135,13 @@ cd web && NODE_PATH=$(pwd)/node_modules node <一次性脚本.cjs>
 
 ### 3.6 覆盖清单对齐（诚实标注）
 
-- 当前已覆盖：chat（welcome/identity/deep/fast/SSE/sources）、documents（upload/search/delete）、
-  sessions（list/new/open/delete）、admin（sections/degradation switch）。
-- **反馈（feedback）当前无前端 UI**（后端 `/api/feedback/*` 已实现但无入口），故 E2E **不**测试反馈流程。
-  spec 文件头**禁止**谎称覆盖反馈；待反馈子系统补齐前端 UI 后再补测。
+- 当前已覆盖：chat（welcome/identity/deep/fast/SSE/sources）、**feedback（thumbs up/down/correction）**、
+  documents（upload/search/delete）、sessions（list/new/open/delete）、admin（sections/degradation switch）。
+- **反馈闭环**：ChatView 每条 AI 回答下有 👍/👎/纠错按钮，提交 `POST /api/feedback` 携带
+  `trace_id`+`message_id`（后端在 chat 响应 metadata 与流式 `done` payload 中暴露），负反馈触发
+  eval 飞轮（`on_negative_feedback` → 推理进候选池 → judge 重评）。流式路径也已补 `_capture()`，
+  使流式回答进入 inference store 可被重评。E2E 覆盖三种反馈类型。
+- spec 文件头**禁止**谎称覆盖未实现的功能；功能新增/移除时同步更新本清单。
 
 ## 4. 约定
 

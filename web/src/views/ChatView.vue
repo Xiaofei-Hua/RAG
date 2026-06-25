@@ -133,6 +133,65 @@
             <div class="message-footer" v-if="msg.role === 'assistant' && !msg.isStreaming && msg.processingTime">
               <span class="processing-time">{{ msg.processingTime.toFixed(0) }}ms</span>
             </div>
+            <!-- Feedback row: thumbs up / down / correction. trace_id + message_id
+                 ride in metadata and drive the eval flywheel on negative feedback. -->
+            <div
+              v-if="msg.role === 'assistant' && !msg.isStreaming"
+              class="feedback-row"
+              data-testid="feedback-row"
+            >
+              <template v-if="msg.feedbackSubmitted">
+                <span class="feedback-done" data-testid="feedback-done">已反馈</span>
+              </template>
+              <template v-else>
+                <button
+                  class="feedback-btn"
+                  title="有帮助"
+                  data-testid="feedback-up"
+                  @click="submitFeedback(msg, 'THUMBS_UP')"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"/>
+                  </svg>
+                </button>
+                <button
+                  class="feedback-btn"
+                  title="无帮助"
+                  data-testid="feedback-down"
+                  @click="submitFeedback(msg, 'THUMBS_DOWN')"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zM17 2h3a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-3"/>
+                  </svg>
+                </button>
+                <button
+                  class="feedback-btn feedback-correct-btn"
+                  title="提交纠正"
+                  data-testid="feedback-correct-open"
+                  @click="openCorrection(msg)"
+                >
+                  纠错
+                </button>
+              </template>
+            </div>
+            <!-- Inline correction input -->
+            <div
+              v-if="msg.role === 'assistant' && !msg.isStreaming && correctingMessage === msg"
+              class="correction-box"
+              data-testid="correction-box"
+            >
+              <textarea
+                v-model="correctionText"
+                class="correction-input"
+                placeholder="请输入正确的回答内容..."
+                rows="3"
+                data-testid="correction-input"
+              ></textarea>
+              <div class="correction-actions">
+                <button class="correction-submit" data-testid="correction-submit" @click="submitCorrection(msg)">提交</button>
+                <button class="correction-cancel" data-testid="correction-cancel" @click="cancelCorrection">取消</button>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -228,11 +287,13 @@
 import { ref, nextTick, watch, onMounted } from 'vue'
 import { useChatStore, type SourceDocument, type ChatMessage } from '@/stores/chat'
 import { useUploadStore } from '@/stores/upload'
+import { useToast } from '@/stores/toast'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 
 const chatStore = useChatStore()
 const uploadStore = useUploadStore()
+const toast = useToast()
 
 const inputText = ref('')
 const messagesRef = ref<HTMLElement | null>(null)
@@ -240,6 +301,9 @@ const textareaRef = ref<HTMLTextAreaElement | null>(null)
 const showSources = ref(false)
 const sources = ref<SourceDocument[]>([])
 const useStream = ref(true)
+// Feedback UI state: which message has its correction box open + draft text.
+const correctingMessage = ref<ChatMessage | null>(null)
+const correctionText = ref('')
 
 // Markdown render cache
 const mdCache = new Map<string, string>()
@@ -416,6 +480,45 @@ function toggleStreamMode() {
 function scrollToBottom() {
   if (messagesRef.value) {
     messagesRef.value.scrollTop = messagesRef.value.scrollHeight
+  }
+}
+
+// --- Feedback handlers -------------------------------------------------
+// Submit a simple thumbs up/down/flag. trace_id/message_id ride in the message
+// metadata (set by the backend) and drive the eval flywheel on negative types.
+async function submitFeedback(msg: ChatMessage, type: 'THUMBS_UP' | 'THUMBS_DOWN' | 'FLAG') {
+  if (msg.feedbackSubmitted) return
+  const ok = await chatStore.submitFeedback(msg, type)
+  if (ok) {
+    toast.show('反馈已提交', 'success')
+  } else {
+    toast.show('反馈提交失败，请重试', 'error')
+  }
+}
+
+function openCorrection(msg: ChatMessage) {
+  if (msg.feedbackSubmitted) return
+  correctingMessage.value = msg
+  correctionText.value = ''
+}
+
+function cancelCorrection() {
+  correctingMessage.value = null
+  correctionText.value = ''
+}
+
+async function submitCorrection(msg: ChatMessage) {
+  const trimmed = correctionText.value.trim()
+  if (!trimmed) {
+    toast.show('请填写纠正内容', 'error')
+    return
+  }
+  const ok = await chatStore.submitFeedback(msg, 'CORRECTION', trimmed)
+  if (ok) {
+    cancelCorrection()
+    toast.show('纠错已提交', 'success')
+  } else {
+    toast.show('纠错提交失败，请重试', 'error')
   }
 }
 
@@ -807,6 +910,111 @@ watch(
 .source-toggle-btn:hover {
   background: var(--primary-50);
   border-color: var(--primary-300);
+}
+
+/* Feedback row (thumbs up/down/correction) */
+.feedback-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.feedback-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: var(--neutral-50);
+  color: var(--neutral-500);
+  border: 1px solid var(--neutral-200);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+}
+
+.feedback-btn svg {
+  width: 14px;
+  height: 14px;
+}
+
+.feedback-btn:hover {
+  background: var(--primary-50);
+  color: var(--primary-600);
+  border-color: var(--primary-300);
+}
+
+.feedback-correct-btn {
+  padding: 4px 10px;
+}
+
+.feedback-done {
+  font-size: 11px;
+  color: var(--success-500);
+  font-weight: 500;
+}
+
+.correction-box {
+  margin-top: 8px;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px solid var(--primary-200);
+  background: var(--primary-50);
+}
+
+.correction-input {
+  width: 100%;
+  font-size: 13px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--neutral-200);
+  resize: vertical;
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.correction-input:focus {
+  outline: none;
+  border-color: var(--primary-400);
+}
+
+.correction-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  justify-content: flex-end;
+}
+
+.correction-submit {
+  font-size: 12px;
+  padding: 4px 14px;
+  border-radius: 6px;
+  background: var(--primary-500);
+  color: white;
+  border: none;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.correction-submit:hover {
+  background: var(--primary-600);
+}
+
+.correction-cancel {
+  font-size: 12px;
+  padding: 4px 14px;
+  border-radius: 6px;
+  background: var(--neutral-100);
+  color: var(--neutral-600);
+  border: none;
+  cursor: pointer;
+  transition: background var(--transition-fast);
+}
+
+.correction-cancel:hover {
+  background: var(--neutral-200);
 }
 
 .diagnosis-card {

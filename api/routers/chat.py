@@ -446,6 +446,7 @@ async def chat(
                 "prompt_profile": _profile().prompt_profile_identity,
                 "force_rag": False,
                 "message_id": message_id,
+                "trace_id": trace_id,
             }
             _capture(
                 http_request,
@@ -496,6 +497,7 @@ async def chat(
                 "retrieval_time_ms": result.retrieval_time_ms,
                 "generation_time_ms": result.generation_time_ms,
                 "message_id": message_id,
+                "trace_id": trace_id,
             }
             _capture(
                 http_request,
@@ -610,6 +612,7 @@ async def chat(
             "force_rag": force_rag,
             "reasoning": reasoning_text,
             "message_id": message_id,
+            "trace_id": trace_id,
             # Answer trustworthiness (filled by the generate skill when on the
             # RAG route; None for general_chat which has no grounding signal).
             "confidence": gen_confidence,
@@ -650,7 +653,7 @@ async def chat(
             handler = get_degradation_handler()
             degraded = handler.generate_degraded_response(request.message, str(e))
             degraded_time = (time.perf_counter() - start_time) * 1000
-            degraded_meta = {"error": str(e), "message_id": message_id, "route": "degraded"}
+            degraded_meta = {"error": str(e), "message_id": message_id, "trace_id": trace_id, "route": "degraded"}
             # Degraded responses are always sampled (importance sampling).
             _capture(
                 http_request,
@@ -749,6 +752,15 @@ async def chat_stream(
 
     async def generate():
         start_time = time.perf_counter()
+        # Per-request identifiers, mirrored into every done-payload metadata so
+        # the frontend can POST /api/feedback with the trace_id needed to drive
+        # the eval flywheel (on_negative_feedback) and the message_id to target
+        # the message. The non-stream chat() path sets the same pair.
+        message_id = str(uuid.uuid4())
+        trace_id = (
+            getattr(getattr(request, "state", None), "trace_id", "")
+            or str(uuid.uuid4())[:16]
+        )
         try:
             # Send session info
             yield _sse({"type": "session", "session_id": session_id})
@@ -782,6 +794,8 @@ async def chat_stream(
                             "route": "general_chat",
                             "prompt_profile": _profile().prompt_profile_identity,
                             "force_rag": False,
+                            "message_id": message_id,
+                            "trace_id": trace_id,
                         },
                     }
                 )
@@ -832,6 +846,8 @@ async def chat_stream(
                             "route": "fast",
                             "prompt_profile": _profile().prompt_profile_fast,
                             "force_rag": False,
+                            "message_id": message_id,
+                            "trace_id": trace_id,
                         },
                     }
                 )
@@ -905,6 +921,8 @@ async def chat_stream(
                         "route": "general_chat",
                         "prompt_profile": _profile().prompt_profile_general,
                         "force_rag": force_rag,
+                        "message_id": message_id,
+                        "trace_id": trace_id,
                     },
                 }
 
@@ -999,25 +1017,49 @@ async def chat_stream(
 
                 sources = _extract_sources(collected_messages)
                 diagnosis = _extract_phm_diagnosis(full_response)
+                # Capture the streamed RAG inference into the eval flywheel
+                # (parity with the non-streaming chat() path). Without this,
+                # negative feedback on a streamed answer has no inference to
+                # re-judge. Best-effort: never blocks the stream.
+                processing_time_ms = (time.perf_counter() - start_time) * 1000
+                rag_meta = {
+                    "intent_confidence": intent_result.confidence,
+                    "intent_reasoning": intent_result.reasoning,
+                    "source_count": len(sources),
+                    "diagnosis": diagnosis.model_dump() if diagnosis else None,
+                    "route": "rag",
+                    "prompt_profile": _profile().prompt_profile_generate,
+                    "force_rag": force_rag,
+                    "confidence": gen_confidence,
+                    "confidence_level": _confidence_level(gen_confidence),
+                    "refused": gen_refused,
+                    "message_id": message_id,
+                    "trace_id": trace_id,
+                }
+                try:
+                    from agent.eval.capture import maybe_capture_inference
+
+                    maybe_capture_inference(
+                        request_message=request.message,
+                        answer=full_response,
+                        sources=[s.model_dump() for s in sources],
+                        reasoning="",
+                        route="rag",
+                        prompt_profile=_profile().prompt_profile_generate,
+                        intent="rag_query",
+                        metadata=rag_meta,
+                        latency_ms=processing_time_ms,
+                        trace_id=trace_id,
+                        session_id=session_id,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    log.debug(f"stream inference capture skipped: {exc}")
                 done_payload = {
                     "type": "done",
                     "full_response": full_response,
                     "sources": [s.model_dump() for s in sources],
-                    "processing_time_ms": (time.perf_counter() - start_time) * 1000,
-                    "metadata": {
-                        "intent_confidence": intent_result.confidence,
-                        "intent_reasoning": intent_result.reasoning,
-                        "source_count": len(sources),
-                        "diagnosis": diagnosis.model_dump() if diagnosis else None,
-                        "route": "rag",
-                        "prompt_profile": _profile().prompt_profile_generate,
-                        "force_rag": force_rag,
-                        # Answer trustworthiness, parity with the non-streaming
-                        # chat() response metadata (B4).
-                        "confidence": gen_confidence,
-                        "confidence_level": _confidence_level(gen_confidence),
-                        "refused": gen_refused,
-                    },
+                    "processing_time_ms": processing_time_ms,
+                    "metadata": rag_meta,
                 }
 
             # Send completion signal

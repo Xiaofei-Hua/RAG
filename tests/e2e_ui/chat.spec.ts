@@ -8,8 +8,8 @@
  * tests/e2e_ui/screenshots/.
  *
  * Covered: welcome render, identity shortcut (no LLM), deep (thinking) RAG,
- * fast-mode RAG, SSE streaming, and the sources panel. Feedback has NO frontend
- * UI yet (see web/AGENTS.md "coverage" note) so it is NOT tested here.
+ * fast-mode RAG, SSE streaming, the sources panel, and feedback
+ * (thumbs up / down / correction) which drives the eval flywheel.
  */
 import { test, expect } from "@playwright/test";
 import { screenshot } from "./helpers";
@@ -98,5 +98,44 @@ test.describe("Chat UI", () => {
       await expect(page.getByTestId("sources-panel")).toBeVisible();
       await screenshot(page, SHOT_DIR, "sources-panel");
     }
+  });
+});
+
+// Helper: seed a Q&A turn so an assistant message with a feedback row exists.
+async function seedAnswer(page: import("@playwright/test").Page): Promise<void> {
+  await page.goto("/");
+  const input = page.getByTestId("chat-input");
+  await input.fill("发动机振动异常如何排查？");
+  await input.press("Enter");
+  await expect(page.locator("[data-testid='message'].assistant").last())
+    .toContainText(/诊断|振动/, { timeout: 30_000 });
+  // The feedback row renders once streaming completes.
+  await expect(page.getByTestId("feedback-row").first()).toBeVisible({ timeout: 10_000 });
+}
+
+test.describe("Chat feedback", () => {
+  test("thumbs up submits and marks the message as feedbacked", async ({ page }) => {
+    await seedAnswer(page);
+    await page.getByTestId("feedback-up").first().click();
+    await expect(page.getByTestId("feedback-done").first()).toBeVisible({ timeout: 10_000 });
+    await screenshot(page, SHOT_DIR, "feedback-up");
+  });
+
+  test("thumbs down submits and marks the message as feedbacked", async ({ page }) => {
+    await seedAnswer(page);
+    await page.getByTestId("feedback-down").first().click();
+    await expect(page.getByTestId("feedback-done").first()).toBeVisible({ timeout: 10_000 });
+    await screenshot(page, SHOT_DIR, "feedback-down");
+  });
+
+  test("correction opens the input, submits, and marks feedbacked", async ({ page }) => {
+    await seedAnswer(page);
+    await page.getByTestId("feedback-correct-open").first().click();
+    await expect(page.getByTestId("correction-box").first()).toBeVisible();
+    await page.getByTestId("correction-input").first().fill("应先检查转子平衡，再测频谱。");
+    await screenshot(page, SHOT_DIR, "correction-input");
+    await page.getByTestId("correction-submit").first().click();
+    await expect(page.getByTestId("feedback-done").first()).toBeVisible({ timeout: 10_000 });
+    await screenshot(page, SHOT_DIR, "correction-submitted");
   });
 });
