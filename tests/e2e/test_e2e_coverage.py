@@ -48,7 +48,7 @@ def _gpu_kernel_supported() -> bool:
 _REASON = (
     "Installed PyTorch lacks a kernel for this GPU's compute capability "
     "(cudaErrorNoKernelImageForDevice). Upgrade to a PyTorch build that "
-    "includes the GPU's sm_xx (e.g. cu128 for RTX 50-series sm_120), or set "
+    "includes the GPU's sm_xx (e.g. cu132 for RTX 50-series sm_120), or set "
     "EMBEDDING_DEVICE=cpu to run the dense path on CPU."
 )
 

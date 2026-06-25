@@ -111,7 +111,9 @@ data/       # 运行时 SQLite（sessions/inferences/candidates/eval/judge_cache
 ## 5. Toolchain & Quality Gates
 
 - **Python 版本矩阵**：`requires-python>=3.10`（dev floor）；CI 用 3.13 提前发现兼容问题；ruff `target-version=py310`。
-- **包管理**：只用 `uv`，**MUST NOT** 用 `pip install`/`uv pip install`。跑工具一律 `uv run --frozen <tool>`（防 `uv.lock` 被副作用改写）。加依赖用 `uv add`。
+- **包管理**：只用 `uv`，**MUST NOT** 用 `pip install`/`uv pip install`。跑工具一律 `uv run --frozen <tool>`（防 `uv.lock` 被副作用改写）。加依赖用 `uv add`。本地重建 venv 用 `uv sync --extra dev`（dev 是 optional-dependencies，**不带 `--extra dev` 会缺 pytest/langchain-core 等测试依赖**）。
+- **torch GPU 算力架构约束（MUST）**：torch wheel 必须编译进目标 GPU 的 `sm_xx` kernel。部署机为 RTX 5070 Ti（Blackwell，compute capability `sm_120`）；cu12x wheel 的 arch_list 仅到 sm_90，触发 `cudaErrorNoKernelImageForDevice`，因此 torch 走 **cu132** 索引（PyTorch 官方对 RTX 50 系列的推荐路线，arch_list 含 sm_120）。换机型时**先核对** `torch.cuda.get_arch_list()` 是否含本机 `sm_xx`，否则改 `[tool.uv.sources] torch` 指向匹配的 CUDA 索引。
+- **torch/PyPI 镜像（国内加速）**：`pyproject.toml` 已配阿里云镜像——torch 本体走 `pytorch-wheels/cu132`（flat 平铺目录，**必须 `format = "flat"`**，否则 uv 按 PEP503 找 `/torch/` 子目录会 404）；torch 的 nvidia-cu13 依赖（cublas/cudnn/nccl 等 ~2GB）及所有其他包走默认 `pypi/simple/`。换镜像源时改这两个 `[[tool.uv.index]]` 的 `url` 即可。
 - **Lint/Format**：ruff（`select=F,E,W,I,UP`，`line-length=100`）+ ruff-format，pre-commit 自动跑。
 - **pytest**：`testpaths=["tests/unit","tests/e2e","tests/perf"]`；`filterwarnings=["error"]`（warning 直接 fail）。
 - **Coverage**：`[tool.coverage.run] branch=true`，`fail_under=80`（热路径软目标 100%）。禁用注释审计：`git diff origin/main... | grep -E '^\+.*(pragma|type: ignore|noqa)'`。
