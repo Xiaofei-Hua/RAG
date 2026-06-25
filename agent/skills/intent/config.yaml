@@ -1,3 +1,0 @@
-max_retries: 2
-retry_delay: 0.5
-fallback_intent: rag_query

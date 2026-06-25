@@ -5,7 +5,7 @@ Provides Harness + Skills + MCP architecture for the RAG platform.
 
 Layer structure:
 - agent.skills:  BaseSkill, SkillRegistry, and all concrete skills
-- agent.context: SkillContext, ContextManager, SessionContext
+- agent.context: SkillContext, SkillResult, SkillStatus
 - agent.mcp:     MCPServer, MCPRetrievalServer, MCPClient
 - agent.harness: AgentHarness, Planner, LifecycleManager, TraceCollector
 """

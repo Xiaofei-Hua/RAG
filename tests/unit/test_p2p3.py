@@ -20,7 +20,6 @@ Run: pytest tests/unit/test_p2p3.py -v
 
 from __future__ import annotations
 
-import asyncio
 import sys
 
 import pytest
@@ -135,65 +134,8 @@ class TestMemoryInjection:
 # P2.4 / P2.5 — model routing + fallback
 # ===========================================================================
 
-class TestModelRouter:
-    def test_tier_defaults_to_base(self, monkeypatch):
-        import models.model_router as mr
-
-        monkeypatch.delenv("LLM_MODEL_GRADE", raising=False)
-        assert mr.get_model_for_tier(mr.ModelTier.GRADE, "qwen3:14b") == "qwen3:14b"
-
-    def test_tier_uses_env(self, monkeypatch):
-        import models.model_router as mr
-
-        monkeypatch.setenv("LLM_MODEL_GRADE", "qwen3:4b")
-        assert mr.get_model_for_tier(mr.ModelTier.GRADE, "qwen3:14b") == "qwen3:4b"
-        # generate tier unaffected.
-        assert mr.get_model_for_tier(mr.ModelTier.GENERATE, "qwen3:14b") == "qwen3:14b"
-
-    def test_fallback_llm_tries_secondary(self):
-        from models.model_router import FallbackLLM
-
-        class _FakeResp:
-            content = "ok"
-
-        class _PrimaryFail:
-            def invoke(self, msgs, **kw):
-                raise RuntimeError("primary down")
-
-        class _SecondaryOk:
-            def invoke(self, msgs, **kw):
-                return _FakeResp()
-
-        fb = FallbackLLM(_PrimaryFail(), [_SecondaryOk()])
-        assert fb.invoke([]).content == "ok"
-
-    def test_fallback_llm_all_fail_raises(self):
-        from models.model_router import FallbackLLM
-
-        class _Fail:
-            def invoke(self, msgs, **kw):
-                raise RuntimeError("down")
-
-        fb = FallbackLLM(_Fail(), [_Fail()])
-        with pytest.raises(RuntimeError):
-            fb.invoke([])
-
-    def test_fallback_llm_primary_only_when_no_secondaries(self):
-        from models.model_router import FallbackLLM
-
-        class _Ok:
-            def invoke(self, msgs, **kw):
-                return "result"
-
-        fb = FallbackLLM(_Ok())
-        assert fb.invoke([]) == "result"
-
-    def test_no_fallback_when_env_unset(self, monkeypatch):
-        import models.model_router as mr
-
-        monkeypatch.delenv("LLM_FALLBACK_BASE_URL", raising=False)
-        primary = object()
-        assert mr.get_fallback_llm(primary) is primary
+# TestModelRouter removed: models/model_router.py was a zombie module (zero
+# production callers) and has been deleted.
 
 
 # ===========================================================================
@@ -241,69 +183,10 @@ class TestSelfReflection:
 
 
 # ===========================================================================
-# P2.7 — HITL gate + workflow DSL
+# P2.7 — HITL gate + workflow DSL (removed)
 # ===========================================================================
-
-class TestHITLGate:
-    def test_request_and_resolve(self, tmp_path, monkeypatch):
-        import core.workflow.hitl as hitl_mod
-
-        gate = hitl_mod.HITLGate(str(tmp_path / "hitl.db"))
-        req = gate.request_approval("s1", "execute_remediation", "更换轴承")
-        assert req.status == "pending"
-        assert not gate.is_approved(req.id)
-
-        assert gate.resolve(req.id, approved=True) is True
-        assert gate.is_approved(req.id) is True
-        gate.close()
-
-    def test_reject(self, tmp_path):
-        from core.workflow.hitl import HITLGate
-
-        gate = HITLGate(str(tmp_path / "hitl.db"))
-        req = gate.request_approval("s1", "action")
-        gate.resolve(req.id, approved=False)
-        assert not gate.is_approved(req.id)
-        gate.close()
-
-    def test_list_pending(self, tmp_path):
-        from core.workflow.hitl import HITLGate
-
-        gate = HITLGate(str(tmp_path / "hitl.db"))
-        gate.request_approval("s1", "a1")
-        gate.request_approval("s2", "a2")
-        pending = gate.list_pending()
-        assert len(pending) == 2
-        gate.close()
-
-
-class TestWorkflowDSL:
-    def test_resolve_default_when_no_spec(self, tmp_path, monkeypatch):
-        import core.workflow.hitl as hitl_mod
-
-        monkeypatch.setenv("WORKFLOW_DIR", str(tmp_path / "nowf"))
-        plan = hitl_mod.resolve_workflow_for_intent(
-            "rag_query", default_plan=["agent", "retrieve", "generate"]
-        )
-        assert plan == ["agent", "retrieve", "generate"]
-
-    def test_load_yaml_workflow(self, tmp_path, monkeypatch):
-        import core.workflow.hitl as hitl_mod
-
-        wf_dir = tmp_path / "wf"
-        wf_dir.mkdir()
-        (wf_dir / "main.yaml").write_text(
-            "name: phm\n"
-            "plans:\n"
-            "  rag_query: [retrieve, grade, generate]\n"
-            "  general_chat: [generate]\n",
-            encoding="utf-8",
-        )
-        monkeypatch.setenv("WORKFLOW_DIR", str(wf_dir))
-        plan = hitl_mod.resolve_workflow_for_intent("rag_query")
-        assert plan == ["retrieve", "grade", "generate"]
-        plan2 = hitl_mod.resolve_workflow_for_intent("general_chat")
-        assert plan2 == ["generate"]
+# TestHITLGate / TestWorkflowDSL removed: core/workflow/hitl.py was a zombie
+# module (zero production callers) and has been deleted.
 
 
 # ===========================================================================
@@ -355,107 +238,13 @@ class TestOutputGuardrailPII:
 
 
 # ===========================================================================
-# P3.2 — prompt A/B testing
+# P3.2 / P3.3 / P3.4 — prompt A/B testing, prompt optimizer, cancellation
+# (removed)
 # ===========================================================================
-
-class TestABTesting:
-    def test_default_when_no_variants(self, monkeypatch):
-        import core.prompts.ab_testing as ab
-
-        monkeypatch.delenv("PROMPT_AB_VARIANTS", raising=False)
-        assert ab.assign_variant("profile", "session1") == "default"
-
-    def test_deterministic_assignment(self, monkeypatch):
-        import core.prompts.ab_testing as ab
-
-        ab.reset_assignment_log()
-        monkeypatch.setenv(
-            "PROMPT_AB_VARIANTS",
-            '{"phm_diagnosis_v1": ["v1", "v2"]}',
-        )
-        monkeypatch.setenv("PROMPT_AB_RATIO", "0.5")
-        # Same session => same variant.
-        v1 = ab.assign_variant("phm_diagnosis_v1", "session-x")
-        v2 = ab.assign_variant("phm_diagnosis_v1", "session-x")
-        assert v1 == v2
-        assert v1 in ("v1", "v2")
-
-    def test_record_and_stats(self, monkeypatch):
-        import core.prompts.ab_testing as ab
-
-        ab.reset_assignment_log()
-        monkeypatch.delenv("PROMPT_AB_VARIANTS", raising=False)
-        ab.record_variant("p", "s1", "v1")
-        ab.record_variant("p", "s2", "v2")
-        stats = ab.variant_stats("p")
-        assert stats["v1"]["count"] == 1
-        assert stats["v2"]["count"] == 1
-
-
-# ===========================================================================
-# P3.3 — prompt optimizer
-# ===========================================================================
-
-class TestPromptOptimizer:
-    def test_no_runs_returns_empty(self, tmp_path):
-        from core.prompts.optimizer import analyse_prompt_weaknesses
-
-        suggestions = analyse_prompt_weaknesses(runs_dir=str(tmp_path / "noruns"))
-        assert suggestions == []
-
-    def test_detects_missing_sections(self, tmp_path):
-        from core.prompts.optimizer import analyse_prompt_weaknesses
-
-        runs_dir = tmp_path / "runs"
-        runs_dir.mkdir()
-        run = {
-            "results": [
-                {
-                    "score": {
-                        "overall_score": 0.3,
-                        "section_coverage": 0.5,
-                        "details": {"expected_sections": ["排查步骤"]},
-                    }
-                }
-                for _ in range(4)
-            ]
-        }
-        import json
-
-        (runs_dir / "run1.json").write_text(json.dumps(run), encoding="utf-8")
-        suggestions = analyse_prompt_weaknesses(runs_dir=str(runs_dir))
-        cats = [s.category for s in suggestions]
-        assert "missing_section" in cats
-
-
-# ===========================================================================
-# P3.4 — cancellation
-# ===========================================================================
-
-class TestCancellation:
-    def test_propagates_cancel(self):
-        from core.concurrency.cancellation import cancellable
-
-        async def _main():
-            async def slow():
-                await asyncio.sleep(10)
-            task = asyncio.create_task(slow())
-            task.cancel()
-            with pytest.raises(asyncio.CancelledError):
-                await cancellable(task, task_name="test")
-
-        asyncio.run(_main())
-
-    def test_returns_result_on_success(self):
-        from core.concurrency.cancellation import cancellable
-
-        async def _main():
-            async def ok():
-                return "done"
-            result = await cancellable(ok(), task_name="ok")
-            assert result == "done"
-
-        asyncio.run(_main())
+# TestABTesting / TestPromptOptimizer / TestCancellation removed: the
+# underlying modules (core/prompts/ab_testing.py, core/prompts/optimizer.py,
+# core/concurrency/cancellation.py) were zombies (zero production callers) and
+# have been deleted.
 
 
 # ===========================================================================
@@ -487,7 +276,7 @@ class TestRetrievalCache:
         assert 0 < stats["hit_ratio"] < 1
 
     def test_cached_embedding(self):
-        from core.retrieval.cache import LRUCache, CachedEmbeddingFunction
+        from core.retrieval.cache import CachedEmbeddingFunction, LRUCache
 
         class _Base:
             def __init__(self):
@@ -511,9 +300,9 @@ class TestRetrievalCache:
 
 class TestTimeDecay:
     def test_fresh_doc_unchanged(self):
-        from core.retrieval.time_decay import apply_time_decay
-
         import time
+
+        from core.retrieval.time_decay import apply_time_decay
 
         now = time.time()
         doc = Document(page_content="fresh", metadata={"score": 1.0, "created_at": now})
@@ -521,9 +310,9 @@ class TestTimeDecay:
         assert out[0].metadata["score"] == pytest.approx(1.0)
 
     def test_old_doc_decayed(self):
-        from core.retrieval.time_decay import apply_time_decay
-
         import time
+
+        from core.retrieval.time_decay import apply_time_decay
 
         now = time.time()
         # 360 days old, half-life 180 => factor ~0.25

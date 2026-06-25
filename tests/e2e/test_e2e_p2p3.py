@@ -28,7 +28,7 @@ class TestMCPToolsWired:
         # We can't call get_agent_harness() in a fully mocked context without
         # side effects; instead verify the build path exists and the registry
         # provides tools.
-        from agent.mcp.tools_registry import get_extra_servers, UtilityToolsServer
+        from agent.mcp.tools_registry import UtilityToolsServer, get_extra_servers
 
         servers = get_extra_servers()
         # The utility tools server is auto-registered.
@@ -100,8 +100,9 @@ class TestPIIInChat:
 class TestMemoryInjection:
     def test_memories_prepend_to_retrieved_docs(self):
         """RetrieveSkill._inject_memories adds memory entries as context."""
-        from agent.skills.retrieve.skill import RetrieveSkill
         from langchain_core.documents import Document
+
+        from agent.skills.retrieve.skill import RetrieveSkill
 
         class _Ctx:
             shared_state = {
@@ -118,63 +119,17 @@ class TestMemoryInjection:
 
 
 # ===========================================================================
-# P2.7 — HITL gate lifecycle
+# P2.7 — HITL gate lifecycle (removed)
 # ===========================================================================
-
-class TestHITLLifecycle:
-    def test_approval_flow(self, tmp_path):
-        from core.workflow.hitl import HITLGate
-
-        gate = HITLGate(str(tmp_path / "hitl_e2e.db"))
-        # Request approval for a risky action.
-        req = gate.request_approval("session-1", "execute_remediation", "更换主轴承")
-        assert req.status == "pending"
-
-        # Admin lists pending.
-        pending = gate.list_pending()
-        assert any(p.id == req.id for p in pending)
-
-        # Admin approves.
-        assert gate.resolve(req.id, approved=True, resolver="engineer_zhang")
-        assert gate.is_approved(req.id)
-
-        # No longer in pending.
-        pending_after = gate.list_pending()
-        assert not any(p.id == req.id for p in pending_after)
-        gate.close()
-
-    def test_rejected_action_not_approved(self, tmp_path):
-        from core.workflow.hitl import HITLGate
-
-        gate = HITLGate(str(tmp_path / "hitl_reject.db"))
-        req = gate.request_approval("s1", "risky")
-        gate.resolve(req.id, approved=False)
-        assert not gate.is_approved(req.id)
-        gate.close()
+# TestHITLLifecycle removed: core/workflow/hitl.py was a zombie module (zero
+# production callers) and has been deleted.
 
 
 # ===========================================================================
-# P2.4/P2.5 — model routing config
+# P2.4/P2.5 — model routing config (removed)
 # ===========================================================================
-
-class TestModelRoutingConfig:
-    def test_grade_uses_smaller_model(self, monkeypatch):
-        import models.model_router as mr
-
-        monkeypatch.setenv("LLM_MODEL", "qwen3:14b")
-        monkeypatch.setenv("LLM_MODEL_GRADE", "qwen3:4b")
-        assert mr.get_model_for_tier(mr.ModelTier.GRADE) == "qwen3:4b"
-        assert mr.get_model_for_tier(mr.ModelTier.GENERATE) == "qwen3:14b"
-
-    def test_fallback_parses_env(self, monkeypatch):
-        import models.model_router as mr
-
-        monkeypatch.setenv("LLM_FALLBACK_BASE_URL", "http://backup:11434/v1,http://cloud/v1")
-        monkeypatch.setenv("LLM_FALLBACK_MODEL", "qwen3:14b,gpt-4o-mini")
-        providers = mr._parse_secondary_providers()
-        assert len(providers) == 2
-        assert providers[0].base_url == "http://backup:11434/v1"
-        assert providers[1].model == "gpt-4o-mini"
+# TestModelRoutingConfig removed: models/model_router.py was a zombie module
+# (zero production callers) and has been deleted.
 
 
 # ===========================================================================
@@ -201,10 +156,11 @@ class TestRetrievalCacheE2E:
 class TestTimeDecayE2E:
     def test_hybrid_retriever_applies_time_decay(self):
         """The HybridRetriever._time_decay method exists and runs."""
-        from core.retrieval.hybrid_retriever import HybridRetriever
+        import time
+
         from langchain_core.documents import Document
 
-        import time
+        from core.retrieval.hybrid_retriever import HybridRetriever
 
         retriever = HybridRetriever.__new__(HybridRetriever)  # bypass init
         now = time.time()

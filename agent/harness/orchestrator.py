@@ -240,7 +240,7 @@ class AgentHarness:
         """
         Register all default skills.
 
-        Creates instances of all 6 skills with the current LLM. The AgentSkill
+        Creates instances of all 5 skills with the current LLM. The AgentSkill
         is wired to an MCPClient aggregating all registered MCP servers (retrieval
         + any custom tools), so the agent can call multiple tools, not just
         retrieval.
@@ -248,7 +248,6 @@ class AgentHarness:
         from agent.skills.agent.skill import AgentSkill
         from agent.skills.generate.skill import GenerateSkill
         from agent.skills.grade.skill import GradeSkill
-        from agent.skills.intent.skill import IntentSkill
         from agent.skills.retrieve.skill import RetrieveSkill
         from agent.skills.rewrite.skill import RewriteSkill
 
@@ -260,9 +259,11 @@ class AgentHarness:
         self.register_skill(GradeSkill(llm=self.llm))
         self.register_skill(RewriteSkill(llm=self.llm))
         self.register_skill(GenerateSkill(llm=self.llm))
-        self.register_skill(IntentSkill(llm=self.llm))
 
-        log.info("AgentHarness: 6 default skills registered (MCP tools wired)")
+        # IntentSkill is intentionally NOT registered here: intent classification
+        # lives in the chat router (api/routers/chat.py via
+        # core/intent/classifier.py), which routes before the harness is invoked.
+        log.info("AgentHarness: 5 default skills registered (MCP tools wired)")
         return self
 
     def _build_mcp_client(self):

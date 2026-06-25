@@ -13,14 +13,17 @@ Base classes:
 
 Skills:
     AgentSkill, RetrieveSkill, GradeSkill, RewriteSkill,
-    GenerateSkill, IntentSkill
+    GenerateSkill
+
+Note: IntentSkill was removed — intent classification lives in the chat router
+(``api/routers/chat.py`` via ``core/intent/classifier.py``), and the skill was
+registered but never invoked by the graph at runtime.
 """
 
 from agent.skills.agent.skill import AgentSkill
 from agent.skills.base import BaseSkill, SkillContext, SkillResult, SkillStatus
 from agent.skills.generate.skill import GenerateSkill
 from agent.skills.grade.skill import GradeSkill
-from agent.skills.intent.skill import IntentSkill
 from agent.skills.registry import SkillRegistry
 from agent.skills.retrieve.skill import RetrieveSkill
 from agent.skills.rewrite.skill import RewriteSkill
@@ -38,5 +41,4 @@ __all__ = [
     "GradeSkill",
     "RewriteSkill",
     "GenerateSkill",
-    "IntentSkill",
 ]

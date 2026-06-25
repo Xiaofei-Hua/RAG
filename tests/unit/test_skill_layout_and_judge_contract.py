@@ -45,7 +45,10 @@ class TestNoLegacySkillShims:
             )
 
     def test_directory_skill_modules_exist(self):
-        for name in ("agent", "retrieve", "grade", "rewrite", "generate", "intent"):
+        # IntentSkill is intentionally absent: intent classification lives in
+        # the chat router (api/routers/chat.py via core/intent/classifier.py),
+        # so it is not a graph skill. The remaining five are real graph skills.
+        for name in ("agent", "retrieve", "grade", "rewrite", "generate"):
             assert (Path("agent/skills") / name / "skill.py").exists(), (
                 f"directory skill agent/skills/{name}/skill.py missing"
             )
