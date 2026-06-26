@@ -31,13 +31,11 @@ jobs:
             fastapi httpx pymilvus milvus-lite
 
       - name: Build frontend
-        working-directory: web
         run: |
           npm ci
           npm run build
 
       - name: Install Playwright browsers
-        working-directory: web
         run: npx playwright install --with-deps chromium
 
       - name: Run Playwright tests
