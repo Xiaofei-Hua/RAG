@@ -4,10 +4,11 @@ Domain-switch E2E — proves the agent serves a NON-aviation knowledge base
 under DOMAIN_PROFILE=general.
 
 This is the capstone test for the domain-adaptive refactor (spec
-domain-adaptive-profile): the same code + harness that runs aviation PHM by
-default must, with a single env flip, route a generic-domain query through
-RAG without the input guardrail blocking it and without forcing PHM output
-structure.
+domain-adaptive-profile / domain-adaptive-completion): the platform defaults to
+the domain-agnostic general profile, and with DOMAIN_PROFILE=aviation_phm it
+serves the aviation PHM vertical. These tests assert a generic-domain query is
+routed through RAG under general without the input guardrail blocking it and
+without forcing PHM output structure.
 
 Run: uv run --frozen python -m pytest tests/e2e/test_e2e_domain_switch.py -v
 """
@@ -101,28 +102,31 @@ class TestGeneralDomainRouting:
 
 
 # ===========================================================================
-# Backward-compat: default profile is still aviation (no env set here)
+# Default profile is now the domain-agnostic general profile [REQ-A-001]
 # ===========================================================================
 
 
-class TestDefaultProfileStillAviation:
-    def test_default_routes_aviation_query(self, client):
-        """With no DOMAIN_PROFILE override, the default aviation profile is
-        active and a PHM query is force-routed to RAG."""
-        from core.prompts.domain_profile import reset_active_profile
+class TestDefaultProfileIsGeneral:
+    def test_default_is_not_aviation(self, client):
+        """With no DOMAIN_PROFILE override, the default profile is general
+        (BREAKING: was aviation_phm). A PHM-flavoured query is NOT force-routed
+        by an aviation routing fast-path, and the prompt_profile label is
+        general_*, not phm_*."""
+        from core.prompts.domain_profile import get_active_profile, reset_active_profile
 
-        reset_active_profile()  # re-load default (aviation_phm)
+        reset_active_profile()  # re-load the (new) default
+        assert get_active_profile().name == "general"
         resp = client.post(
             "/api/chat",
             json={
                 "message": "发动机振动偏高如何诊断？",
-                "session_id": "e2e-domain-avi",
+                "session_id": "e2e-domain-default",
             },
         )
         assert resp.status_code == 200
         body = resp.json()
-        # Aviation query is force-routed to RAG (or rag via intent).
-        assert body["metadata"]["prompt_profile"].startswith("phm")
+        assert body["metadata"]["prompt_profile"].startswith("general")
+        assert "phm" not in body["metadata"]["prompt_profile"]
 
 
 if __name__ == "__main__":

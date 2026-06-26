@@ -7,6 +7,45 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Changed — all-domain completion (`domain-adaptive-completion`)
+
+The platform is now domain-agnostic by default. The domain-adaptive
+infrastructure (DomainProfile loader + `data/profiles/*.yaml`) already existed;
+this stage removes the residual aviation coupling in defaults, identifiers,
+the public API contract, docs, and the frontend. Aviation PHM remains fully
+supported as an opt-in profile.
+
+- **[breaking] default domain profile is now `general`**: `DOMAIN_PROFILE` no
+  longer defaults to `aviation_phm`. A fresh deployment is domain-agnostic.
+  Aviation PHM deployments MUST set `DOMAIN_PROFILE=aviation_phm` in `.env`
+  to preserve previous behaviour (set `profile_suffix: diagnosis_v1`, which
+  the profile already declares, keeps `metadata.prompt_profile=phm_diagnosis_v1`).
+- **[breaking] `PHMDiagnosis` → `StructuredAnswer`**: the public API/TS type
+  for structured answers is renamed to be domain-neutral. A `PHMDiagnosis =
+  StructuredAnswer` alias is kept for backward compatibility (response shape is
+  unchanged). `docs/API.md` updated accordingly.
+- **[breaking] `core/prompts/aircraft_prompts.py` → `core/prompts/profile_prompts.py`**:
+  the prompt-source module is renamed. Internal importers updated; the old
+  module is removed (no external consumers known). Migrate by updating the
+  import path; `PHM_IDENTITY_RESPONSE` is renamed to `IDENTITY_RESPONSE`.
+- **residual aviation hardcoding removed**: the retrieve-skill query-transform
+  heuristics (`_ATA_RE`/`_FAULT_CODE_RE`/`_SYMPTOM_RE`/`_DIAG_RE`) now read
+  `query_anchor_patterns`/`diagnostic_keywords`/`symptom_keywords` from the
+  active profile; `core/fast_mode.py` empty-context fallback reads
+  `profile.empty_context_message`; the PII operational-id fallback no longer
+  leaks aviation tail-number/MSN regex under an explicitly-declared-empty
+  profile. Aviation behaviour under `DOMAIN_PROFILE=aviation_phm` is unchanged
+  (the patterns moved verbatim into `aviation_phm.yaml`).
+- **`_diagnosis_v1` label suffix is now configurable** via `profile_suffix`;
+  aviation keeps `phm_diagnosis_v1`, general now emits `general_v1`.
+- **startup log** prints the actual active profile instead of a hardcoded
+  `PHM Prompt Profile: phm_diagnosis_v1`.
+- **frontend** welcome text, quick actions, and profile labels are
+  domain-neutral (aviation examples removed from defaults).
+- **docs** (README, AGENTS.md family, technical_report, API.md, specs/prompts)
+  updated to present the system as an all-domain platform; aviation now appears
+  as the first/example domain rather than the product definition.
+
 ### Fixed — eval closure metric accuracy (`eval-closure-metric-accuracy`, stage D)
 
 Three metric-truthfulness fixes so Stage 0–C improvements are measurable:

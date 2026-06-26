@@ -18,4 +18,15 @@ class SessionContext:
     thread_id: str = field(default_factory=lambda: str(uuid.uuid4()))
     mode: str = "thinking"
     user_id: str | None = None
-    prompt_profile: str = "phm_diagnosis_v1"
+    # Derived from the active domain profile (was a hardcoded "phm_diagnosis_v1").
+    # Lazy import keeps the dataclass dependency-free at module import time.
+    prompt_profile: str = field(
+        default_factory=lambda: _active_prompt_profile_generate()
+    )
+
+
+def _active_prompt_profile_generate() -> str:
+    """Return the active profile's generate label (domain-adaptive default)."""
+    from core.prompts.domain_profile import get_active_profile
+
+    return get_active_profile().prompt_profile_generate

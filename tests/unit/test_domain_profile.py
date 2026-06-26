@@ -33,11 +33,21 @@ def _reset_profile():
 
 
 class TestProfileLoading:
-    def test_load_aviation_phm_default(self, monkeypatch):
+    def test_load_general_default(self, monkeypatch):
+        """[REQ-A-001] With no DOMAIN_PROFILE env, the default profile is the
+        domain-agnostic general profile (BREAKING: was aviation_phm)."""
         from core.prompts.domain_profile import load_domain_profile
 
         monkeypatch.delenv("DOMAIN_PROFILE", raising=False)
         profile = load_domain_profile()
+        assert profile.name == "general"
+        assert profile.profile_label == "general"
+
+    def test_load_aviation_phm_explicit(self, monkeypatch):
+        """Aviation is now opt-in via DOMAIN_PROFILE=aviation_phm."""
+        from core.prompts.domain_profile import load_domain_profile
+
+        profile = load_domain_profile("aviation_phm")
         assert profile.name == "aviation_phm"
         assert profile.profile_label == "phm"
 
@@ -161,10 +171,12 @@ class TestGeneralProfile:
         assert "ATA" not in gen
 
     def test_prompt_profile_labels_general(self, monkeypatch):
+        """[REQ-A-005] General profile uses a domain-neutral suffix: general_v1
+        (was general_diagnosis_v1 when the suffix was hardcoded)."""
         from core.prompts.domain_profile import load_domain_profile
 
         profile = load_domain_profile("general")
-        assert profile.prompt_profile_generate == "general_diagnosis_v1"
+        assert profile.prompt_profile_generate == "general_v1"
 
 
 # ===========================================================================
@@ -335,11 +347,89 @@ class TestResidualConsumersGeneral:
 
         reset_active_profile()
         monkeypatch.setenv("DOMAIN_PROFILE", "general")
-        # General profile lists no operational patterns -> backward-compat
-        # fallback returns the built-in aviation set (detection is opt-in via
-        # PII_DETECT_OPERATIONAL_IDS, off by default, so this is inert).
+        # [REQ-A-002] General profile EXPLICITLY declares an empty operational
+        # list -> NO aviation tail_number/MSN fallback leaks. (Detection is still
+        # gated behind PII_DETECT_OPERATIONAL_IDS, off by default; this asserts
+        # the pattern set itself is clean.)
         kinds_g = {k for k, _ in _operational_patterns_from_profile()}
-        assert "tail_number" in kinds_g
+        assert "tail_number" not in kinds_g
+        assert "msn" not in kinds_g
+        assert kinds_g == set()
+
+
+# ===========================================================================
+# Retrieve-skill heuristic is profile-driven (REQ-A-002)
+# ===========================================================================
+
+
+class TestRetrieveHeuristicProfileDriven:
+    """``RetrieveSkill._decide_transform`` must read anchor/symptom/diagnostic
+    lists from the active profile — no aviation literals in source. Aviation
+    behaviour is preserved byte-for-byte; general never triggers aviation regex."""
+
+    def _decide(self, query, monkeypatch, profile_name):
+        from agent.skills.retrieve.skill import RetrieveSkill, SkillContext
+
+        # Clear the per-label anchor cache so the new profile's patterns load.
+        RetrieveSkill._anchor_cache.clear()
+        from core.prompts.domain_profile import reset_active_profile
+
+        reset_active_profile()
+        monkeypatch.setenv("DOMAIN_PROFILE", profile_name)
+        ctx = SkillContext(messages=[], shared_state={})
+        return RetrieveSkill._decide_transform(ctx, query)
+
+    def test_aviation_anchor_skips_transform(self, monkeypatch):
+        # ATA / fault code present -> None (precise anchor, direct retrieval).
+        assert self._decide("ATA 32 振动", monkeypatch, "aviation_phm") is None
+        assert self._decide("故障码 E1A02", monkeypatch, "aviation_phm") is None
+
+    def test_aviation_diagnostic_verb_triggers_hyde(self, monkeypatch):
+        assert self._decide("发动机为什么振动偏高", monkeypatch, "aviation_phm") == "hyde"
+
+    def test_aviation_short_symptom_triggers_multi_query(self, monkeypatch):
+        assert self._decide("液压低压", monkeypatch, "aviation_phm") == "multi_query"
+
+    def test_general_never_matches_aviation_anchors(self, monkeypatch):
+        # Under general, ATA/fault-code/symptom patterns are empty -> these
+        # queries fall through to direct retrieval (None), proving no aviation
+        # regex leaks into a non-aviation deployment.
+        assert self._decide("ATA 32 振动", monkeypatch, "general") is None
+        assert self._decide("故障码 E1A02", monkeypatch, "general") is None
+        assert self._decide("液压低压", monkeypatch, "general") is None
+
+    def test_general_diagnostic_verb_still_triggers_hyde(self, monkeypatch):
+        # Domain-neutral diagnostic verbs (如何/为什么) are general defaults,
+        # so hyde still fires for a genuinely diagnostic question.
+        assert self._decide("为什么会这样", monkeypatch, "general") == "hyde"
+
+
+# ===========================================================================
+# fast_mode empty-context fallback is profile-driven (REQ-A-002)
+# ===========================================================================
+
+
+class TestFastModeFallbackProfileDriven:
+    def test_fallback_uses_profile_message(self, monkeypatch):
+        import core.fast_mode as fm
+        import core.retrieval.hybrid_retriever as hr
+        from core.prompts.domain_profile import reset_active_profile
+
+        reset_active_profile()
+        monkeypatch.setenv("DOMAIN_PROFILE", "aviation_phm")
+        # Stub the retriever to return no documents. fast_generate imports
+        # get_hybrid_retriever locally from core.retrieval.hybrid_retriever.
+        class _Empty:
+            def retrieve(self, *a, **k):
+                return []
+
+        monkeypatch.setattr(hr, "get_hybrid_retriever", lambda: _Empty())
+        result = fm.fast_generate("任何问题")
+        from core.prompts.domain_profile import get_active_profile
+
+        assert result.answer == get_active_profile().empty_context_message
+        # Aviation empty-context message contains the historical phrasing.
+        assert "手册" in result.answer
 
 
 if __name__ == "__main__":

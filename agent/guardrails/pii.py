@@ -89,24 +89,30 @@ _OPERATIONAL_PATTERNS: list[tuple[str, re.Pattern]] = [
 def _operational_patterns_from_profile() -> list[tuple[str, re.Pattern]]:
     """Operational-id patterns from the active domain profile.
 
-    Aviation defines tail_number / MSN; the general profile defines none.
-    Falls back to the built-in aviation patterns when the profile lists none
-    but operational detection is opted in (backward compat).
+    Aviation defines tail_number / MSN; the general profile explicitly defines
+    none. Falls back to the built-in aviation patterns ONLY when the profile
+    omits the ``pii_operational_patterns`` key entirely (legacy profiles).
+    A profile that explicitly declares the key — even as an empty list — is
+    honoured as "no operational patterns", so the general profile never leaks
+    aviation tail-number/MSN regex even when ``PII_DETECT_OPERATIONAL_IDS`` is on.
     """
     try:
         from core.prompts.domain_profile import get_active_profile
 
-        prof_patterns = get_active_profile().pii_operational_patterns
+        profile = get_active_profile()
+        prof_patterns = profile.pii_operational_patterns
+        declared = profile.pii_operational_patterns_declared
     except Exception:  # noqa: BLE001
         prof_patterns = []
+        declared = False
     out: list[tuple[str, re.Pattern]] = []
     for spec in prof_patterns:
         try:
             out.append((spec.get("kind", "operational"), re.compile(spec["pattern"])))
         except (KeyError, re.error):
             continue
-    # Backward-compat fallback when the profile has no operational patterns.
-    if not out:
+    # Backward-compat fallback: only when the profile did NOT declare the key.
+    if not declared and not out:
         return list(_OPERATIONAL_PATTERNS)
     return out
 

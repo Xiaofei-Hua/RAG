@@ -82,7 +82,13 @@ async def lifespan(app: FastAPI):
     log.info(f"LLM Circuit: {llm_circuit.state.value}")
     log.info(f"Retriever Circuit: {retriever_circuit.state.value}")
     prompt_sig = hashlib.sha1(GENERATE_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
-    log.info(f"PHM Prompt Profile: phm_diagnosis_v1 (sig={prompt_sig})")
+    from core.prompts.domain_profile import get_active_profile
+
+    active_profile = get_active_profile()
+    log.info(
+        f"Domain Profile: {active_profile.name} "
+        f"(label={active_profile.prompt_profile_generate}, sig={prompt_sig})"
+    )
 
     from agent.harness import get_agent_harness
 

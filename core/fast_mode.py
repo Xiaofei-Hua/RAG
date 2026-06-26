@@ -127,8 +127,10 @@ def fast_generate(query: str, top_k: int = 3) -> FastModeResult:
     log.info(f"Fast mode retrieval: {len(documents)} docs, {retrieval_ms:.0f}ms")
 
     if not documents:
+        from core.prompts.domain_profile import get_active_profile
+
         return FastModeResult(
-            answer="当前知识库中暂无相关文档。请先通过文档管理页面上传排故手册、维修手册等资料，然后再进行提问。",
+            answer=get_active_profile().empty_context_message,
             sources=[],
             retrieval_count=0,
             retrieval_time_ms=retrieval_ms,
@@ -186,10 +188,9 @@ async def fast_generate_stream(query: str, top_k: int = 3) -> AsyncIterator[dict
     log.info(f"Fast mode retrieval: {len(documents)} docs, {retrieval_ms:.0f}ms")
 
     if not documents:
-        empty_msg = (
-            "当前知识库中暂无相关文档。请先通过文档管理页面上传"
-            "排故手册、维修手册等资料，然后再进行提问。"
-        )
+        from core.prompts.domain_profile import get_active_profile
+
+        empty_msg = get_active_profile().empty_context_message
         yield {"type": "token", "content": empty_msg}
         # full_response must carry the same message as the non-streaming
         # path's `answer` (fast_generate), not an empty string (B5).
@@ -239,8 +240,10 @@ async def fast_generate_async(query: str, top_k: int = 3) -> FastModeResult:
     documents = await get_hybrid_retriever().aretrieve(query, top_k=top_k)
     retrieval_ms = (time.perf_counter() - t0) * 1000
     if not documents:
+        from core.prompts.domain_profile import get_active_profile
+
         return FastModeResult(
-            answer="当前知识库中暂无相关文档。请先通过文档管理页面上传排故手册、维修手册等资料，然后再进行提问。",
+            answer=get_active_profile().empty_context_message,
             sources=[],
             retrieval_count=0,
             retrieval_time_ms=retrieval_ms,

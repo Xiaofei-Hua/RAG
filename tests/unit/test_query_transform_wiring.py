@@ -27,6 +27,22 @@ def _ctx(shared=None):
     return SkillContext(messages=[], shared_state=shared or {})
 
 
+@pytest.fixture(autouse=True)
+def _aviation_profile(monkeypatch):
+    """The query-transform heuristic is profile-driven (REQ-A-002): anchor
+    regexes / symptom / diagnostic words live in the active profile. These
+    tests assert the AVIATION heuristic, so pin the aviation profile and clear
+    the per-label anchor cache so its patterns load freshly each test."""
+    from core.prompts.domain_profile import reset_active_profile
+
+    RetrieveSkill._anchor_cache.clear()
+    reset_active_profile()
+    monkeypatch.setenv("DOMAIN_PROFILE", "aviation_phm")
+    yield
+    RetrieveSkill._anchor_cache.clear()
+    reset_active_profile()
+
+
 # ===========================================================================
 # REQ-RB-004/005/006 — heuristic branches
 # ===========================================================================

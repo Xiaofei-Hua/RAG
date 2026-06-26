@@ -3,12 +3,12 @@ Domain Profile — 领域自适应配置层
 
 把领域相关内容(prompts / keywords / 输出结构 / 身份文案 / 兜底提示)外置成 YAML,
 使同一套 RAG 代码能服务任意知识库。active profile 由 env ``DOMAIN_PROFILE`` 选择
-(默认 ``aviation_phm``,保持向后兼容)。
+(默认 ``general``,领域无关;航空场景设 ``DOMAIN_PROFILE=aviation_phm``)。
 
 设计要点:
 - DomainProfile 是领域配置的单一事实来源;源码不再出现领域字面量。
 - 加载失败永不抛:文件缺失/解析错 → 回退内置默认 profile(领域无关)。
-- 向后兼容:``aircraft_prompts.py`` 的常量从 active profile 派生,旧 import 不变。
+- 向后兼容:``profile_prompts.py`` 的常量从 active profile 派生,旧 import 不变。
 """
 
 from __future__ import annotations
@@ -42,6 +42,7 @@ def _general_defaults() -> dict[str, Any]:
         "name": "general",
         "display_name": "通用知识助手",
         "profile_label": "general",
+        "profile_suffix": "v1",
         "prompts": {
             "generate_system": (
                 "你是知识库问答助手。基于提供的上下文回答,不得编造。\n\n"
@@ -103,6 +104,15 @@ def _general_defaults() -> dict[str, Any]:
         "domain_keywords": [],
         "chat_keywords": ["你好", "谢谢", "再见", "hello", "hi", "thanks", "bye"],
         "query_patterns": [],
+        # Query-transform selection heuristics (agent/skills/retrieve/skill.py
+        # ``_decide_transform``). Anchors = precise identifiers (ATA chapter /
+        # fault code) whose presence skips the transform; symptoms = short
+        # abstract tokens triggering multi_query; diagnostics = question verbs
+        # triggering hyde. General defaults: domain-neutral diagnostics only,
+        # empty anchors/symptoms so no domain regex leaks.
+        "query_anchor_patterns": [],
+        "symptom_keywords": [],
+        "diagnostic_keywords": ["如何", "为什么", "原因", "怎样", "怎么办", "分析"],
         "refusal_message": (
             "未在知识库中找到与该问题直接相关的依据。\n\n"
             "建议:\n1. 提供更多细节;\n2. 上传相关文档;\n3. 联系相关人员。"
@@ -121,6 +131,9 @@ class DomainProfile:
     display_name: str = "通用知识助手"
     # 用于 metadata.prompt_profile 的短标签(aviation_phm 下保持 "phm" 向后兼容)。
     profile_label: str = "general"
+    # prompt_profile 标签后缀(aviation_phm.yaml 显式设 "diagnosis_v1" 保持旧值
+    # ``phm_diagnosis_v1``;其他领域用领域无关后缀如 "v1")。
+    profile_suffix: str = "v1"
     prompts: dict[str, str] = field(default_factory=dict)
     identity_response: str = ""
     degradation_help: str = ""
@@ -136,10 +149,22 @@ class DomainProfile:
     chat_keywords: list[str] = field(default_factory=list)
     # 可选 regex 模式列表(如 ATA 编号),用于 query 增强识别。
     query_patterns: list[str] = field(default_factory=list)
+    # Query-transform selection heuristics for ``_decide_transform``:
+    # anchor_patterns = precise identifiers (ATA/fault code) → skip transform;
+    # symptom_keywords = short abstract tokens → multi_query;
+    # diagnostic_keywords = question verbs → hyde. All empty by default.
+    query_anchor_patterns: list[str] = field(default_factory=list)
+    symptom_keywords: list[str] = field(default_factory=list)
+    diagnostic_keywords: list[str] = field(default_factory=list)
     refusal_message: str = ""
     empty_context_message: str = ""
     retriever_tool_description: str = ""
     pii_operational_patterns: list[dict[str, str]] = field(default_factory=list)
+    # True when the source YAML explicitly declared ``pii_operational_patterns``
+    # (even as []). Distinguishes "explicitly none" from "field absent", so the
+    # pii guardrail only falls back to built-in aviation patterns when a legacy
+    # profile omits the key entirely (backward compat).
+    pii_operational_patterns_declared: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DomainProfile:
@@ -150,19 +175,30 @@ class DomainProfile:
             merged[key] = data.get(key, defaults[key])
         # prompts 单独深度合并(允许 profile 只覆盖部分 prompt)。
         merged["prompts"] = {**defaults["prompts"], **(data.get("prompts") or {})}
+        # pii_operational_patterns_declared: True if the YAML key was present
+        # at all (explicit, even if empty). The built-in general() profile is
+        # treated as explicitly-declared-empty (no aviation fallback leak).
+        merged["pii_operational_patterns_declared"] = "pii_operational_patterns" in data
         return cls(**merged)
 
     @classmethod
     def general(cls) -> DomainProfile:
         """领域无关默认 profile(也是加载失败的回退)。"""
-        return cls.from_dict(_general_defaults())
+        prof = cls.from_dict(_general_defaults())
+        # The general() built-in is explicitly-declared (no aviation fallback).
+        prof.pii_operational_patterns_declared = True
+        return prof
 
     # ---- 便捷访问 ----
 
     @property
     def prompt_profile_generate(self) -> str:
-        """metadata.prompt_profile 值(向后兼容:aviation 下为 phm_diagnosis_v1)。"""
-        return f"{self.profile_label}_diagnosis_v1"
+        """metadata.prompt_profile 值(向后兼容:aviation 下为 phm_diagnosis_v1)。
+
+        后缀由 ``profile_suffix`` 决定(aviation 显式设 "diagnosis_v1" 保持旧值;
+        其他领域用领域无关后缀)。其余 general/fast/identity 标签保持历史 ``_v1``。
+        """
+        return f"{self.profile_label}_{self.profile_suffix}"
 
     @property
     def prompt_profile_general(self) -> str:
@@ -190,7 +226,7 @@ def load_domain_profile(name: str | None = None) -> DomainProfile:
     back to the built-in general profile — it NEVER raises, so callers on the
     hot path are safe.
     """
-    name = (name or os.getenv("DOMAIN_PROFILE") or "aviation_phm").strip()
+    name = (name or os.getenv("DOMAIN_PROFILE") or "general").strip()
     yaml_path = PROFILES_DIR / f"{name}.yaml"
     if not yaml_path.is_file():
         log.warning(

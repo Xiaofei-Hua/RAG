@@ -278,31 +278,44 @@ class RetrieveSkill(BaseSkill):
 
     # --- HyDE / multi_query heuristic wiring (Stage B) ---------------------
     # Explicit shared_state["query_transform"] takes precedence (callers can
-    # force a mode); otherwise a domain heuristic decides based on query shape,
-    # so query transforms are finally exercised instead of dead code.
-    _ATA_RE = re.compile(r"\bata[\s\-_:]*\d{2}", re.IGNORECASE)
-    _FAULT_CODE_RE = re.compile(
-        # EICAS-style codes: E1A02, FQ01, HYD3... (letter(s)+digits, possibly
-        # interleaved) and explicit 故障码: XX markers.
-        r"\b[A-Z]\d[A-Z0-9]{1,}\b|[A-Z]{2,}\d{2,}|\u6545\u969c\u7801[:：]?\s*\S+",
-        re.IGNORECASE,
-    )
-    _DIAG_RE = re.compile(r"如何|为什么|原因|排查|怎样|怎么办|诊断|怎么处理")
-    _SYMPTOM_RE = re.compile(
-        r"振动|压力|低压|高压|温度|泄漏|报警|异常|故障|磨损|噪音|抖动|过热|失速|卡滞"
-    )
+    # force a mode); otherwise a domain profile heuristic decides based on
+    # query shape, so query transforms are finally exercised instead of dead
+    # code. The regex/word-lists live in the active DomainProfile
+    # (query_anchor_patterns / diagnostic_keywords / symptom_keywords) — no
+    # domain literals are hardcoded here. ``_compiled_anchors`` caches the
+    # compiled anchor regexes keyed by profile label (patterns rarely change).
+    _anchor_cache: dict[str, list[re.Pattern]] = {}
+
+    @classmethod
+    def _anchor_patterns(cls, profile_label: str, patterns: list[str]) -> list[re.Pattern]:
+        """Compile + cache the profile's anchor regexes (first call per label)."""
+        cached = cls._anchor_cache.get(profile_label)
+        if cached is not None:
+            return cached
+        compiled: list[re.Pattern] = []
+        for p in patterns:
+            try:
+                compiled.append(re.compile(p, re.IGNORECASE))
+            except re.error as e:  # noqa: BLE001 - bad profile pattern must not crash hot path
+                log.warning(f"retrieve skill: invalid anchor pattern {p!r}: {e}")
+        cls._anchor_cache[profile_label] = compiled
+        return compiled
 
     @classmethod
     def _decide_transform(cls, context: SkillContext, query: str) -> str | None:
         """Pick a query transform: explicit shared_state first, else heuristic.
 
-        - ATA chapter / fault code present -> no transform (precise anchor,
-          direct retrieval is enough, saves an LLM call).
-        - diagnostic question (如何/为什么/原因) -> hyde (hypothetical doc
-          closer to the answer distribution).
+        The heuristic is sourced from the active DomainProfile:
+        - anchor_patterns present (ATA chapter / fault code) -> no transform
+          (precise anchor, direct retrieval is enough, saves an LLM call).
+        - diagnostic_keywords present (如何/为什么/原因) -> hyde (hypothetical
+          doc closer to the answer distribution).
         - short abstract symptom (振动异常/液压低压) -> multi_query (broaden
           recall across phrasings).
         - otherwise -> None (direct retrieval).
+
+        Under the general profile, anchors/symptoms are empty and only the
+        domain-neutral diagnostic verbs apply — so no aviation regex leaks.
         """
         explicit = cls._extract_transform(context)
         if explicit:
@@ -310,12 +323,19 @@ class RetrieveSkill(BaseSkill):
         if not query:
             return None
         q = query.strip()
-        if cls._ATA_RE.search(q) or cls._FAULT_CODE_RE.search(q):
+        from core.prompts.domain_profile import get_active_profile
+
+        profile = get_active_profile()
+        if any(rx.search(q) for rx in cls._anchor_patterns(profile.profile_label, profile.query_anchor_patterns)):
             return None
-        if cls._DIAG_RE.search(q):
+        if profile.diagnostic_keywords and any(k in q for k in profile.diagnostic_keywords):
             return "hyde"
         # Short, no diagnostic verb, but mentions a symptom -> abstract.
-        if len(q) <= 12 and cls._SYMPTOM_RE.search(q) and not cls._DIAG_RE.search(q):
+        if (
+            len(q) <= 12
+            and profile.symptom_keywords
+            and any(k in q for k in profile.symptom_keywords)
+        ):
             return "multi_query"
         return None
 

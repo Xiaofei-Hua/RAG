@@ -46,12 +46,26 @@ class TestOperationalIDsDefaultOff:
         assert "msn" not in kinds
 
     def test_tail_number_detected_when_opted_in(self, monkeypatch):
+        """Operational-id detection is profile-gated. The aviation profile
+        supplies tail_number/MSN patterns; general does not. [REQ-A-002]"""
         from agent.guardrails import pii as pii_mod
+        from core.prompts.domain_profile import reset_active_profile
 
+        # Aviation profile defines tail_number/MSN operational patterns.
+        reset_active_profile()
+        monkeypatch.setenv("DOMAIN_PROFILE", "aviation_phm")
         monkeypatch.setenv("PII_DETECT_OPERATIONAL_IDS", "true")
         text = "对 B-1234 号机进行检查"
         matches = pii_mod.detect_pii(text)
         assert any(m.kind == "tail_number" for m in matches)
+
+        # General profile explicitly declares none — even when opted in.
+        reset_active_profile()
+        monkeypatch.setenv("DOMAIN_PROFILE", "general")
+        pii_mod._operational_patterns_from_profile  # warm import
+        assert not any(
+            m.kind == "tail_number" for m in pii_mod.detect_pii(text)
+        )
 
 
 class TestLLMPassDegradesGracefully:
