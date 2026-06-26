@@ -13,6 +13,9 @@ dist/
 build/
 .venv/
 venv/
+# coverage.py data file (regenerated each run; never commit)
+.coverage
+.coverage.*
 
 # Milvus
 *.db

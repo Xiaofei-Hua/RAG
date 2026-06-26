@@ -129,7 +129,10 @@ class TestSyncInvokeLock:
         for t in threads:
             t.start()
         for t in threads:
-            t.join()
+            # F-EG-07: bound the join so a deadlocked invoke() surfaces as a
+            # failure instead of hanging the CI job.
+            t.join(timeout=10)
+            assert not t.is_alive(), "invoke thread did not finish in 10s (deadlock?)"
 
         assert max_overlap == 1, (
             f"sync invoke() calls overlapped in the graph critical section "

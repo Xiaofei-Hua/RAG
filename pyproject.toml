@@ -57,7 +57,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=9.0.0"]
+dev = [
+    "pytest>=9.0.0",
+    # coverage is needed by the CI gate (tests.yml "Coverage gate" step) and
+    # for local `coverage run -m pytest ... && coverage report`. See
+    # docs/specs/engineering-governance-optimization Q3.
+    "coverage>=7.14.3",
+]
 redis = ["redis>=5.0.0"]
 ui = ["gradio>=4.0.0"]
 # OCR is opt-in: paddlepaddle/paddleocr are large and only needed when
@@ -94,7 +100,16 @@ markers = [
     "requires_backend: needs Ollama + Milvus (nightly/self-hosted only)",
 ]
 
-# Coverage 配置：branch 覆盖（不只是行覆盖），fail_under=80 为全局软门禁。
+# Coverage 配置：branch 覆盖（不只是行覆盖）。
+# fail_under=60 = 当前真实基线（PR-gate 套件 unit+perf+e2e，mock 单例）。
+# 设为基线值而非 80，是为了让门禁先落地防回归下滑——提升到 80 需先解决
+# docs/specs/engineering-governance-optimization 的 KNOWN-GAP-1：让 backend-nightly
+# 轨 A 的 6 个真实 LLM in-process 用例（skills execute 主体）进入常规 CI。
+# 当前 60% 的主因是 mock-based e2e 不覆盖真实 LLM 调用路径（grade/rewrite/retrieve/
+# generate 的 execute 主体），以及冷路径模块（markdown_parser/ocr/redis）需真实文件/
+# OCR 引擎才能测——这是 mock 架构的固有限制，非测试缺失。
+# 禁用 pragma/no cover 凑数（tests/AGENTS.md §6）：PR 审计
+#   git diff origin/main... | grep -E '^\+.*pragma' 必须为空。
 # 热路径（retrieval/grounding/judge/置信度）软目标 100%，按 AGENTS.md §5 / tests/AGENTS.md。
 # 局部跑：coverage erase && coverage run -m pytest tests/unit/test_x.py && \
 #         coverage report --include='core/x.py' --fail-under=0
@@ -103,7 +118,7 @@ branch = true
 source = ["agent", "core", "api", "documents", "models", "utils"]
 
 [tool.coverage.report]
-fail_under = 80
+fail_under = 60
 show_missing = true
 # 排除明显不可达/调试代码，避免覆盖率噪声
 exclude_lines = [
@@ -129,6 +144,12 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["F401", "E402"]
 "scripts/**" = ["E402"]
+
+[dependency-groups]
+# dev deps live in [project.optional-dependencies] dev (project convention:
+# `uv sync --extra dev`). This group is kept empty to avoid a split source of
+# truth; coverage + pytest are declared above.
+dev = []
 
 
 # torch 必须走 CUDA 专用索引以匹配 GPU 算力架构。

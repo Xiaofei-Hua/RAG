@@ -148,18 +148,40 @@ class TestSessionContinuity:
 class TestStreaming:
     def test_stream_emits_events(self, client):
         """The SSE endpoint emits a 'done' event for a RAG query."""
+        # F-EG-07: the blocking iter_lines() below had no timeout. If the SSE
+        # generator ever stops yielding (e.g. a graph custom-event regression
+        # makes astream() hang), the test — and the whole CI job — would block
+        # until GitHub's 6h ceiling. Consume on a daemon thread and join with a
+        # 30s ceiling so a hang surfaces as a fast, locatable failure instead.
+        # (anyio.fail_after can't cancel blocking sync I/O, so a thread join is
+        # the correct primitive here.)
+        import threading
+
+        collected = {"text": "", "done": threading.Event()}
+
+        def _consume(resp):
+            try:
+                for line in resp.iter_lines():
+                    collected["text"] += line + "\n"
+            finally:
+                collected["done"].set()
+
         with client.stream(
             "POST",
             "/api/chat/stream",
             json={"message": "发动机振动偏高如何诊断？", "session_id": "e2e-stream"},
         ) as resp:
             assert resp.status_code == 200
-            collected = ""
-            for line in resp.iter_lines():
-                collected += line + "\n"
+            consumer = threading.Thread(target=_consume, args=(resp,), daemon=True)
+            consumer.start()
+            assert collected["done"].wait(timeout=30), (
+                "SSE stream did not finish within 30s — the endpoint likely hung "
+                "(astream never returned); see F-EG-07"
+            )
 
         # SSE should contain at least a done or error event.
-        assert ("event: done" in collected) or ("done" in collected) or ("event:" in collected)
+        body = collected["text"]
+        assert ("event: done" in body) or ("done" in body) or ("event:" in body)
 
 
 # ===========================================================================

@@ -453,7 +453,10 @@ class TestSQLiteLocking:
         for t in threads:
             t.start()
         for t in threads:
-            t.join()
+            # F-EG-07: bound the join so a deadlocked writer surfaces as a
+            # failure instead of hanging the CI job.
+            t.join(timeout=10)
+            assert not t.is_alive(), "writer thread did not finish in 10s (deadlock?)"
         try:
             # No "database is locked" or other errors under concurrent writes.
             assert errors == []

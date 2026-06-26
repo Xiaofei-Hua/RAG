@@ -28,7 +28,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pyyaml numpy
+          pip install pytest pyyaml numpy coverage
           # Core libs needed by the eval judge / E2E TestClient layer.
           pip install langchain-core langchain-openai fastapi httpx
           # Milvus Lite is imported by milvus_db at module load in E2E paths.
@@ -41,8 +41,12 @@ jobs:
         # `|| true`) was the only real gate. They are merged here so a failure
         # surfaces as a red step. test_skills.py's @requires_ollama cases are
         # deselected by the marker filter, so --ignore is unnecessary.
+        #
+        # Wrapped in `coverage run` so the unit+e2e data accumulates into a
+        # single .coverage file for the gate step below (--append merges).
         run: |
-          python -m pytest tests/unit/ tests/perf/ -q \
+          coverage erase
+          coverage run --branch -m pytest tests/unit/ tests/perf/ -q \
             -m "not requires_ollama and not requires_backend"
 
       - name: Run end-to-end tests (in-process, mocked singletons)
@@ -53,7 +57,16 @@ jobs:
           OPENAI_API_KEY: ollama
           PYTEST_RUN: "1"
         run: |
-          python -m pytest tests/e2e/ -q -m "not requires_backend"
+          coverage run --branch --append -m pytest tests/e2e/ -q -m "not requires_backend"
+
+      # Coverage gate (F-EG-05): a SEPARATE step so a test failure (red on the
+      # pytest step above) and a coverage regression (red here) surface as
+      # distinct, locatable failures. fail_under=60 = current real baseline
+      # (mock-based e2e cannot cover real-LLM paths; see pyproject.toml note).
+      # Raising to 80 requires closing KNOWN-GAP-1 (track A in backend-nightly).
+      - name: Coverage gate
+        run: |
+          coverage report --fail-under=60
 
       - name: RAG retrieval benchmark regression gate
         # Measures retrieval effectiveness (context precision/recall) on the
@@ -61,6 +74,17 @@ jobs:
         # a 2-point tolerance vs the committed baseline. No LLM needed — this
         # exercises the real Milvus + BM25 retrieval stack only. See
         # docs/specs/rag-benchmark-generic/design.md.
+        #
+        # Q11 / F-EG-18: each run cold-ingests the corpus into Milvus Lite +
+        # rebuilds BM25 (~11s locally, slower on CI cold start). A hung ingest
+        # would block the whole job, so the step is bounded at 5 min. The gate
+        # is KEPT on the PR (not demoted to nightly) because the unit/e2e suites
+        # mock Milvus and therefore cannot catch retrieval recall regressions —
+        # this is the only step on the PR that exercises the real retrieval
+        # stack (M-NEW-3 in review/critic.md). It is NOT equivalent to the
+        # rule-based eval in eval-regression.yml, which scores the golden
+        # generation-quality suite, not public retrieval benchmarks.
+        timeout-minutes: 5
         env:
           DOMAIN_PROFILE: general
         run: |
