@@ -128,6 +128,28 @@ exclude_lines = [
     "if TYPE_CHECKING:",
 ]
 
+# mypy: non-blocking 起步（AGENTS.md §5 升级路径）。
+# 现状：首次启用，既有代码未全量标注，故 exclude 大体量冷路径模块（文档解析/OCR/eval
+# 数据集）+ 测试/脚本，CI 以 non-blocking（warning）形式采集，不阻塞 PR。
+# 收紧路径：逐步缩小 exclude、改 strict=true、最终 CI blocking。
+[tool.mypy]
+python_version = "3.10"
+warn_unused_ignores = true
+warn_redundant_casts = true
+# non-blocking: CI 不 fail on errors，仅报告（见 .github/workflows/tests.yml）
+exclude = [
+    "docs/",
+    "scripts/",
+    "tests/",
+    "web/",
+    # 冷路径：文档解析/OCR 需真实文件+引擎，类型注解不全
+    "documents/markdown_parser\\.py",
+    "documents/ocr_engine\\.py",
+    "documents/format_parsers\\.py",
+    # eval 数据集/采样器，频繁变动
+    "agent/eval/cases\\.py",
+]
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
@@ -149,7 +171,9 @@ ignore = [
 # dev deps live in [project.optional-dependencies] dev (project convention:
 # `uv sync --extra dev`). This group is kept empty to avoid a split source of
 # truth; coverage + pytest are declared above.
-dev = []
+dev = [
+    "mypy>=2.1.0",
+]
 
 
 # torch 必须走 CUDA 专用索引以匹配 GPU 算力架构。

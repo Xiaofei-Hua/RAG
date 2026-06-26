@@ -28,7 +28,7 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pytest pyyaml numpy coverage
+          pip install pytest pyyaml numpy coverage mypy
           # Core libs needed by the eval judge / E2E TestClient layer.
           pip install langchain-core langchain-openai fastapi httpx
           # Milvus Lite is imported by milvus_db at module load in E2E paths.
@@ -67,6 +67,15 @@ jobs:
       - name: Coverage gate
         run: |
           coverage report --fail-under=60
+
+      # Q8: mypy non-blocking baseline (AGENTS.md §5). First-time enablement;
+      # existing code is not fully annotated, so this only REPORTS type issues
+      # (continue-on-error) without failing the PR. Tightening path: shrink the
+      # exclude list in pyproject.toml, then drop continue-on-error.
+      - name: Type check (mypy, non-blocking baseline)
+        continue-on-error: true
+        run: |
+          python -m mypy agent/ core/ api/ documents/ models/ utils/
 
       - name: RAG retrieval benchmark regression gate
         # Measures retrieval effectiveness (context precision/recall) on the

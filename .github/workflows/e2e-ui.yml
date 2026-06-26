@@ -35,6 +35,14 @@ jobs:
           npm ci
           npm run build
 
+      # Q8: eslint non-blocking baseline (first-time enablement). Surfaces
+      # lint issues without failing the job; the web/ codebase predates this
+      # config. Tightening path: fix the baseline warnings, then drop
+      # continue-on-error.
+      - name: Lint (eslint, non-blocking baseline)
+        continue-on-error: true
+        run: npm run lint
+
       - name: Install Playwright browsers
         run: npx playwright install --with-deps chromium
 
