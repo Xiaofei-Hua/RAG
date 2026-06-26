@@ -10,7 +10,7 @@ export interface ChatMessage {
   intent?: string
   processingTime?: number
   metadata?: Record<string, any>
-  diagnosis?: PHMDiagnosis | null
+  diagnosis?: StructuredAnswer | null
   feedbackSubmitted?: boolean
 }
 
@@ -30,7 +30,7 @@ export interface ChatResponse {
   metadata: Record<string, any>
 }
 
-export interface PHMDiagnosis {
+export interface StructuredAnswer {
   conclusion: string
   possible_causes: string[]
   troubleshooting_steps: string[]
@@ -38,6 +38,9 @@ export interface PHMDiagnosis {
   evidence_sources: string[]
   info_gaps: string
 }
+
+/** Backward-compatible alias (historically named PHMDiagnosis). */
+export type PHMDiagnosis = StructuredAnswer
 
 export interface StreamEvent {
   type: 'session' | 'status' | 'intent' | 'node' | 'token' | 'done' | 'error'

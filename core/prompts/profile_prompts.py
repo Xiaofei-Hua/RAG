@@ -1,12 +1,11 @@
 """
-Domain Prompts — 领域自适应 Prompt 单一来源(向后兼容入口)
+Domain Prompts — 领域自适应 Prompt 向后兼容入口
 
-历史上这里是航空 PHM 的硬编码 prompt 单一事实来源。现已重构为领域自适应:
-所有常量从 active ``DomainProfile``(env ``DOMAIN_PROFILE`` 选择,默认 aviation_phm)
-派生。**常量名保持不变**,故所有 ``from core.prompts.aircraft_prompts import X``
-继续工作,默认 profile 下行为零变化。
+所有常量从 active ``DomainProfile``(env ``DOMAIN_PROFILE`` 选择,默认 general)
+派生。运行时读取请直接用 ``core.prompts.domain_profile.get_active_profile()``;
+这些模块级常量仅用于 import 时求值的向后兼容。
 
-切换领域:``DOMAIN_PROFILE=general``(或其他 data/profiles/<name>.yaml)。
+切换领域:``DOMAIN_PROFILE=general``/``aviation_phm``(或其他 data/profiles/<name>.yaml)。
 新增领域:在 data/profiles/ 下新增 yaml 即可,无需改代码。
 
 事实来源:``core/prompts/domain_profile.py`` 的 ``DomainProfile`` +
@@ -19,7 +18,7 @@ from core.prompts.domain_profile import get_active_profile
 
 __all__ = [
     "GENERAL_CHAT_SYSTEM_PROMPT",
-    "PHM_IDENTITY_RESPONSE",
+    "IDENTITY_RESPONSE",
     "GENERATE_SYSTEM_PROMPT",
     "GENERATE_HUMAN_PROMPT",
     "REWRITE_PROMPT",
@@ -51,13 +50,12 @@ def _p():
 # ---------------------------------------------------------------------------
 
 # 注意:模块级常量在 import 时求值。对于测试中切换 profile 的场景,应直接用
-# get_active_profile() 而非这些常量。下面在 import 时用 active profile 求值,
-# 覆盖默认(aviation_phm)启动路径的向后兼容。
+# get_active_profile() 而非这些常量。下面在 import 时用 active profile 求值。
 
 _profile = _p()
 
 GENERAL_CHAT_SYSTEM_PROMPT = _profile.prompts["general_chat_system"]
-PHM_IDENTITY_RESPONSE = _profile.identity_response
+IDENTITY_RESPONSE = _profile.identity_response
 GENERATE_SYSTEM_PROMPT = _profile.prompts["generate_system"]
 GENERATE_HUMAN_PROMPT = _profile.prompts["generate_human"]
 REWRITE_PROMPT = _profile.prompts["rewrite"]

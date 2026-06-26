@@ -19,7 +19,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
-from core.prompts.aircraft_prompts import GENERATE_HUMAN_PROMPT, GENERATE_SYSTEM_PROMPT
+from core.prompts.profile_prompts import GENERATE_HUMAN_PROMPT, GENERATE_SYSTEM_PROMPT
 from utils.log_utils import log
 from utils.think_tag_utils import strip_think_tags
 

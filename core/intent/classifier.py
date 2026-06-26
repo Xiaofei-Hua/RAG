@@ -48,7 +48,7 @@ class IntentResult(BaseModel):
 
 
 # Classification prompt
-from core.prompts.aircraft_prompts import INTENT_CLASSIFICATION_PROMPT
+from core.prompts.profile_prompts import INTENT_CLASSIFICATION_PROMPT
 
 
 @dataclass

@@ -22,7 +22,7 @@ from langchain_core.retrievers import BaseRetriever
 from langchain_core.tools import create_retriever_tool
 from pydantic import ConfigDict
 
-from core.prompts.aircraft_prompts import RETRIEVER_TOOL_DESCRIPTION, RETRIEVER_TOOL_NAME
+from core.prompts.profile_prompts import RETRIEVER_TOOL_DESCRIPTION, RETRIEVER_TOOL_NAME
 from documents.milvus_db import MilvusConfig, MilvusManager
 from utils.env_utils import COLLECTION_NAME, MILVUS_URI
 from utils.log_utils import log

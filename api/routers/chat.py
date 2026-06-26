@@ -18,7 +18,7 @@ from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from pydantic import BaseModel, Field
 
-from core.prompts.aircraft_prompts import (
+from core.prompts.profile_prompts import (
     GENERAL_CHAT_SYSTEM_PROMPT,
     GENERATE_SYSTEM_PROMPT,
 )
@@ -31,9 +31,9 @@ router = APIRouter()
 def _profile():
     """Active domain profile accessor (cached in domain_profile module).
 
-    Used to derive the prompt_profile label strings (``<label>_diagnosis_v1``
-    etc.) and identity/section behaviour from the configured domain instead
-    of hardcoding the aviation ``phm_*`` labels.
+    Used to derive the prompt_profile label strings (``<label>_<suffix>`` etc.)
+    and identity/section behaviour from the configured domain instead of
+    hardcoding domain-specific labels.
     """
     from core.prompts.domain_profile import get_active_profile
 
@@ -89,8 +89,14 @@ class ChatResponse(BaseModel):
     metadata: dict = Field(default_factory=dict, description="Additional metadata")
 
 
-class PHMDiagnosis(BaseModel):
-    """Structured PHM diagnosis extracted from model response."""
+class StructuredAnswer(BaseModel):
+    """Structured answer extracted from a model response.
+
+    Field names are generic; the active domain profile's section labels fill
+    them positionally (conclusion, causes, steps, safety, sources, gaps).
+    Profiles without a section template yield free-form answers (caller gets
+    None from ``_extract_structured_answer``).
+    """
 
     conclusion: str = ""
     possible_causes: list[str] = Field(default_factory=list)
@@ -98,6 +104,10 @@ class PHMDiagnosis(BaseModel):
     safety_risks: str = ""
     evidence_sources: list[str] = Field(default_factory=list)
     info_gaps: str = ""
+
+
+# Backward-compatible alias (the type was historically named PHMDiagnosis).
+PHMDiagnosis = StructuredAnswer
 
 
 class ChatHistoryResponse(BaseModel):
@@ -252,9 +262,9 @@ def _active_sections() -> list[str]:
     return list(get_active_profile().section_template)
 
 
-def _extract_phm_diagnosis(answer: str) -> PHMDiagnosis | None:
+def _extract_structured_answer(answer: str) -> StructuredAnswer | None:
     """
-    Extract structured diagnosis blocks from a generated answer.
+    Extract structured answer blocks from a generated response.
 
     The section order is sourced from the active domain profile's
     ``section_template``. When the profile defines no sections (e.g. the
@@ -271,16 +281,16 @@ def _extract_phm_diagnosis(answer: str) -> PHMDiagnosis | None:
     if not any(extracted.values()):
         return None
 
-    # Map extracted sections into the PHMDiagnosis schema. Field names are
-    # generic; aviation section labels fill them positionally (conclusion,
-    # causes, steps, safety, sources, gaps). Non-aviation profiles with fewer
+    # Map extracted sections into the StructuredAnswer schema. Field names are
+    # generic; the active profile's section labels fill them positionally
+    # (conclusion, causes, steps, safety, sources, gaps). Profiles with fewer
     # sections simply leave later fields empty.
     vals = list(extracted.values())
 
     def _at(i: int) -> str:
         return vals[i] if i < len(vals) else ""
 
-    return PHMDiagnosis(
+    return StructuredAnswer(
         conclusion=_at(0),
         possible_causes=_extract_numbered_items(_at(1)),
         troubleshooting_steps=_extract_numbered_items(_at(2)),
@@ -290,14 +300,15 @@ def _extract_phm_diagnosis(answer: str) -> PHMDiagnosis | None:
     )
 
 
-def _looks_like_phm_query(message: str) -> bool:
+def _looks_like_domain_query(message: str) -> bool:
     """
     Heuristic domain-query detection to prevent misrouting.
 
     Keywords and regex patterns are sourced from the active domain profile,
-    so this fast-path matches the configured domain (aviation by default).
-    The general profile has no domain keywords/patterns, so this returns
-    False and lets the intent classifier decide.
+    so this fast-path matches the configured domain (general by default;
+    aviation when ``DOMAIN_PROFILE=aviation_phm``). The general profile has no
+    domain keywords/patterns, so this returns False and lets the intent
+    classifier decide.
     """
     from core.prompts.domain_profile import get_active_profile
 
@@ -532,7 +543,7 @@ async def chat(
 
         # Step 2: Route based on intent + PHM heuristic safeguard
         use_rag = intent_result.intent.value != "general_chat"
-        if not use_rag and _looks_like_phm_query(request.message):
+        if not use_rag and _looks_like_domain_query(request.message):
             use_rag = True
             force_rag = True
             log.info("Intent override: forcing RAG route for PHM-like query")
@@ -600,7 +611,7 @@ async def chat(
             session_memory.save_message, session_id, AIMessage(content=answer)
         )
 
-        diagnosis = _extract_phm_diagnosis(answer)
+        diagnosis = _extract_structured_answer(answer)
 
         main_meta = {
             "intent_confidence": intent_result.confidence,
@@ -831,7 +842,7 @@ async def chat_stream(
                 await session_memory.save_message(session_id, HumanMessage(content=request.message))
                 await session_memory.save_message(session_id, AIMessage(content=full_response))
 
-                diagnosis = _extract_phm_diagnosis(full_response)
+                diagnosis = _extract_structured_answer(full_response)
                 yield _sse(
                     {
                         "type": "done",
@@ -862,7 +873,7 @@ async def chat_stream(
             intent_result = await intent_classifier.aclassify(request.message)
             use_rag = intent_result.intent.value != "general_chat"
             force_rag = False
-            if not use_rag and _looks_like_phm_query(request.message):
+            if not use_rag and _looks_like_domain_query(request.message):
                 use_rag = True
                 force_rag = True
                 yield _sse({"type": "status", "message": "检测为专业问题，已切换知识库检索模式..."})
@@ -907,7 +918,7 @@ async def chat_stream(
                 await session_memory.save_message(session_id, HumanMessage(content=request.message))
                 await session_memory.save_message(session_id, AIMessage(content=full_response))
 
-                diagnosis = _extract_phm_diagnosis(full_response)
+                diagnosis = _extract_structured_answer(full_response)
                 done_payload = {
                     "type": "done",
                     "full_response": full_response,
@@ -1016,7 +1027,7 @@ async def chat_stream(
                 await session_memory.save_message(session_id, AIMessage(content=full_response))
 
                 sources = _extract_sources(collected_messages)
-                diagnosis = _extract_phm_diagnosis(full_response)
+                diagnosis = _extract_structured_answer(full_response)
                 # Capture the streamed RAG inference into the eval flywheel
                 # (parity with the non-streaming chat() path). Without this,
                 # negative feedback on a streamed answer has no inference to

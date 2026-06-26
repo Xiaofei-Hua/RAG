@@ -33,7 +33,7 @@ from fastapi.staticfiles import StaticFiles
 from api.middleware.error_handler import ErrorHandlerMiddleware
 from api.middleware.tracing import TracingMiddleware
 from api.routers import admin, chat, documents, feedback, retrieval, sessions
-from core.prompts.aircraft_prompts import GENERATE_SYSTEM_PROMPT
+from core.prompts.profile_prompts import GENERATE_SYSTEM_PROMPT
 from utils.log_utils import log
 
 

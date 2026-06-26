@@ -186,44 +186,44 @@ class TestGeneralProfile:
 
 class TestProfileDrivenBehaviour:
     def test_looks_like_domain_query_aviation(self, monkeypatch):
-        from api.routers.chat import _looks_like_phm_query
+        from api.routers.chat import _looks_like_domain_query
         from core.prompts.domain_profile import reset_active_profile
 
         reset_active_profile()
         monkeypatch.setenv("DOMAIN_PROFILE", "aviation_phm")
-        assert _looks_like_phm_query("发动机振动异常") is True
+        assert _looks_like_domain_query("发动机振动异常") is True
         # A non-aviation query under the aviation profile is NOT force-routed.
-        assert _looks_like_phm_query("光合作用的化学方程式") is False
+        assert _looks_like_domain_query("光合作用的化学方程式") is False
 
     def test_looks_like_domain_query_general_never_forces(self, monkeypatch):
-        from api.routers.chat import _looks_like_phm_query
+        from api.routers.chat import _looks_like_domain_query
         from core.prompts.domain_profile import reset_active_profile
 
         reset_active_profile()
         monkeypatch.setenv("DOMAIN_PROFILE", "general")
         # General profile has no domain keywords -> never force-routes.
-        assert _looks_like_phm_query("发动机振动异常") is False
-        assert _looks_like_phm_query("光合作用") is False
+        assert _looks_like_domain_query("发动机振动异常") is False
+        assert _looks_like_domain_query("光合作用") is False
 
     def test_extract_diagnosis_aviation(self, monkeypatch):
-        from api.routers.chat import _extract_phm_diagnosis
+        from api.routers.chat import _extract_structured_answer
         from core.prompts.domain_profile import reset_active_profile
 
         reset_active_profile()
         monkeypatch.setenv("DOMAIN_PROFILE", "aviation_phm")
         answer = "【诊断结论】振动偏高\n【排查步骤】1. 频谱分析"
-        diag = _extract_phm_diagnosis(answer)
+        diag = _extract_structured_answer(answer)
         assert diag is not None
         assert "振动" in diag.conclusion
 
     def test_extract_diagnosis_general_returns_none(self, monkeypatch):
-        from api.routers.chat import _extract_phm_diagnosis
+        from api.routers.chat import _extract_structured_answer
         from core.prompts.domain_profile import reset_active_profile
 
         reset_active_profile()
         monkeypatch.setenv("DOMAIN_PROFILE", "general")
         # No section template -> free-form answers, returns None.
-        assert _extract_phm_diagnosis("任意自由文本回答") is None
+        assert _extract_structured_answer("任意自由文本回答") is None
 
     def test_input_guardrail_aviation_allows_domain(self, monkeypatch):
         from agent.guardrails.input_guardrails import InputGuardrail

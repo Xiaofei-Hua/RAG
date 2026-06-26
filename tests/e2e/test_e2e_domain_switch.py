@@ -52,7 +52,7 @@ def general_client(client, monkeypatch):
 
 class TestGeneralDomainRouting:
     def test_biology_query_not_force_routed_to_rag(self, general_client):
-        """光合作用 has no aviation domain keyword, so _looks_like_phm_query
+        """光合作用 has no aviation domain keyword, so _looks_like_domain_query
         returns False under the general profile -> the intent classifier
         (fake) decides. The query still reaches the chat endpoint without
         being force-routed."""
