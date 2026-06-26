@@ -17,12 +17,12 @@ RAG 航空排故系统 — 全链路功能测试
   再运行测试:  python tests/system_test.py
 """
 
+import hashlib
 import json
 import sys
 import time
-import hashlib
-import urllib.request
 import urllib.error
+import urllib.request
 
 BASE = "http://localhost:8000"
 
@@ -57,7 +57,7 @@ def _upload(filename, content):
         f"Content-Type: text/markdown\r\n\r\n"
         f"{content}\r\n"
         f"--{boundary}--\r\n"
-    ).encode("utf-8")
+    ).encode()
     conn = http.client.HTTPConnection("localhost", 8000, timeout=60)
     conn.request("POST", "/api/documents/upload", body=body,
                  headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
@@ -65,6 +65,25 @@ def _upload(filename, content):
     result = json.loads(resp.read())
     conn.close()
     return resp.status, result
+
+
+def _wait_for_indexed(doc_id, max_wait=120, interval=2):
+    """Poll document status until indexed/failed or timeout (Q6, F-EG-08).
+
+    Replaces a fixed `time.sleep(20)` that waited for background indexing —
+    polling returns as soon as the doc is ready (faster on a warm index) and
+    bounds the wait so a stuck ingest surfaces instead of an arbitrary sleep.
+    """
+    deadline = time.time() + max_wait
+    last = None
+    while time.time() < deadline:
+        status, body = _req("GET", f"/api/documents/{doc_id}")
+        if status == 200:
+            last = body.get("status")
+            if last in ("indexed", "failed"):
+                return last
+        time.sleep(interval)
+    return last  # None if never reached
 
 
 def assert_ok(name, status, body, expected_status=200):
@@ -157,9 +176,11 @@ def test_document_upload():
     doc_id = body.get("id")
     assert_true("返回了 doc_id", doc_id is not None, body)
 
-    # Wait for background processing
+    # Wait for background processing (Q6: poll instead of fixed sleep)
     print("  ⏳ 等待文档处理完成...")
-    time.sleep(20)
+    final_status = _wait_for_indexed(doc_id)
+    assert_true("文档处理完成", final_status == "indexed",
+                f"got: {final_status}")
 
     # Check document status
     status, body = _req("GET", f"/api/documents/{doc_id}")
@@ -223,7 +244,7 @@ def test_chat_rag(session_id):
     status, body = _upload("test_rag_query.md", TEST_DOC)
     if status == 200:
         print("  ⏳ 等待文档索引...")
-        time.sleep(20)
+        _wait_for_indexed(body.get("id"))
 
     status, body = _req("POST", "/api/chat", {
         "message": "B737液压系统压力低如何排查？",

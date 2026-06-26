@@ -8,12 +8,12 @@
 注意: 运行前需要先上传文档（可运行 test_documents.py 或直接上传）
 """
 
+import http.client
 import json
 import sys
 import time
-import http.client
-import urllib.request
 import urllib.error
+import urllib.request
 
 BASE = "http://localhost:8000"
 
@@ -65,7 +65,7 @@ def _upload(filename, content):
         f"Content-Type: text/markdown\r\n\r\n"
         f"{content}\r\n"
         f"--{boundary}--\r\n"
-    ).encode("utf-8")
+    ).encode()
     conn = http.client.HTTPConnection("localhost", 8000, timeout=60)
     conn.request("POST", "/api/documents/upload", body=body,
                  headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
@@ -73,6 +73,20 @@ def _upload(filename, content):
     result = json.loads(resp.read())
     conn.close()
     return resp.status, result
+
+
+def _wait_for_indexed(doc_id, max_wait=120, interval=2):
+    """Poll document status until indexed/failed or timeout (Q6, F-EG-08)."""
+    deadline = time.time() + max_wait
+    last = None
+    while time.time() < deadline:
+        status, body = _req("GET", f"/api/documents/{doc_id}")
+        if status == 200:
+            last = body.get("status")
+            if last in ("indexed", "failed"):
+                return last
+        time.sleep(interval)
+    return last
 
 
 def assert_ok(name, status, body, expected_status=200):
@@ -106,7 +120,8 @@ def ensure_document_indexed():
     status, body = _upload("test_retrieval_vibration.md", TEST_DOC)
     if status in (200, 409):
         print("  等待索引完成...")
-        time.sleep(20)
+        if status == 200 and body.get("id"):
+            _wait_for_indexed(body["id"])
         return body.get("id") if status == 200 else None
     return None
 

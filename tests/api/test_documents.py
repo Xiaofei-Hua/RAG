@@ -6,12 +6,12 @@
   python tests/api/test_documents.py
 """
 
+import http.client
 import json
 import sys
 import time
-import http.client
-import urllib.request
 import urllib.error
+import urllib.request
 
 BASE = "http://localhost:8000"
 
@@ -57,7 +57,7 @@ def _upload(filename, content):
         f"Content-Type: text/markdown\r\n\r\n"
         f"{content}\r\n"
         f"--{boundary}--\r\n"
-    ).encode("utf-8")
+    ).encode()
     conn = http.client.HTTPConnection("localhost", 8000, timeout=60)
     conn.request("POST", "/api/documents/upload", body=body,
                  headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
@@ -65,6 +65,20 @@ def _upload(filename, content):
     result = json.loads(resp.read())
     conn.close()
     return resp.status, result
+
+
+def _wait_for_indexed(doc_id, max_wait=120, interval=2):
+    """Poll document status until indexed/failed or timeout (Q6, F-EG-08)."""
+    deadline = time.time() + max_wait
+    last = None
+    while time.time() < deadline:
+        status, body = _req("GET", f"/api/documents/{doc_id}")
+        if status == 200:
+            last = body.get("status")
+            if last in ("indexed", "failed"):
+                return last
+        time.sleep(interval)
+    return last
 
 
 def assert_ok(name, status, body, expected_status=200):
@@ -105,11 +119,11 @@ def main():
     status, body = _upload("test_hydraulic.md", TEST_DOC)
     assert_ok("重复上传被拒绝 (409)", status, body, expected_status=409)
 
-    # 3. Wait for processing
+    # 3. Wait for processing (Q6: poll instead of fixed sleep)
     if doc_id:
         print("\n  [等待处理]")
         print("    等待文档索引完成...")
-        time.sleep(20)
+        _wait_for_indexed(doc_id)
 
         status, body = _req("GET", f"/api/documents/{doc_id}")
         assert_ok("查询文档状态", status, body)
