@@ -91,7 +91,7 @@ python -c "import api.main; print('OK')"
 ```
 agent/      # 编排层：harness/skills/context/mcp/eval/guardrails/feedback/memory/metrics
 api/        # FastAPI 应用与路由（chat/documents/sessions/admin/feedback/retrieval）+ 中间件
-core/       # 基础设施：retrieval/fallback/memory/prompts/intent/tracing/context/concurrency/workflow
+core/       # 基础设施：retrieval/fallback/memory/prompts/intent/tracing/context
 documents/  # 文档解析（markdown/pdf/ocr）+ 注册表 + Milvus 管理 + parent_store
 models/     # LLM/Embedding/model_router
 web/        # Vue 3 + Vite + TS + Pinia 前端

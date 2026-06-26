@@ -44,8 +44,8 @@ AgentSkill -> RetrieveSkill -> GradeSkill -> GenerateSkill
 | grade | agent/skills/grade/skill.py | Document relevance grading |
 | rewrite | agent/skills/rewrite/skill.py | Query rewriting |
 | generate | agent/skills/generate/skill.py | Final answer generation (Qwen3 reasoning capture + grounding + confidence) |
-| intent | agent/skills/intent/skill.py | User intent classification |
 
-> Note: legacy flat shim files (`agent/skills/*_skill.py`) have been removed —
-> they only re-exported the directory skills. Always use the directory form
-> above.
+> Note: `IntentSkill` has been removed — intent classification lives in the chat
+> router (`api/routers/chat.py` via `core/intent/classifier.py`), not in the graph.
+> Legacy flat shim files (`agent/skills/*_skill.py`) have also been removed — they
+> only re-exported the directory skills. Always use the directory form above.

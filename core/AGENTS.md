@@ -13,9 +13,7 @@ core/
 ├── prompts/          # domain_profile.py 是 Prompt 单一事实来源；profile_prompts.py 向后兼容入口
 ├── intent/           # 意图分类
 ├── tracing/          # OpenTelemetry
-├── context/          # token_budget
-├── concurrency/      # 并发原语
-└── workflow/         # 编排辅助
+└── context/          # token_budget
 ```
 
 ## 2. 检索栈
