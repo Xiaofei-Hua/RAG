@@ -5,6 +5,13 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  # Stage 1 of docs/specs/engineering-governance-optimization: allow manual
+  # dispatch so backend-nightly can be triggered on demand to validate the
+  # runner environment BEFORE a schedule cron is added. The schedule trigger
+  # itself is intentionally NOT added in Stage 1 — nightly activation is
+  # tracked as issue-KNOWN-GAP-1 (review/tracking.md §2), pending human
+  # confirmation that the self-hosted runner has Ollama + qwen3:14b ready.
+  workflow_dispatch:
 
 jobs:
   test:
@@ -28,16 +35,15 @@ jobs:
           pip install pymilvus milvus-lite
 
       - name: Run unit + perf tests (PR gate, no live backend)
-        # Skip tests requiring Ollama/Milvus. requires_* tests run in the
-        # nightly backend job below.
+        # Single fail-on-error invocation. Previously two calls existed: the
+        # first (tests/unit + tests/perf, --ignore test_skills, trailing
+        # `|| true`) swallowed all failures; the second (tests/unit only, no
+        # `|| true`) was the only real gate. They are merged here so a failure
+        # surfaces as a red step. test_skills.py's @requires_ollama cases are
+        # deselected by the marker filter, so --ignore is unnecessary.
         run: |
           python -m pytest tests/unit/ tests/perf/ -q \
-            -m "not requires_ollama and not requires_backend" \
-            --ignore=tests/unit/test_skills.py || true
-          # test_skills.py carries the requires_ollama full tests; the marker
-          # filter already skips them, but keep an explicit run for the
-          # non-full skill tests.
-          python -m pytest tests/unit/ -q -m "not requires_ollama and not requires_backend"
+            -m "not requires_ollama and not requires_backend"
 
       - name: Run end-to-end tests (in-process, mocked singletons)
         env:
@@ -65,13 +71,25 @@ jobs:
             --dataset data/benchmark/benchmark_hotpotqa.yaml --top-k 4 \
             --fail-on-regression
 
-  # Nightly / self-hosted: runs the real-backend + real-judge tests that the
-  # PR gate skips. Requires a self-hosted runner with Ollama + Qwen3 + Milvus.
-  # If no self-hosted runner is registered, this job is simply not picked up —
-  # see docs/specs/bugfix-batch-1/design.md F24 (P1): verify runner health
-  # before relying on this gate.
+  # Nightly / self-hosted: runs the real-LLM tests that the PR gate skips.
+  # This job covers "track A" — 6 in-process LLM/Judge/checkpoint cases
+  # (test_skills×2, test_checkpoint_serde_compat×2, test_flywheel_real_judge×2)
+  # that call harness.invoke / judge.trustworthy_metrics directly, WITHOUT
+  # hitting the 8000 HTTP port. "track B" (script-style tests in tests/api +
+  # tests/integration that curl localhost:8000) is deferred to Stage 2
+  # (issue-KNOWN-GAP-1) because it needs a uvicorn + Milvus warmup step that
+  # this job does not yet have.
+  #
+  # IMPORTANT: this job is NOT added to PR required-checks. Schedule-only /
+  # dispatch-only jobs cannot serve as PR required checks (a PR would wait
+  # forever for a check that never appears on push/pull_request events). The
+  # `if:` guard below is a GATED if (job runs only when condition is true) —
+  # do NOT rewrite it as a ternary `runs-on:` expression like
+  # eval-regression.yml:34; that form keeps the job running on non-matching
+  # events (just on a different runner), which would send dispatch jobs onto
+  # ubuntu-latest where every requires_ollama case skips.
   backend-nightly:
-    if: github.event_name == 'schedule'
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: self-hosted
     steps:
       - name: Checkout
@@ -87,10 +105,50 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[ocr,dev]"
 
-      - name: Run real-backend + real-judge tests
+      # Env canary: the only external dependency of track A is Ollama (Milvus
+      # is Lite/embedded, no server/port). Probe the model list endpoint and
+      # the configured model. A missing Ollama/model must fail here with a
+      # distinct signal so the alert step labels it runner-env-not-ready
+      # (environment problem) rather than nightly-regression (code problem) —
+      # see H-21 in review/critic.md.
+      - id: env-canary
+        name: Env canary (Ollama + model)
+        env:
+          OPENAI_BASE_URL: "http://localhost:11434/v1"
+          LLM_MODEL: qwen3:14b
+        run: |
+          base="${OPENAI_BASE_URL%/v1}"
+          curl -sf "$base/api/tags" | grep -qF "$LLM_MODEL" \
+            || { echo "::warning::Ollama or $LLM_MODEL not available at $base"; exit 1; }
+
+      - name: Run real-LLM tests (track A, in-process)
         env:
           OPENAI_BASE_URL: "http://localhost:11434/v1"
           OPENAI_API_KEY: ollama
           OLLAMA_FULL_TESTS: "1"
         run: |
-          python -m pytest tests/ -q -m "requires_ollama or requires_backend"
+          python -m pytest tests/unit/ tests/e2e/ -q -m "requires_ollama or requires_backend"
+
+      # Mandatory alert (H-22): nightly failures must surface in-repo, not just
+      # as an email to the workflow author. Upsert by label (M-NEW-1) so a
+      # persistently broken nightly doesn't spam one Issue per night.
+      - name: Alert on nightly failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LABEL: ${{ steps.env-canary.outcome == 'failure' && 'runner-env-not-ready' || 'nightly-regression' }}
+        run: |
+          [ -n "$LABEL" ] || { echo "::error::LABEL resolved empty"; exit 1; }
+          body="Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          existing=$(gh issue list --label "$LABEL" --state open --json number -L1 2>/dev/null || true)
+          num=$(echo "$existing" | jq -r '.[0].number // empty' 2>/dev/null || true)
+          if [ -n "$num" ]; then
+            # Re-verify the fetched issue actually carries $LABEL (defends
+            # against -L1 returning an unrelated issue if $LABEL drifts).
+            if gh issue view "$num" --json labels | jq -e --arg l "$LABEL" '.labels[].name == $l' >/dev/null 2>&1; then
+              gh issue comment "$num" --body "Failed again: $body"
+              exit 0
+            fi
+          fi
+          gh issue create --title "nightly run ${{ github.run_id }} failed" \
+            --label "$LABEL" --body "$body"
