@@ -35,15 +35,16 @@
 
 | 发现 ID | 严重性 | 对应 REQ | 决策 | 状态 |
 |---------|--------|----------|------|------|
-| F-EG-01 | Medium | REQ-EG-007 | accepted | open（Stage 3） |
-| F-EG-02 | Medium | REQ-EG-008 | accepted | open（Stage 3） |
+| F-EG-01 | Medium | REQ-EG-007 | accepted | **implementing**（Stage 3）：audit-first 跑通（34 个 >500KB blob 全量分类），filter-repo 前精确清单已用 |
+| F-EG-02 | Medium | REQ-EG-008 | accepted | **implementing**（Stage 3）：`git bundle create` 备份（74MB，已验证，曾用于恢复 uv.lock）；执行中曾触发回滚考量 |
+| F-EG-12 | Medium | REQ-EG-008 | accepted | **implementing**（Stage 3）：sync-to-mirror 已先禁用（F-EG-19 顺序），Q1 完成后恢复 |
 | F-EG-09 | Medium | REQ-EG-013 | accepted | open（Stage 3） |
 | F-EG-10 | Medium | REQ-EG-014 | accepted | open（Stage 4） |
-| F-EG-15 | Medium | REQ-EG-007 | accepted | open（Stage 3） |
+| F-EG-15 | Medium | REQ-EG-007 | accepted | **implementing**（Stage 3）：4 条已合并分支（0 ahead of main）已删，无需 rebase（filter-repo 一并重写后它们已不在） |
 | F-EG-16 | Medium | REQ-EG-009/010 | accepted | open（Stage 2） |
 | F-EG-17 | Medium | REQ-EG-013 | accepted | open（Stage 3） |
 | F-EG-18 | Medium | REQ-EG-012 | accepted | open（Stage 2）→ **implementing**：benchmark step 加 `timeout-minutes: 5`（解决 hang）；保留 PR（M-NEW-3：保留召回拦截，注释声明与 rule-based eval 不等价） |
-| F-EG-19 | Medium | REQ-EG-008 | accepted | open（Stage 3） |
+| F-EG-19 | Medium | REQ-EG-008 | accepted | **implementing**（Stage 3）：sync-to-mirror 禁用提交先合并进 main 并推送（origin HEAD 已含禁用态），再 filter-repo；Q1 后恢复 |
 | M-NEW-1 | Medium | REQ-EG-004 | accepted | open（Stage 1） |
 | M-NEW-3 | Medium | REQ-EG-012 | accepted | open（Stage 2） |
 | M-NEW-4 | Medium | REQ-EG-006 | accepted | open（Stage 1，collect 矩阵） |
@@ -103,6 +104,18 @@ Stage 1 验证时发现两类预存 warning，**非 Stage 1 引入、非 `|| tru
 - **Q11 benchmark gate（F-EG-18）**：benchmark step 加 `timeout-minutes: 5`（实测 cmrc ~11s + hotpot ~12s，CI 冷启动余量）。**保留在 PR**（非降 nightly）——M-NEW-3：这是 PR 上唯一走真实 Milvus+BM25 检索栈的步骤，降 nightly 会丢失召回回归拦截；rule-based eval（eval-regression.yml）跑 golden 生成质量集，不等价。
 - **完整 CI 流程模拟**：unit+perf (462 passed) → e2e (76 passed, 2 skipped) → coverage gate (60%, fail-under=60 通过) → benchmark (cmrc+hotpot 全绿)。**全流程 GREEN**。
 - **YAML 校验**：tests.yml `yaml.safe_load` 通过；`grep 'pytest.*||' tests.yml` 为空。
+
+### Stage 3 (Q1) 实现验证记录（2026-06-26）
+
+- **Q1 .git 瘦身（F-EG-01/02/07/12/15/19）**：
+  - **audit-first**：`git rev-list --objects --all | git cat-file --batch-check` 全量审计，34 个 >500KB blob 精确分类（node_modules 3107 path / safetensors 92MB / checkpoints.db 4 blob + wal 2.8MB / uv.lock 9 版本）。
+  - **执行顺序（F-EG-19）**：sync-to-mirror 先禁用（改 `on:` + `if:` 守卫，合并进 main 并推送 origin，确认 HEAD 含禁用态）→ bundle 备份 → 删 4 条已合并分支（全 0 ahead）→ filter-repo → force-push origin → force-push phm → 恢复 mirror。
+  - **filter-repo**：`--path-glob 'web/node_modules/*' --path models/local_models --path-glob 'data/*.db' --path-glob 'data/*.db-wal' --path uv.lock --invert-paths`。
+  - **执行中的偏差与修正**：(a) `--path uv.lock --invert-paths` 误删 uv.lock 整个文件（含 HEAD），从 bundle 备份恢复当前版本并提交；(b) safetensors blob 残留——根因是 `refs/codex/turn-diffs/...`（codex CLI 内部 checkpoint ref）引用旧历史树，删除该 ref + `git gc --prune=now` 后彻底清除。
+  - **回滚源（F-EG-02）**：`git bundle create repo-backup-2026-06-26-pre-slim.bundle --all`（74MB，已验证完整，曾用于 uv.lock 恢复）。
+  - **结果**：`.git` **4.2GB → 2.5MB**（降 99.94%）。双 remote（origin + phm）均 force-push 至 `49f9e3d`，HEAD 一致。70 commits 保留，关键文件（pyproject/uv.lock/AGENTS.md/api/agent/spec）完整。
+  - **force-push 渠道**：origin SSH 因 IP 变化触发 GitHub 风控报 "Repository not found"（`ssh -T` 成功但 git 操作被拒）；改用 **classic token (repo scope) via HTTPS** 推送成功（fine-grained token 因 Contents 权限未勾 Read-and-write 报 403 denied）。phm 经 SSH push 成功。
+  - **部署影响**：safetensors（92MB）从历史移除，但 `models/local_models/` 本就 gitignored，工作树不依赖它——deploy.sh 首次运行自动下载（README:700-703 已说明"首次运行需下载约 91MB Embedding 模型"）。
 
 ---
 
