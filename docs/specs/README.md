@@ -62,3 +62,12 @@ docs/specs/
 > 评审模板（critic/defender/tracking 的标准系统提示与 schema）见 `docs/specs/prompts/`。
 > 历史产物 `bugfix-batch-1/review/` 是模板之前的即兴散文形态，实质质量高但结构不统一；
 > 自模板起，所有新 spec 的 `review/` 必须按 `prompts/` 模板产出。
+
+## 横切工程治理批（`engineering-governance-optimization/`）
+
+`engineering-governance-optimization/` 是对**整个工程治理面**（CI 门禁、仓库瘦身、测试纪律、类型/lint 工具链、版本发布）的一次性横切优化 spec，独立于 `bugfix-batch-1/2` 的代码 bugfix。
+
+- 经过 **7 轮 critic + defender 对抗评审**收敛（每轮 v(n) 揭出 v(n-1) 新 Critical/High），最终 v7 收敛。
+- findings 用本 spec 独立 `F-EG-xxx` 编号（不与历史 F01-F25 混用）。
+- 真实存在的「真实后端 HTTP 全链路回归不可见」缺口显式登记为 `issue-KNOWN-GAP-1`（`review/tracking.md` §2 open 项），有阶段二承接——**非假装闭合**。
+- 执行时按 `tasks.md` 的 Stage 1-4 分组，逐 stage 独立可合并；执行者须遵守 `design.md` 的 D-1（门控式 `if:`，禁三元 runs-on）/D-2（KNOWN-GAP 逐字声明）强制前置。
