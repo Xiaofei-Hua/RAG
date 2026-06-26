@@ -36,7 +36,8 @@
 
 ## 5. Golden / Snapshot 测试
 
-- 涉及 prompt 渲染、结构化输出 schema、置信度计算公式输出的改动，配 golden test：期望输出固化到 `tests/fixtures/`。
+- 涉及 prompt 渲染、结构化输出 schema、置信度计算公式输出的改动，配 golden test：期望输出固化到 `tests/fixtures/`（专放**单元级** golden——纯函数输入/输出的固化期望）。
+- **职责区分**：`tests/fixtures/` 是单元 golden 的事实来源；`data/eval/golden.yaml` 是 **eval 飞轮**的端到端 golden 用例集（含 `expected_sections`/`expected_keywords`/`reference_answer`，被 `scripts/run_eval.py` 与 judge 消费）。两者**不混用**：单元测试的 golden 进 `tests/fixtures/`，eval 飞轮的用例进 `data/eval/golden.yaml`。
 - 输出有意变更时：先更新 golden 文件，PR 中单独列出「golden diff」供 review。
 
 ## 6. 禁用注释审计
