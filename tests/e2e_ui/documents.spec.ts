@@ -58,14 +58,21 @@ test.describe("Documents UI", () => {
       await expect(page.getByTestId("doc-card")).toBeVisible({ timeout: 60_000 });
     }
 
+    // The list endpoint caps at limit=20, but the registry total is uncapped.
+    // Across test runs the shared backend accumulates uploads, so the visible
+    // doc-card count can sit at the 20-cap and never visibly decrease after a
+    // single delete. Assert against the registry total (reflects the real
+    // delete) instead of the capped card count.
+    const beforeTotal = (await (await page.request.get("/api/documents")).json()).total;
+
     const stop = autoConfirmDialog(page, true);
-    const beforeCount = await page.getByTestId("doc-card").count();
     await page.getByTestId("doc-delete").first().click();
     stop();
 
-    await expect(page.getByTestId("doc-card")).toHaveCount(beforeCount - 1, {
-      timeout: 30_000,
-    });
+    await expect.poll(
+      async () => (await (await page.request.get("/api/documents")).json()).total,
+      { timeout: 30_000 }
+    ).toBe(beforeTotal - 1);
     await screenshot(page, SHOT_DIR, "after-delete");
   });
 });

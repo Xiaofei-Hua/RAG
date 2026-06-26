@@ -465,6 +465,54 @@ def install():
 
     fast_mod.fast_generate_async = _fake_fast_generate_async
 
+    # Also stub the streaming + sync fast entry points. The chat router's
+    # streaming fast branch (chat.py) calls fast_generate_stream directly, which
+    # otherwise runs the real `_get_chain(get_llm())` -> `prompt | llm` and
+    # crashes because _FakeLLM is not a LangChain Runnable. Emit the same
+    # SSE-shaped events the real generator yields so the endpoint assembles a
+    # non-empty full_response + sources.
+    _FAST_CANNED = "【诊断结论】快速模式诊断结果。仅供参考注意安全风险。"
+
+    async def _fake_fast_generate_stream(query, top_k=3, **kwargs):
+        docs = retriever.retrieve(query, top_k=top_k)
+        sources = [
+            {
+                "source": d.metadata["source"],
+                "title": d.metadata["title"],
+                "content": d.page_content,
+                "score": d.metadata["score"],
+            }
+            for d in docs
+        ]
+        yield {"type": "token", "content": _FAST_CANNED}
+        yield {
+            "type": "done",
+            "full_response": _FAST_CANNED,
+            "sources": sources,
+            "processing_time_ms": 30.0,
+        }
+
+    def _fake_fast_generate(query, top_k=3, **kwargs):
+        docs = retriever.retrieve(query, top_k=top_k)
+        return SimpleNamespace(
+            answer=_FAST_CANNED,
+            sources=[
+                {
+                    "source": d.metadata["source"],
+                    "title": d.metadata["title"],
+                    "content": d.page_content,
+                    "score": d.metadata["score"],
+                }
+                for d in docs
+            ],
+            retrieval_count=len(docs),
+            retrieval_time_ms=10.0,
+            generation_time_ms=20.0,
+        )
+
+    fast_mod.fast_generate_stream = _fake_fast_generate_stream
+    fast_mod.fast_generate = _fake_fast_generate
+
     # Force inference sampling on so the flywheel capture path is exercised.
     import agent.eval.sampler as sampler_mod
     sampler_mod.should_sample = lambda *a, **k: True

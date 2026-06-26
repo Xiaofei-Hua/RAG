@@ -21,9 +21,20 @@ export async function screenshot(page: Page, area: string, name: string): Promis
 /**
  * Accept any native confirm()/alert() dialog (used by delete flows). Returns a
  * cleanup function. Pass `false` to dismiss instead.
+ *
+ * Note: Playwright's Dialog.accept() takes an optional promptText STRING (for
+ * prompt() dialogs only), NOT a boolean. For confirm()/alert() we must call
+ * accept() with no argument and dismiss() to reject — passing `true` raises
+ * "promptText: expected string, got boolean" and the click hangs.
  */
 export function autoConfirmDialog(page: Page, accept = true): () => void {
-  const handler = (dialog: { accept: (a?: boolean) => Promise<void> }) => dialog.accept(accept);
+  const handler = (dialog: import("@playwright/test").Dialog) => {
+    if (accept) {
+      void dialog.accept();
+    } else {
+      void dialog.dismiss();
+    }
+  };
   page.on("dialog", handler);
   return () => page.off("dialog", handler);
 }
