@@ -1,12 +1,20 @@
 name: Sync to Mirror Repo
 
+# Temporarily disabled for Q1 (docs/specs/engineering-governance-optimization):
+# git filter-repo rewrites history below, and this workflow's `push: branches:
+# ['*']` + `git push mirror --all --force` would race the rewrite — pushing
+# the pre-rewrite history back to phm mid-operation. The guard below keeps
+# the workflow syntactically valid but never triggers. It is re-enabled in
+# the final Q1 commit once both remotes are rewritten and consistent.
 on:
   push:
     branches:
-      - '*'
+      - 'never-match-this-branch-name'
+  workflow_dispatch:
 
 jobs:
   sync:
+    if: github.repository == 'never-match-this-repo'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -22,6 +30,6 @@ jobs:
 
       - name: Push to mirror
         run: |
-          git remote add mirror git@github.com:PHMgogogo/RAG.git
+          git remote add mirror git@github.com:PHMgogooo/RAG.git
           git push mirror --all --force
           git push mirror --tags --force
