@@ -35,6 +35,10 @@ class TestIdentityBranch:
         assert body["metadata"]["route"] == "general_chat"
         # message_id should be minted (P0 fix for feedback linkage).
         assert body["metadata"]["message_id"]
+        # Q7 characterization (F-EG-09): trace_id + prompt_profile are part of
+        # the per-route contract. The refactor MUST preserve them.
+        assert body["metadata"]["trace_id"]
+        assert body["metadata"]["prompt_profile"]
 
 
 # ===========================================================================
@@ -56,6 +60,9 @@ class TestFastModeBranch:
         assert body["metadata"]["source_count"] == len(body["sources"])
         # Fast responses carry message_id for feedback linkage.
         assert body["metadata"]["message_id"]
+        # Q7 characterization (F-EG-09): trace_id + prompt_profile contract.
+        assert body["metadata"]["trace_id"]
+        assert body["metadata"]["prompt_profile"]
 
 
 # ===========================================================================
@@ -86,6 +93,9 @@ class TestRagBranch:
         assert "confidence_level" in body["metadata"]
         assert body["metadata"]["confidence_level"] in ("high", "medium", "low", "unknown")
         assert "refused" in body["metadata"]
+        # Q7 characterization (F-EG-09): trace_id + prompt_profile contract.
+        assert body["metadata"]["trace_id"]
+        assert body["metadata"]["prompt_profile"]
 
 
 # ===========================================================================

@@ -360,6 +360,59 @@ def _sse(event: dict) -> str:
     return f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
 
+def _build_metadata(
+    *,
+    route: str,
+    prompt_profile: str,
+    message_id: str,
+    trace_id: str,
+    intent_confidence: float,
+    intent_reasoning: str,
+    source_count: int,
+    diagnosis,
+    force_rag: bool = False,
+    reasoning: str = "",
+    confidence=None,
+    confidence_level: str | None = None,
+    refused: bool = False,
+) -> dict:
+    """Build the per-response metadata dict shared by chat() and chat_stream().
+
+    Q7 (F-EG-09): both the non-streaming and SSE paths emitted near-identical
+    metadata dicts inline, which drifted whenever one was updated without the
+    other. Centralizing the shape here makes the contract explicit — every
+    route returns the same key set, so the frontend / eval flywheel can rely
+    on it. Characterization tests in test_e2e_chat.py pin trace_id,
+    prompt_profile, message_id, route, confidence_level, refused.
+    """
+    meta = {
+        "intent_confidence": intent_confidence,
+        "intent_reasoning": intent_reasoning,
+        "source_count": source_count,
+        "diagnosis": diagnosis.model_dump() if diagnosis else None,
+        "route": route,
+        "prompt_profile": prompt_profile,
+        "force_rag": force_rag,
+        "message_id": message_id,
+        "trace_id": trace_id,
+    }
+    # Answer-trustworthiness fields. The pre-refactor chat() always included
+    # these (confidence_level defaults to "unknown" when confidence is None),
+    # even on general_chat where there is no grounding signal — the refuse test
+    # and frontend rely on confidence_level being present on every route. Keep
+    # the same shape so the refactor is behavior-preserving.
+    meta["reasoning"] = reasoning
+    meta["confidence"] = confidence
+    meta["confidence_level"] = confidence_level if confidence_level is not None else _confidence_level(confidence)
+    meta["refused"] = refused
+    return meta
+
+
+def _degraded_metadata(*, message_id: str, trace_id: str, error: str) -> dict:
+    """Metadata for the circuit-breaker degraded response path (chat + stream)."""
+    return {"error": error, "message_id": message_id, "trace_id": trace_id, "route": "degraded"}
+
+
 # =============================================================================
 # Dependencies
 # =============================================================================
@@ -448,17 +501,16 @@ async def chat(
             background_tasks.add_task(
                 session_memory.save_message, session_id, AIMessage(content=answer)
             )
-            identity_meta = {
-                "intent_confidence": 1.0,
-                "intent_reasoning": "Identity/capability shortcut",
-                "source_count": 0,
-                "diagnosis": None,
-                "route": "general_chat",
-                "prompt_profile": _profile().prompt_profile_identity,
-                "force_rag": False,
-                "message_id": message_id,
-                "trace_id": trace_id,
-            }
+            identity_meta = _build_metadata(
+                route="general_chat",
+                prompt_profile=_profile().prompt_profile_identity,
+                message_id=message_id,
+                trace_id=trace_id,
+                intent_confidence=1.0,
+                intent_reasoning="Identity/capability shortcut",
+                source_count=0,
+                diagnosis=None,
+            )
             _capture(
                 http_request,
                 request.message,
@@ -497,19 +549,19 @@ async def chat(
             )
 
             fast_sources = [SourceDocument(**s) for s in result.sources]
-            fast_meta = {
-                "intent_confidence": 1.0,
-                "intent_reasoning": "Fast mode (no classification)",
-                "source_count": result.retrieval_count,
-                "diagnosis": None,
-                "route": "fast",
-                "prompt_profile": _profile().prompt_profile_fast,
-                "force_rag": False,
-                "retrieval_time_ms": result.retrieval_time_ms,
-                "generation_time_ms": result.generation_time_ms,
-                "message_id": message_id,
-                "trace_id": trace_id,
-            }
+            fast_meta = _build_metadata(
+                route="fast",
+                prompt_profile=_profile().prompt_profile_fast,
+                message_id=message_id,
+                trace_id=trace_id,
+                intent_confidence=1.0,
+                intent_reasoning="Fast mode (no classification)",
+                source_count=result.retrieval_count,
+                diagnosis=None,
+            )
+            # Fast mode surfaces retrieval/generation timing for the client.
+            fast_meta["retrieval_time_ms"] = result.retrieval_time_ms
+            fast_meta["generation_time_ms"] = result.generation_time_ms
             _capture(
                 http_request,
                 request.message,
@@ -613,23 +665,20 @@ async def chat(
 
         diagnosis = _extract_structured_answer(answer)
 
-        main_meta = {
-            "intent_confidence": intent_result.confidence,
-            "intent_reasoning": intent_result.reasoning,
-            "source_count": len(sources),
-            "diagnosis": diagnosis.model_dump() if diagnosis else None,
-            "route": route,
-            "prompt_profile": prompt_profile,
-            "force_rag": force_rag,
-            "reasoning": reasoning_text,
-            "message_id": message_id,
-            "trace_id": trace_id,
-            # Answer trustworthiness (filled by the generate skill when on the
-            # RAG route; None for general_chat which has no grounding signal).
-            "confidence": gen_confidence,
-            "confidence_level": _confidence_level(gen_confidence),
-            "refused": gen_refused,
-        }
+        main_meta = _build_metadata(
+            route=route,
+            prompt_profile=prompt_profile,
+            message_id=message_id,
+            trace_id=trace_id,
+            intent_confidence=intent_result.confidence,
+            intent_reasoning=intent_result.reasoning,
+            source_count=len(sources),
+            diagnosis=diagnosis,
+            force_rag=force_rag,
+            reasoning=reasoning_text,
+            confidence=gen_confidence,
+            refused=gen_refused,
+        )
         _capture(
             http_request,
             request.message,
@@ -664,7 +713,7 @@ async def chat(
             handler = get_degradation_handler()
             degraded = handler.generate_degraded_response(request.message, str(e))
             degraded_time = (time.perf_counter() - start_time) * 1000
-            degraded_meta = {"error": str(e), "message_id": message_id, "trace_id": trace_id, "route": "degraded"}
+            degraded_meta = _degraded_metadata(message_id=message_id, trace_id=trace_id, error=str(e))
             # Degraded responses are always sampled (importance sampling).
             _capture(
                 http_request,
@@ -797,17 +846,16 @@ async def chat_stream(
                         "full_response": answer,
                         "sources": [],
                         "processing_time_ms": (time.perf_counter() - start_time) * 1000,
-                        "metadata": {
-                            "intent_confidence": 1.0,
-                            "intent_reasoning": "Identity/capability shortcut",
-                            "source_count": 0,
-                            "diagnosis": None,
-                            "route": "general_chat",
-                            "prompt_profile": _profile().prompt_profile_identity,
-                            "force_rag": False,
-                            "message_id": message_id,
-                            "trace_id": trace_id,
-                        },
+                        "metadata": _build_metadata(
+                            route="general_chat",
+                            prompt_profile=_profile().prompt_profile_identity,
+                            message_id=message_id,
+                            trace_id=trace_id,
+                            intent_confidence=1.0,
+                            intent_reasoning="Identity/capability shortcut",
+                            source_count=0,
+                            diagnosis=None,
+                        ),
                     }
                 )
                 return
@@ -849,17 +897,16 @@ async def chat_stream(
                         "full_response": full_response,
                         "sources": sources_data,
                         "processing_time_ms": (time.perf_counter() - start_time) * 1000,
-                        "metadata": {
-                            "intent_confidence": 1.0,
-                            "intent_reasoning": "Fast mode (no classification)",
-                            "source_count": len(sources_data),
-                            "diagnosis": diagnosis.model_dump() if diagnosis else None,
-                            "route": "fast",
-                            "prompt_profile": _profile().prompt_profile_fast,
-                            "force_rag": False,
-                            "message_id": message_id,
-                            "trace_id": trace_id,
-                        },
+                        "metadata": _build_metadata(
+                            route="fast",
+                            prompt_profile=_profile().prompt_profile_fast,
+                            message_id=message_id,
+                            trace_id=trace_id,
+                            intent_confidence=1.0,
+                            intent_reasoning="Fast mode (no classification)",
+                            source_count=len(sources_data),
+                            diagnosis=diagnosis,
+                        ),
                     }
                 )
                 return
@@ -1033,20 +1080,19 @@ async def chat_stream(
                 # negative feedback on a streamed answer has no inference to
                 # re-judge. Best-effort: never blocks the stream.
                 processing_time_ms = (time.perf_counter() - start_time) * 1000
-                rag_meta = {
-                    "intent_confidence": intent_result.confidence,
-                    "intent_reasoning": intent_result.reasoning,
-                    "source_count": len(sources),
-                    "diagnosis": diagnosis.model_dump() if diagnosis else None,
-                    "route": "rag",
-                    "prompt_profile": _profile().prompt_profile_generate,
-                    "force_rag": force_rag,
-                    "confidence": gen_confidence,
-                    "confidence_level": _confidence_level(gen_confidence),
-                    "refused": gen_refused,
-                    "message_id": message_id,
-                    "trace_id": trace_id,
-                }
+                rag_meta = _build_metadata(
+                    route="rag",
+                    prompt_profile=_profile().prompt_profile_generate,
+                    message_id=message_id,
+                    trace_id=trace_id,
+                    intent_confidence=intent_result.confidence,
+                    intent_reasoning=intent_result.reasoning,
+                    source_count=len(sources),
+                    diagnosis=diagnosis,
+                    force_rag=force_rag,
+                    confidence=gen_confidence,
+                    refused=gen_refused,
+                )
                 try:
                     from agent.eval.capture import maybe_capture_inference
 
