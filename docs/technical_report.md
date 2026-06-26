@@ -1,18 +1,19 @@
-# 航空排故智能问答系统（RAG）技术报告
+# 领域自适应 RAG 智能问答平台技术报告
 
 > 测试环境：WSL2 Ubuntu / NVIDIA RTX 5070 Ti 16GB / Ollama 0.24.0
 > 测试日期：2026-05-27
+> 领域 profile：本报告的实测数据在航空 PHM profile（`DOMAIN_PROFILE=aviation_phm`）下采集；平台本身领域无关，默认 `general`，可按 `DOMAIN_PROFILE` + `data/profiles/*.yaml` 切换/新增领域。
 
 ---
 
 ## 1. 系统概述
 
-本项目是一个面向航空地面健康管理（PHM）领域的企业级 RAG 平台，基于检索增强生成技术，为机务人员提供故障诊断、排故引导、知识库问答和维护决策支持。系统采用前后端分离架构：
+本项目是一个**领域自适应**的企业级 RAG 平台（首发航空地面健康管理 PHM 领域，现已通用化），基于检索增强生成技术，在航空 PHM profile 下为机务人员提供故障诊断、排故引导、知识库问答和维护决策支持；切换至其他领域 profile 即可服务对应垂直知识库。系统采用前后端分离架构：
 
 - **后端**：FastAPI + LangGraph + Milvus Lite
 - **前端**：Vue 3 + Vite + TypeScript
 - **LLM**：Qwen3-14B（本地 Ollama 部署，Q4_K_M 量化）
-- **Embedding**：BGE-small-zh-v1.5（本地部署）
+- **Embedding**：默认 BGE-small-zh-v1.5（本地部署，可替换）
 
 ---
 
@@ -343,7 +344,8 @@ START
 
 ### 6.1 生成节点 Prompt
 
-系统 Prompt 采用 PHM 结构化输出模板，要求模型严格按以下格式输出：
+系统 Prompt 的结构化输出模板由 active profile 的 `section_template` 决定（领域自适应）。
+在航空 PHM profile 下，要求模型严格按以下格式输出：
 
 ```
 【诊断结论】...
@@ -507,10 +509,10 @@ benchmark 与端到端 eval 实测，以及相对基线的回归对比。两组�
 MSMARCO 未命中的 6 个 case（phloem 流向 / calomel 粉 / cpap 处方 / msn 邮箱等）均为冷门
 术语或专业领域 hard case，dense + BM25 都难召回，属数据集固有难点，非检索栈缺陷。
 
-### 13.2 端到端 Eval（含 LLM 生成，航空 PHM golden）
+### 13.2 端到端 Eval（含 LLM 生成，航空 PHM golden 数据集）
 
 通过 `scripts/run_eval.py --no-judge` 评测航空 PHM golden 数据集（15 cases，覆盖发动机 /
-液压 / 航电 / 闲聊 / 边缘 query），全链路 Thinking 模式（agent→retrieve→grade→rewrite→
+液压 / 航电 / 闲聊 / 边缘 query；该数据集是平台首个领域的示例 golden，非平台默认）。全链路 Thinking 模式（agent→retrieve→grade→rewrite→
 generate），并发 1：
 
 | 维度 | 结果 |

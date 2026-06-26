@@ -18,7 +18,7 @@ class BaseSkill(ABC):
 ```
 
 Each skill directory may also carry `prompts.py` (re-exporting from
-`core/prompts/aircraft_prompts.py`), `config.yaml`, and a `README.md`.
+`core/prompts/profile_prompts.py`), `config.yaml`, and a `README.md`.
 
 ## Pipeline Flow
 

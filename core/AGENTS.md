@@ -10,7 +10,7 @@ core/
 ├── retrieval/        # hybrid/bm25/reranker/mmr/cache/time_decay/query_transform
 ├── fallback/         # circuit_breaker / retry / degradation
 ├── memory/           # 会话记忆（Redis 可选 / SQLite 自动降级）
-├── prompts/          # aircraft_prompts.py 是 Prompt 单一事实来源
+├── prompts/          # domain_profile.py 是 Prompt 单一事实来源；profile_prompts.py 向后兼容入口
 ├── intent/           # 意图分类
 ├── tracing/          # OpenTelemetry
 ├── context/          # token_budget
@@ -55,6 +55,6 @@ core/
 
 ## 5. Prompt 单一来源
 
-- `core/prompts/aircraft_prompts.py` 是事实来源；技能级 `prompts.py` 仅 re-export。
+- `core/prompts/domain_profile.py` 的 `DomainProfile` + `data/profiles/<name>.yaml` 是事实来源；`core/prompts/profile_prompts.py` 为向后兼容入口（从 active profile 派生常量）；技能级 `prompts.py` 仅 re-export。
 - `api/main.py` 启动时记录 prompt sha1 签名用于行为可追溯。
 - 改 prompt 后必须重算 sha1 并更新签名表（影响 golden/snapshot test）。

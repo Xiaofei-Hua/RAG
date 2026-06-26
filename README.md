@@ -1,11 +1,14 @@
-# 航空排故智能问答系统
+# 领域自适应 RAG 智能问答平台
 
-面向航空地面健康管理（PHM）与维修排故场景的本地 RAG 智能问答平台。
-系统能够导入维修手册、排故文档等知识资料，通过混合检索与大语言模型生成
-带依据的故障诊断、可能原因、排查步骤和安全提示。
+面向任意知识领域的本地 RAG 智能问答平台（首发航空地面健康管理 PHM 与维修排故场景，
+现已通用化）。通过 `DOMAIN_PROFILE` 切换或新增领域——同一套代码可服务航空排故、
+通用知识库等任意垂直领域，新增领域只需在 `data/profiles/` 下加一份 YAML，无需改代码。
 
-项目默认使用本地 Ollama 与 Qwen3 模型，知识库和会话数据均可在本机运行，
-适合内网、离线环境和需要保护技术资料的场景。
+系统能够导入各类手册/文档等知识资料，通过混合检索与大语言模型生成带依据的回答
+（在航空等故障诊断类领域下进一步输出结构化诊断结论、可能原因、排查步骤和安全提示）。
+
+项目默认领域无关（`DOMAIN_PROFILE=general`），使用本地 Ollama 与 Qwen3 模型，知识库和
+会话数据均可在本机运行，适合内网、离线环境和需要保护技术资料的场景。
 
 ## 核心能力
 
@@ -25,9 +28,10 @@
 | Agent 编排 | LangGraph、Harness + Skills + MCP |
 | 后端 API | FastAPI、Uvicorn |
 | LLM | Qwen3:14b、Ollama OpenAI 兼容接口 |
-| Embedding | BGE-small-zh-v1.5 |
+| Embedding | 默认 BGE-small-zh-v1.5（可替换） |
 | 检索 | Milvus Lite、BM25、RRF |
 | 会话存储 | Redis，可自动降级到 SQLite |
+| 领域适配 | `DOMAIN_PROFILE` + `data/profiles/*.yaml`（默认 general；航空设 aviation_phm） |
 | 前端 | Vue 3、Vite、TypeScript、Pinia |
 
 ## 工作流程
@@ -94,11 +98,15 @@ LLM_MODEL=qwen3:14b
 LLM_TEMPERATURE=0.0
 LLM_MAX_TOKENS=4096
 
-# Embedding
+# Embedding（默认模型；可替换，换模型/维度后须重建 collection）
 EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
 EMBEDDING_MODEL_PATH=models/local_models/bge-small-zh-v1.5
 EMBEDDING_DIMENSION=512
 EMBEDDING_DEVICE=cpu
+
+# 领域 profile（默认 general 领域无关；航空排故场景设 aviation_phm）
+# 新增领域：在 data/profiles/ 下新增 <name>.yaml 即可，无需改代码。
+DOMAIN_PROFILE=general
 ```
 
 完整配置与说明见 `.env.example`。
@@ -317,6 +325,7 @@ location /rag/ {
 | `EMBEDDING_DIMENSION` | `512` | Embedding 输出向量维度 |
 | `EMBEDDING_DEVICE` | `cpu` | Embedding 运行设备，例如 `cpu`、`cuda` |
 | `EMBEDDING_NORMALIZE` | `true` | 是否归一化 Embedding 向量 |
+| `DOMAIN_PROFILE` | `general` | 领域 profile（`data/profiles/<name>.yaml`）；默认领域无关，航空排故设 `aviation_phm` |
 | `EMBEDDING_BATCH_SIZE` | `8` | Embedding 编码批大小 |
 | `RERANKER_ENABLED` | `false` | 是否在 RRF 融合后启用 Cross-Encoder 重排序 |
 | `RERANKER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | 可选重排序模型 |
@@ -428,8 +437,8 @@ uv run python scripts/download_reranker.py
 避免首个检索请求承担模型加载耗时。
 
 默认 `cross-encoder/ms-marco-MiniLM-L-6-v2` 体积较小，但主要面向英文检索。
-中文 PHM 场景建议评估中文或多语言 Reranker，例如 `BAAI/bge-reranker-base`，
-再根据显存、延迟和检索效果决定是否切换。
+中文场景（如航空 PHM、通用中文知识库）建议评估中文或多语言 Reranker，
+例如 `BAAI/bge-reranker-base`，再根据显存、延迟和检索效果决定是否切换。
 
 Cross-Encoder 会增加检索延迟和内存占用，因此默认关闭。启用后，检索 API
 会返回：

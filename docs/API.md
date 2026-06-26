@@ -145,7 +145,7 @@ POST /api/chat
 | `processing_time_ms` | float | 总处理耗时（毫秒） |
 | `metadata.route` | string | 路由类型：`rag` / `general_chat` / `fast` |
 | `metadata.prompt_profile` | string | Prompt 配置标识 |
-| `metadata.diagnosis` | PHMDiagnosis \| null | PHM 结构化诊断数据（仅 RAG 模式） |
+| `metadata.diagnosis` | StructuredAnswer \| null | 结构化回答数据（仅当 active profile 定义了 `section_template` 时返回；如航空 PHM 的诊断结构。`PHMDiagnosis` 为向后兼容别名） |
 
 **`metadata.route` 取值说明：**
 
@@ -414,7 +414,8 @@ DELETE /api/chat/session/{session_id}
 GET /api/chat/prompt-status
 ```
 
-用于集成方验证当前加载的 Prompt 配置版本。
+用于集成方验证当前加载的 Prompt 配置版本。`prompt_profile` 与 preview 内容随 active
+profile 变化（默认 `general`；以下示例为 `DOMAIN_PROFILE=aviation_phm` 下的取值）。
 
 #### 响应体
 
@@ -1231,7 +1232,7 @@ interface ChatResponse {
     intent_confidence: number
     intent_reasoning: string
     source_count: number
-    diagnosis: PHMDiagnosis | null
+    diagnosis: StructuredAnswer | null
     route: "rag" | "general_chat" | "fast" | "degraded"
     prompt_profile: string
     force_rag: boolean
@@ -1253,10 +1254,16 @@ interface SourceDocument {
 }
 ```
 
-### PHMDiagnosis
+### StructuredAnswer
+
+结构化回答。字段名通用；active profile 的 `section_template` 标签按位置填入
+（如航空 PHM 的「诊断结论/可能原因/排查步骤/风险与安全提示/依据来源/信息缺口」）。
+profile 无 section 模板时（如默认 general），后端返回 `diagnosis: null`，回答为自由文本。
+
+> 向后兼容：`PHMDiagnosis` 是 `StructuredAnswer` 的类型别名（历史命名）。
 
 ```typescript
-interface PHMDiagnosis {
+interface StructuredAnswer {
   conclusion: string
   possible_causes: string[]
   troubleshooting_steps: string[]
@@ -1264,6 +1271,7 @@ interface PHMDiagnosis {
   evidence_sources: string[]
   info_gaps: string
 }
+// type PHMDiagnosis = StructuredAnswer  // 向后兼容别名
 ```
 
 ### DocumentInfo

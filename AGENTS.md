@@ -86,7 +86,7 @@ python -c "import api.main; print('OK')"
 
 ## 4. Architecture Overview
 
-企业级 RAG 智能平台（航空 PHM 故障诊断），**Harness + Skills + MCP** 架构，FastAPI + LangGraph + Qwen3:14b（Ollama）+ Milvus Lite + BGE-small-zh-v1.5，面向内网/离线/气隙部署。
+企业级**领域自适应** RAG 智能平台（首发航空 PHM 故障诊断，现已通用化，默认领域无关；按 `DOMAIN_PROFILE` 切换/新增领域），**Harness + Skills + MCP** 架构，FastAPI + LangGraph + Qwen3:14b（Ollama）+ Milvus Lite + 可替换 Embedding（默认 BGE-small-zh-v1.5），面向内网/离线/气隙部署。
 
 ```
 agent/      # 编排层：harness/skills/context/mcp/eval/guardrails/feedback/memory/metrics
@@ -124,9 +124,9 @@ data/       # 运行时 SQLite（sessions/inferences/candidates/eval/judge_cache
 
 ## 6. Conventions
 
-- **语言策略**：代码注释与 prompt 用中文（PHM 领域）；变量名与 docstring 用英文。文档元语言：章节标题/不变量名/表头/命令用英文，叙述用中文。
+- **语言策略**：代码注释与 prompt 用中文（领域无关）；变量名与 docstring 用英文。文档元语言：章节标题/不变量名/表头/命令用英文，叙述用中文。
 - **不过度注释**：除非 WHY 不明显，否则不加注释。**代码无 emoji**。
-- **Prompt 单一来源**：`core/prompts/aircraft_prompts.py` 是事实来源；技能级 `prompts.py` 仅 re-export；`api/main.py` 启动记录 prompt sha1 签名（改 prompt 后重算）。
+- **Prompt 单一来源**：`core/prompts/domain_profile.py` 的 `DomainProfile` + `data/profiles/<name>.yaml` 是事实来源；`core/prompts/profile_prompts.py` 为向后兼容入口（从 active profile 派生常量）；技能级 `prompts.py` 仅 re-export；`api/main.py` 启动记录 prompt sha1 签名（改 prompt 后重算）。切换/新增领域：env `DOMAIN_PROFILE` + `data/profiles/` 新增 yaml，无需改代码。
 - **持久化契约**：新建持久化**必须暴露模块级路径属性**，否则 `tests/conftest.py` 无法重定向到 `tmp_path`（测试密封性）。
 
 ---
@@ -181,7 +181,7 @@ data/       # 运行时 SQLite（sessions/inferences/candidates/eval/judge_cache
 详见 `docs/specs/prompts/`（`README.md` / `critic.md` / `defender.md` / `tracking.md`）。
 - **严重性量表**：Critical/High/Medium/Low 双轴定义（影响维度 + 触发维度），见 `critic.md` §2。
 - **发现 schema**：8 字段（id/severity/location/symptom/impact/root_cause/recommendation/verification/status）。
-- **FMEA 模式**（航空 PHM 默认，ARP4761 S×O×D=RPN）+ **STRIDE 模式**（安全基线变更）。
+- **FMEA 模式**（适用于故障诊断类领域，如航空 PHM；ARP4761 S×O×D=RPN）+ **STRIDE 模式**（安全基线变更）。
 - **闭环追踪**：`tracking.md` 矩阵，Critical/High 必须 4 列全填才能 `closed`；回归测试永久固化防回归。
 - **辩护者决策树**：事实?→可触发?→成本vs影响?→范围内?→等价替代?，反谄媚反护短。
 

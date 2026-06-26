@@ -82,7 +82,7 @@ retrieve -> generate  (/no_think)
 ## 5. Adding a New Skill
 
 1. 新建 `agent/skills/<name>/skill.py`，继承 `BaseSkill`，实现 `execute()` + `aexecute()`。
-2. 设置 `name` 与 `description` 类属性；放可选 `prompts.py`（从 `core/prompts/aircraft_prompts.py` re-export）/`config.yaml`/`README.md`。
+2. 设置 `name` 与 `description` 类属性；放可选 `prompts.py`（从 `core/prompts/profile_prompts.py` re-export）/`config.yaml`/`README.md`。
 3. 在 `AgentHarness.register_defaults()` 注册，或在 `orchestrator.build_graph()` 里接线。
 4. 跨节点数据**只能**通过 `shared_state`（遵守 §2.1 键契约）。
 5. 热路径失败**必须**降级（降级矩阵见 `core/AGENTS.md`）。
