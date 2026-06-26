@@ -59,12 +59,12 @@
               <path d="M2 12L12 17L22 12"/>
             </svg>
           </div>
-          <h3>欢迎使用航空排故智能问答系统</h3>
-          <p>基于航空知识库的智能检索与故障诊断问答，支持多种文档格式。</p>
+          <h3>欢迎使用智能知识问答系统</h3>
+          <p>基于已上传知识库的智能检索与问答，支持多种文档格式。</p>
           <div class="quick-actions">
-            <button class="quick-btn" @click="askQuestion('发动机振动异常如何排查？')" data-testid="quick-q-1">发动机振动排查</button>
-            <button class="quick-btn" @click="askQuestion('液压系统压力低的排故流程是什么？')" data-testid="quick-q-2">液压系统排故</button>
-            <button class="quick-btn" @click="askQuestion('航电系统故障代码如何查询？')" data-testid="quick-q-3">故障代码查询</button>
+            <button class="quick-btn" @click="askQuestion('如何上传文档到知识库？')" data-testid="quick-q-1">上传文档</button>
+            <button class="quick-btn" @click="askQuestion('支持哪些文档格式？')" data-testid="quick-q-2">文档格式</button>
+            <button class="quick-btn" @click="askQuestion('你能帮我做什么？')" data-testid="quick-q-3">系统介绍</button>
           </div>
         </div>
 
@@ -110,7 +110,7 @@
               <p v-if="getIntentLabel(msg.intent)"><strong>对话类型：</strong>{{ getIntentLabel(msg.intent) }}</p>
               <p v-if="getProfileLabel(msg.metadata?.prompt_profile)"><strong>回答模式：</strong>{{ getProfileLabel(msg.metadata?.prompt_profile) }}</p>
               <p v-if="msg.metadata?.force_rag" class="mode-note">
-                检测到 PHM 技术问题，已自动切换到知识库诊断模式。
+                检测到专业问题，已自动切换到知识库检索模式。
               </p>
               <button
                 v-if="msg.sources && msg.sources.length > 0"
@@ -125,7 +125,7 @@
               v-if="msg.role === 'assistant' && !msg.isStreaming && hasDiagnosis(msg)"
               class="diagnosis-card"
             >
-              <h4>PHM 诊断结构</h4>
+              <h4>结构化回答</h4>
               <p v-if="msg.diagnosis?.conclusion"><strong>诊断结论：</strong>{{ msg.diagnosis?.conclusion }}</p>
               <p v-if="msg.diagnosis?.safety_risks"><strong>风险提示：</strong>{{ msg.diagnosis?.safety_risks }}</p>
               <p v-if="msg.diagnosis?.info_gaps"><strong>信息缺口：</strong>{{ msg.diagnosis?.info_gaps }}</p>
@@ -437,11 +437,15 @@ function getIntentLabel(intent?: string): string {
 
 function getProfileLabel(profile?: string): string {
   if (!profile) return ''
-  if (profile === 'phm_identity_v1') return 'PHM 平台身份介绍'
-  if (profile === 'phm_general_v1') return 'PHM 通用咨询'
-  if (profile === 'phm_diagnosis_v1') return 'PHM 故障诊断'
-  if (profile === 'phm_fast_v1') return '快速检索模式'
-  return ''
+  // Domain-neutral labels derived from the profile label embedded in the tag.
+  // Works for any domain (general_v1, phm_diagnosis_v1, etc.) without
+  // hardcoding aviation strings.
+  if (profile.endsWith('_identity_v1')) return '身份介绍'
+  if (profile.endsWith('_general_v1')) return '通用咨询'
+  if (profile.endsWith('_fast_v1')) return '快速检索模式'
+  // Generate-style tags carry the domain-specific suffix (e.g. diagnosis_v1
+  // under aviation, v1 under general) — surface the configured domain name.
+  return '知识库问答'
 }
 
 function shouldShowModeCard(msg: ChatMessage): boolean {
