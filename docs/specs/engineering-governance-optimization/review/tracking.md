@@ -38,7 +38,7 @@
 | F-EG-01 | Medium | REQ-EG-007 | accepted | **implementing**（Stage 3）：audit-first 跑通（34 个 >500KB blob 全量分类），filter-repo 前精确清单已用 |
 | F-EG-02 | Medium | REQ-EG-008 | accepted | **implementing**（Stage 3）：`git bundle create` 备份（74MB，已验证，曾用于恢复 uv.lock）；执行中曾触发回滚考量 |
 | F-EG-12 | Medium | REQ-EG-008 | accepted | **implementing**（Stage 3）：sync-to-mirror 已先禁用（F-EG-19 顺序），Q1 完成后恢复 |
-| F-EG-09 | Medium | REQ-EG-013 | accepted | open（Stage 3） |
+| F-EG-09 | Medium | REQ-EG-013 | accepted | **implementing**（Stage 3）：特征化测试硬前置已补（trace_id + prompt_profile 断言加到 identity/fast/rag 三路由）；抽 `_build_metadata`/`_degraded_metadata` 合并 6 处重复 metadata dict（chat + chat_stream 各 3 路由），未改控制流；except 守卫确认无热路径 except 被删（203 基准） |
 | F-EG-10 | Medium | REQ-EG-014 | accepted | open（Stage 4） |
 | F-EG-15 | Medium | REQ-EG-007 | accepted | **implementing**（Stage 3）：4 条已合并分支（0 ahead of main）已删，无需 rebase（filter-repo 一并重写后它们已不在） |
 | F-EG-16 | Medium | REQ-EG-009/010 | accepted | open（Stage 2） |
@@ -116,6 +116,16 @@ Stage 1 验证时发现两类预存 warning，**非 Stage 1 引入、非 `|| tru
   - **结果**：`.git` **4.2GB → 2.5MB**（降 99.94%）。双 remote（origin + phm）均 force-push 至 `49f9e3d`，HEAD 一致。70 commits 保留，关键文件（pyproject/uv.lock/AGENTS.md/api/agent/spec）完整。
   - **force-push 渠道**：origin SSH 因 IP 变化触发 GitHub 风控报 "Repository not found"（`ssh -T` 成功但 git 操作被拒）；改用 **classic token (repo scope) via HTTPS** 推送成功（fine-grained token 因 Contents 权限未勾 Read-and-write 报 403 denied）。phm 经 SSH push 成功。
   - **部署影响**：safetensors（92MB）从历史移除，但 `models/local_models/` 本就 gitignored，工作树不依赖它——deploy.sh 首次运行自动下载（README:700-703 已说明"首次运行需下载约 91MB Embedding 模型"）。
+
+### Stage 3 (Q7) 实现验证记录（2026-06-26）
+
+- **Q7 chat.py 重构（F-EG-09/17）**：
+  - **特征化测试硬前置（先做）**：`test_e2e_chat.py` 已有 identity/fast/rag/refuse/stream 5 类 8 测试，覆盖 route/message_id/confidence_level/refused。补 3 处断言固化 `trace_id` + `prompt_profile`（identity/fast/rag 三路由），pre-refactor baseline = 8 passed。
+  - **抽取**：新增 `_build_metadata()` + `_degraded_metadata()` 两个 helper，合并 chat() 与 chat_stream() generate() 中 **6 处重复的 metadata dict**（identity×2、fast×2、rag×2、degraded×1）。控制流（4 路由 if/elif 分支）**未改**——本 stage 只收敛 metadata 契约，不动路由决策（`_RouteClassifier` 留待后续 stage，避免单 PR >500 行）。
+  - **行为保持**：初版 `_build_metadata` 把 trustworthiness 字段（confidence/confidence_level/refused）限定在 RAG 路由 → refuse 测试红（general_chat 路由也需 confidence_level="unknown"）。修正为所有路由都含这些字段（对齐 pre-refactor chat() 无条件加 `_confidence_level(gen_confidence)` 的行为）→ 8 passed。
+  - **except 守卫（F-EG-17）**：`git diff main -- api/routers/chat.py | grep '^-.*except Exception'` = 空（无热路径 except 被删，203 基准保持）。
+  - **规模**：+134/-78 行（api/routers/chat.py + tests/e2e/test_e2e_chat.py），远低于 §2 的 500 行上限。
+  - **验证**：8 e2e chat tests passed；`ruff check` 全过；`import api.main` OK。全量 unit+perf 因沙盒资源限制超时（非重构引入，chat 定向测试秒过）。
 
 ---
 
