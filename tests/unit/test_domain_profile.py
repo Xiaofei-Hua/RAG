@@ -233,8 +233,8 @@ class TestProfileDrivenBehaviour:
         assert ig._check_topic("发动机振动异常").action.value == "allow"
 
     def test_input_guardrail_general_allows_everything(self, monkeypatch):
-        from core.prompts.domain_profile import reset_active_profile
         from agent.guardrails.input_guardrails import InputGuardrail
+        from core.prompts.domain_profile import reset_active_profile
 
         reset_active_profile()
         monkeypatch.setenv("DOMAIN_PROFILE", "general")
@@ -289,8 +289,8 @@ class TestResidualConsumersGeneral:
         assert any("诊断结论" in e.content for e in entries)
 
     def test_hyde_prompt_neutral_under_general(self, monkeypatch):
-        from core.retrieval.query_transform import _hyde_prompt_template
         from core.prompts.domain_profile import reset_active_profile
+        from core.retrieval.query_transform import _hyde_prompt_template
 
         reset_active_profile()
         monkeypatch.setenv("DOMAIN_PROFILE", "general")
@@ -299,8 +299,8 @@ class TestResidualConsumersGeneral:
         assert "诊断" not in tmpl
 
     def test_multi_query_prompt_neutral_under_general(self, monkeypatch):
-        from core.retrieval.query_transform import _multi_query_prompt_template
         from core.prompts.domain_profile import reset_active_profile
+        from core.retrieval.query_transform import _multi_query_prompt_template
 
         reset_active_profile()
         monkeypatch.setenv("DOMAIN_PROFILE", "general")
@@ -320,8 +320,8 @@ class TestResidualConsumersGeneral:
         assert "排故" not in retrieve["description"]
 
     def test_bm25_normalize_ata_only_under_aviation(self, monkeypatch):
-        from core.retrieval.bm25_retriever import BM25Retriever
         from core.prompts.domain_profile import reset_active_profile
+        from core.retrieval.bm25_retriever import BM25Retriever
 
         reset_active_profile()
         # Aviation: ATA forms unified.
