@@ -22,8 +22,8 @@
 |---------|--------|----------|---------------|----------------|-------------|----------|--------------|------|
 | F-EG-03 | High | REQ-EG-002 | accepted | §1 | (Stage 1 implemented, pending commit) | 本地 `grep '|| true' tests.yml` 仅余注释与 Issue upsert 容错（非测试掩盖）；轨 A 收紧为 `tests/unit/ tests/e2e/` | 待 Stage 1 PR 提交后固化 `tests/regression/test_no_or_true_in_ci.py` | **implementing** |
 | F-EG-04 | High | REQ-EG-002 | accepted | §1 两步迁移 | (Stage 1 step1-2 done) | 探测命令 `pytest tests/unit/ tests/perf/ -m "not requires_ollama and not requires_backend"` = 462 passed 0 failed（**无被掩盖失败**），故 step2 修复跳过 | （同上） | **implementing** |
-| F-EG-05 | High | REQ-EG-009/010 | accepted | §4 | (pending Stage 2) | `coverage report` 基线 B 落盘 | `tests/regression/test_coverage_gate.py` | **open** |
-| F-EG-07 | High | REQ-EG-011 | accepted | §5 | (pending Stage 2) | monkeypatch astream 死循环 → ≤30s 超时 fail | `tests/regression/test_no_ci_hang.py` | **open** |
+| F-EG-05 | High | REQ-EG-009/010 | accepted | §4 | (Stage 2 implemented, pending commit) | 本地基线 B=60% 落盘；`fail_under=60`（基线值）；CI coverage 接入（unit+e2e 分步报错）；禁 pragma | 待 Stage 2 PR 提交后固化 `tests/regression/test_coverage_gate.py` | **implementing** |
+| F-EG-07 | High | REQ-EG-011 | accepted | §5 | (Stage 2 implemented, pending commit) | 三处修复：test_e2e_chat.py SSE 改 daemon thread + `Event.wait(timeout=30)`；test_stage23.py + test_retrieval_concurrency.py 改 `t.join(timeout=10)` + `assert not is_alive()` | 待固化 `tests/regression/test_no_ci_hang.py` | **implementing** |
 | H-21 | High | REQ-EG-004 | accepted | §2.1 step 3 | (pending Stage 1) | env-canary 探 Ollama + 分流 label | `tests/regression/test_env_canary_split.py` | **open** |
 | H-22 | High | REQ-EG-004 | accepted | §2.1 step 5 | (pending Stage 1) | 失败时强制 Issue（非邮件） | `tests/regression/test_mandatory_issue_alert.py` | **open** |
 | H-NEW-1 | High | REQ-EG-004 | accepted | §2.1 step 3 | (pending Stage 1) | canary `id:` + `steps.env-canary.outcome` | （合入 H-21 回归） | **open** |
@@ -42,7 +42,7 @@
 | F-EG-15 | Medium | REQ-EG-007 | accepted | open（Stage 3） |
 | F-EG-16 | Medium | REQ-EG-009/010 | accepted | open（Stage 2） |
 | F-EG-17 | Medium | REQ-EG-013 | accepted | open（Stage 3） |
-| F-EG-18 | Medium | REQ-EG-012 | accepted | open（Stage 2） |
+| F-EG-18 | Medium | REQ-EG-012 | accepted | open（Stage 2）→ **implementing**：benchmark step 加 `timeout-minutes: 5`（解决 hang）；保留 PR（M-NEW-3：保留召回拦截，注释声明与 rule-based eval 不等价） |
 | F-EG-19 | Medium | REQ-EG-008 | accepted | open（Stage 3） |
 | M-NEW-1 | Medium | REQ-EG-004 | accepted | open（Stage 1） |
 | M-NEW-3 | Medium | REQ-EG-012 | accepted | open（Stage 2） |
@@ -95,6 +95,14 @@
 Stage 1 验证时发现两类预存 warning，**非 Stage 1 引入、非 `|| true` 掩盖**，记录为独立债务（不阻塞 Stage 1）：
 1. **`UserWarning: pkg_resources is deprecated`**（jieba → pkg_resources）：在 `-W error` 全严格模式下会 fail 12 用例；但当前 pyproject `filterwarnings = ["error::ResourceWarning", "default"]` 下为 default（不 fail）。修法：pin `setuptools<81` 或升级 jieba。
 2. **延迟 GC 的 `ResourceWarning: unclosed sqlite`**（test_checkpoint_serde_compat 触发）：因连接在前序测试泄漏、后续测试 GC 回收，pytest 无法归因到当前测试，故 `filterwarnings=error::ResourceWarning` 不触发。修法：在产生连接的测试加 `conftest` 级 fixture 显式 close。
+
+### Stage 2 实现验证记录（2026-06-26）
+
+- **Q3 coverage（F-EG-05）**：本地基线测量 `coverage run --branch -m pytest tests/unit/ tests/perf/ tests/e2e/ -m "not requires_ollama and not requires_backend"` = **TOTAL 60%**（9667 语句，3530 未覆盖）。主因：mock-based e2e 不覆盖 skills execute 真实 LLM 路径（grade 30%/rewrite 30%/retrieve 49%/generate 56%）+ 冷路径模块（markdown_parser 0%/redis 24%）需真实文件/OCR。决策：`fail_under=60`（基线值，防回归下滑），提升到 80 需先闭合 KNOWN-GAP-1。`coverage` 加为 `[project.optional-dependencies] dev`。CI 接入：unit+e2e 各自 `coverage run --branch --append`，独立 `coverage report --fail-under=60` step（分层报错）。
+- **Q5 超时护栏（F-EG-07）**：三处修复——test_e2e_chat.py SSE 消费改 daemon thread + `Event.wait(timeout=30)`（anyio.fail_after 无法取消同步阻塞 I/O，故用 thread join 语义；注释说明）；test_stage23.py:456 + test_retrieval_concurrency.py:132 改 `t.join(timeout=10)` + `assert not t.is_alive()`。验证：32 passed（护栏在正常行为下不触发）。
+- **Q11 benchmark gate（F-EG-18）**：benchmark step 加 `timeout-minutes: 5`（实测 cmrc ~11s + hotpot ~12s，CI 冷启动余量）。**保留在 PR**（非降 nightly）——M-NEW-3：这是 PR 上唯一走真实 Milvus+BM25 检索栈的步骤，降 nightly 会丢失召回回归拦截；rule-based eval（eval-regression.yml）跑 golden 生成质量集，不等价。
+- **完整 CI 流程模拟**：unit+perf (462 passed) → e2e (76 passed, 2 skipped) → coverage gate (60%, fail-under=60 通过) → benchmark (cmrc+hotpot 全绿)。**全流程 GREEN**。
+- **YAML 校验**：tests.yml `yaml.safe_load` 通过；`grep 'pytest.*||' tests.yml` 为空。
 
 ---
 
