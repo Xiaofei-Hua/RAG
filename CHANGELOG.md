@@ -7,6 +7,68 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+No changes yet.
+
+## [0.1.0] - 2026-06-27
+
+First tagged release. Consolidates the domain-adaptive refactor, the
+retrieval/faithfulness/recall quality work, the Chinese retrieval stack, and
+the engineering-governance hardening batch. See the linked specs for design +
+adversarial-review records.
+
+### Changed — engineering governance hardening (`engineering-governance-optimization`)
+
+A cross-cutting batch of CI / repo-hygiene / test-discipline / tooling fixes,
+each driven by an adversarial critic+defender review (7 rounds, see
+`docs/specs/engineering-governance-optimization/`).
+
+- **CI gate now fails on test errors**: removed the `|| true` mask on the
+  unit+perf step and merged the two duplicate `pytest` invocations into one
+  fail-on-error call (verified locally: 462 passed, 0 failures were masked).
+- **`backend-nightly` is no longer a dead job**: it was guarded by
+  `if: github.event_name == 'schedule'` but the workflow had no schedule
+  trigger, so it never ran. Added `workflow_dispatch` + a gated `if` (NOT a
+  ternary `runs-on`) so it can be triggered manually; a schedule cron is
+  intentionally not added yet (nightly activation is tracked as
+  `issue-KNOWN-GAP-1` in `review/tracking.md`).
+- **Mandatory nightly-failure alerting**: `backend-nightly` now runs an
+  `env-canary` (probes Ollama + the configured model) before tests and opens a
+  GitHub Issue on failure, upserting by label (`runner-env-not-ready` vs
+  `nightly-regression`) so the alert lands in-repo rather than a single
+  author's email. backend-nightly is NOT a PR required-check.
+- **Coverage gate (non-blocking baseline)**: `fail_under` lowered from 80 to
+  60 = the real baseline (mock-based e2e cannot cover real-LLM paths); CI now
+  runs `coverage run` + a separate `coverage report --fail-under=60` step so a
+  test failure and a coverage regression surface distinctly.
+- **Test hang guards**: the SSE-streaming e2e test and two threading unit
+  tests had no timeout; a hung generator / deadlocked thread would block CI
+  until the 6h ceiling. SSE now consumes on a daemon thread with
+  `Event.wait(30)`; the joins use `timeout=10` + `assert not is_alive()`.
+- **Benchmark gate bounded**: the per-PR retrieval benchmark step (cold-ingests
+  the corpus into Milvus Lite) now has `timeout-minutes: 5`. Kept on the PR
+  (not demoted to nightly) — it is the only PR step exercising the real
+  retrieval stack.
+- **chat.py metadata dedup**: extracted `_build_metadata()` to consolidate 6
+  near-identical per-route metadata dicts across `chat()` and `chat_stream()`.
+  Behavior-preserving; characterization tests pin trace_id / prompt_profile /
+  route / confidence_level / refused.
+- **Repo slimmed**: `git filter-repo` purged `web/node_modules/`,
+  `models/local_models/`, `data/*.db`, and historical `uv.lock` from git
+  history — `.git` went from 4.2 GB to ~2.5 MB. The 92 MB embedding
+  `safetensors` is now downloaded by `deploy.sh` on first run (it was already
+  gitignored at HEAD).
+- **mypy + eslint enablement (non-blocking)**: mypy added with a conservative
+  `exclude` list and a `continue-on-error` CI step; eslint v9 flat config added
+  for `web/` with `eslint-plugin-vue` + `typescript-eslint`, and the broken
+  `lint` script (`--ext` is removed in v9) fixed. Both report-only for now.
+- **time.sleep(20) → poll**: the script-style tests/api + tests/integration
+  tests now poll document status until indexed/failed instead of a fixed 20 s
+  sleep.
+- **KNOWN-GAP-1**: real-backend HTTP full-chain regression (upload→chat→
+  stream→session→hybrid retrieval) is still not exercised in CI; it needs a
+  uvicorn + Milvus warmup step on the self-hosted runner. Registered as an
+  open backlog item with explicit Stage-2 acceptance criteria.
+
 ### Changed — all-domain completion (`domain-adaptive-completion`)
 
 The platform is now domain-agnostic by default. The domain-adaptive
