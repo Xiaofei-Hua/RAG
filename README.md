@@ -102,7 +102,7 @@ LLM_MAX_TOKENS=4096
 EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
 EMBEDDING_MODEL_PATH=models/local_models/bge-small-zh-v1.5
 EMBEDDING_DIMENSION=512
-EMBEDDING_DEVICE=cpu
+EMBEDDING_DEVICE=auto
 
 # 领域 profile（默认 general 领域无关；航空排故场景设 aviation_phm）
 # 新增领域：在 data/profiles/ 下新增 <name>.yaml 即可，无需改代码。
@@ -323,14 +323,14 @@ location /rag/ {
 | `EMBEDDING_MODEL` | `BAAI/bge-small-zh-v1.5` | Hugging Face Embedding 模型 ID |
 | `EMBEDDING_MODEL_PATH` | `models/local_models/bge-small-zh-v1.5` | Embedding 本地缓存路径 |
 | `EMBEDDING_DIMENSION` | `512` | Embedding 输出向量维度 |
-| `EMBEDDING_DEVICE` | `cpu` | Embedding 运行设备，例如 `cpu`、`cuda` |
+| `EMBEDDING_DEVICE` | `auto` | Embedding 运行设备；`auto` 自动探测（CUDA 可用且 wheel 含本机 sm_xx 时用 `cuda`，否则 `cpu`），也可显式设 `cpu`/`cuda` |
 | `EMBEDDING_NORMALIZE` | `true` | 是否归一化 Embedding 向量 |
 | `DOMAIN_PROFILE` | `general` | 领域 profile（`data/profiles/<name>.yaml`）；默认领域无关，航空排故设 `aviation_phm` |
 | `EMBEDDING_BATCH_SIZE` | `8` | Embedding 编码批大小 |
-| `RERANKER_ENABLED` | `false` | 是否在 RRF 融合后启用 Cross-Encoder 重排序 |
-| `RERANKER_MODEL` | `cross-encoder/ms-marco-MiniLM-L-6-v2` | 可选重排序模型 |
-| `RERANKER_MODEL_PATH` | `models/local_models/reranker/ms-marco-MiniLM-L-6-v2` | 可选本地模型目录，配置且存在时优先于模型 ID |
-| `RERANKER_DEVICE` | `cpu` | Reranker 运行设备，例如 `cpu`、`cuda` |
+| `RERANKER_ENABLED` | `true` | 是否在 RRF 融合后启用 Cross-Encoder 重排序（默认开启；设 `false` 关闭） |
+| `RERANKER_MODEL` | `BAAI/bge-reranker-v2-m3` | 重排序模型（多语言 cross-encoder） |
+| `RERANKER_MODEL_PATH` | `models/local_models/reranker/bge-reranker-v2-m3` | 本地模型目录，存在时优先于模型 ID 加载（气隙自洽） |
+| `RERANKER_DEVICE` | `auto` | Reranker 运行设备；`auto` 自动探测，也可显式设 `cpu`/`cuda` |
 | `RERANKER_WARMUP` | `false` | 是否在服务启动时加载 Reranker |
 | `RERANKER_CANDIDATE_TOP_K` | `10` | Dense 与 BM25 各自送入 RRF 的候选数 |
 | `RERANKER_TOP_K` | `5` | 调用方未指定 `top_k` 时的最终默认结果数 |
@@ -403,21 +403,24 @@ uv run python documents/milvus_db.py --action create --drop
 然后重新启动服务并上传文档。使用 `./run.sh` 或 `deploy.sh` 时，脚本会按照
 当前 `.env` 自动下载配置的 Embedding 模型到本地路径。
 
-### 启用两阶段重排序
+### 两阶段重排序（默认开启）
 
-混合检索默认执行 Dense + BM25 召回和 RRF 融合。需要进一步提高最终排序精度时，
-可以启用 Cross-Encoder 对融合候选文档进行第二阶段重排序：
+混合检索执行 Dense + BM25 召回和 RRF 融合后，默认再用 Cross-Encoder 对融合候选文档
+进行第二阶段重排序，提升最终排序精度。默认配置如下（无需手动设置即可生效）：
 
 ```dotenv
 RERANKER_ENABLED=true
-RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2
-RERANKER_MODEL_PATH=models/local_models/reranker/ms-marco-MiniLM-L-6-v2
-RERANKER_DEVICE=cpu
+RERANKER_MODEL=BAAI/bge-reranker-v2-m3
+RERANKER_MODEL_PATH=models/local_models/reranker/bge-reranker-v2-m3
+RERANKER_DEVICE=auto
 RERANKER_WARMUP=false
 RERANKER_CANDIDATE_TOP_K=10
 RERANKER_TOP_K=5
 RERANKER_BATCH_SIZE=8
 ```
+
+`RERANKER_DEVICE=auto` 会在 CUDA 可用且安装的 torch wheel 含本机 GPU 的
+`sm_xx` kernel 时自动用 GPU，否则用 CPU（无需为 GPU/无 GPU 环境分别配置）。
 
 `deploy.sh` 和 `scripts/download_reranker.py` 会把模型保存到
 `RERANKER_MODEL_PATH`，便于离线运行。若该路径为空且只使用 Hugging Face 模型 ID，
@@ -436,12 +439,13 @@ uv run python scripts/download_reranker.py
 配置 `RERANKER_WARMUP=true` 后，服务启动时会加载模型，
 避免首个检索请求承担模型加载耗时。
 
-默认 `cross-encoder/ms-marco-MiniLM-L-6-v2` 体积较小，但主要面向英文检索。
-中文场景（如航空 PHM、通用中文知识库）建议评估中文或多语言 Reranker，
-例如 `BAAI/bge-reranker-base`，再根据显存、延迟和检索效果决定是否切换。
+默认 `BAAI/bge-reranker-v2-m3` 是多语言 cross-encoder，对中文（航空 PHM、通用中文
+知识库）和英文均有效。如需降低资源占用，可改用更轻量的模型（例如
+`cross-encoder/ms-marco-MiniLM-L-6-v2`，但主要面向英文），再根据显存、延迟和检索
+效果决定是否切换。
 
-Cross-Encoder 会增加检索延迟和内存占用，因此默认关闭。启用后，检索 API
-会返回：
+Cross-Encoder 会增加检索延迟和内存占用，如需关闭设 `RERANKER_ENABLED=false`。
+启用后（默认），检索 API 会返回：
 
 - `retrieval_score`：RRF 融合后的召回分数
 - `rerank_score`：Cross-Encoder 相关性分数

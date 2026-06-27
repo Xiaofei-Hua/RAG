@@ -40,6 +40,36 @@ def _get_path(name: str, default: str) -> str:
     return str(path.resolve())
 
 
+def _detect_device() -> str:
+    """Resolve 'auto' to a concrete torch device. cuda only when the installed
+    wheel actually ships a kernel for this GPU's compute capability — else a
+    cu126 wheel on sm_120 (RTX 50-series) silently fails with
+    cudaErrorNoKernelImageForDevice. Mirrors
+    tests/e2e/test_e2e_coverage.py:_gpu_kernel_supported so probe + skip agree.
+    Any failure degrades silently to cpu (never raises).
+    """
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            cap = torch.cuda.get_device_capability(0)
+            if f"sm_{cap[0]}{cap[1]}" in torch.cuda.get_arch_list():
+                return "cuda"
+    except Exception:  # noqa: BLE001 — probe MUST degrade silently
+        pass
+    return "cpu"
+
+
+def _resolve_device(name: str, default: str) -> str:
+    """Read a device env var; resolve 'auto' to cuda/cpu. The exported value is
+    always a concrete device (cuda/cpu), never the literal 'auto', so downstream
+    device= consumers (HuggingFaceEmbeddings, CrossEncoder) need no changes."""
+    value = os.getenv(name, default)
+    if value.strip().lower() == "auto":
+        return _detect_device()
+    return value
+
+
 # LLM: any OpenAI-compatible endpoint.
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "http://localhost:11434/v1")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "ollama")
@@ -53,15 +83,18 @@ LLM_MAX_RETRIES = _get_int("LLM_MAX_RETRIES", 1)
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5")
 EMBEDDING_MODEL_PATH = _get_path("EMBEDDING_MODEL_PATH", "models/local_models/bge-small-zh-v1.5")
 EMBEDDING_DIMENSION = _get_int("EMBEDDING_DIMENSION", 512)
-EMBEDDING_DEVICE = os.getenv("EMBEDDING_DEVICE", "cpu")
+EMBEDDING_DEVICE = _resolve_device("EMBEDDING_DEVICE", "auto")
 EMBEDDING_NORMALIZE = _get_bool("EMBEDDING_NORMALIZE", True)
 EMBEDDING_BATCH_SIZE = _get_int("EMBEDDING_BATCH_SIZE", 8)
 
-# Optional cross-encoder reranker.
-RERANKER_ENABLED = _get_bool("RERANKER_ENABLED", False)
-RERANKER_MODEL = os.getenv("RERANKER_MODEL", "cross-encoder/ms-marco-MiniLM-L-6-v2")
-RERANKER_MODEL_PATH = _get_path("RERANKER_MODEL_PATH", "")
-RERANKER_DEVICE = os.getenv("RERANKER_DEVICE", "cpu")
+# Optional cross-encoder reranker. Default on (REQ-RD-001): a Chinese-capable
+# cross-encoder is part of the shipped retrieval stack, not an opt-in extra.
+# The default model is the local bge-reranker-v2-m3 directory so air-gapped
+# deploys load from disk instead of hitting Hugging Face (REQ-RD-002/003).
+RERANKER_ENABLED = _get_bool("RERANKER_ENABLED", True)
+RERANKER_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
+RERANKER_MODEL_PATH = _get_path("RERANKER_MODEL_PATH", "models/local_models/reranker/bge-reranker-v2-m3")
+RERANKER_DEVICE = _resolve_device("RERANKER_DEVICE", "auto")
 RERANKER_WARMUP = _get_bool("RERANKER_WARMUP", False)
 RERANKER_CANDIDATE_TOP_K = _get_int("RERANKER_CANDIDATE_TOP_K", 10)
 RERANKER_TOP_K = _get_int("RERANKER_TOP_K", 5)

@@ -242,7 +242,7 @@ sudo ./deploy.sh --build-offline-bundle
 
 **BM25 参数**：k1=1.5, b=0.75
 
-**重排序器**：cross-encoder/ms-marco-MiniLM-L-6-v2（可选，Top-5）
+**重排序器**：cross-encoder/ms-marco-MiniLM-L-6-v2（Top-5，本次 baseline 测量时的配置；当前默认已切换为 `BAAI/bge-reranker-v2-m3` 并默认开启）
 
 ### 4.4 检索性能实测
 
@@ -569,7 +569,7 @@ generate），并发 1：
 
 - **升级 Embedding**：bge-small-zh-v1.5（512维）→ bge-large-zh-v1.5（1024维）或 bge-m3（多语言）
 - **两阶段重排序已接入**：Dense 与 BM25 扩大候选召回，经 RRF 融合后可选 Cross-Encoder 重排序；接口保留 `retrieval_score`、`rerank_score` 和 `rerank_applied` 便于排障
-- **中文 Reranker 选型**：默认 MiniLM 模型轻量但主要面向英文，中文 PHM 场景应评估 `BAAI/bge-reranker-base` 等中文或多语言模型
+- **中文 Reranker 选型**：默认已采用 `BAAI/bge-reranker-v2-m3`（多语言 cross-encoder，默认开启且优先 GPU），对中文 PHM 与通用中文语料均有效；如需进一步降低资源占用可评估更轻量的 reranker
 - **增大上下文窗口**：当前 2,500 字符截断偏小，建议提升至 4,000-6,000 字符
 - **优化 BM25**：当前 BM25 召回为 0（中文分词未生效），需引入 jieba 分词
 

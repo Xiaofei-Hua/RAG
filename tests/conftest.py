@@ -502,8 +502,11 @@ def client(tmp_data_dir, fake_llm, fake_retriever, fake_harness, fake_session_me
     from fastapi.testclient import TestClient
 
     # Patch the lifespan startup path: make get_agent_harness().astart a no-op
-    # and avoid reranker warmup by disabling it.
+    # and avoid reranker warmup by disabling it. Also force RERANKER_ENABLED off
+    # so the in-process E2E suite stays deterministic and never touches the real
+    # reranker model path (the default flipped to ON in reranker-default-on).
     monkeypatch.setattr("utils.env_utils.RERANKER_WARMUP", False)
+    monkeypatch.setattr("utils.env_utils.RERANKER_ENABLED", False)
 
     # When ADMIN_API_KEY is configured (e.g. loaded from a local .env), admin
     # endpoints gated by require_admin need a matching X-Admin-Key header. Give

@@ -310,15 +310,16 @@ LLM_MAX_RETRIES=1
 EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
 EMBEDDING_MODEL_PATH=models/local_models/bge-small-zh-v1.5
 EMBEDDING_DIMENSION=512
-EMBEDDING_DEVICE=cpu
+EMBEDDING_DEVICE=auto
 EMBEDDING_NORMALIZE=true
 EMBEDDING_BATCH_SIZE=8
 
-# Optional Reranker Configuration
-RERANKER_ENABLED=false
+# Reranker Configuration (default ON). DEVICE=auto picks cuda when the torch
+# wheel has a kernel for this GPU, else cpu.
+RERANKER_ENABLED=true
 RERANKER_MODEL=BAAI/bge-reranker-v2-m3
 RERANKER_MODEL_PATH=models/local_models/reranker/bge-reranker-v2-m3
-RERANKER_DEVICE=cpu
+RERANKER_DEVICE=auto
 RERANKER_WARMUP=false
 RERANKER_CANDIDATE_TOP_K=10
 RERANKER_TOP_K=5
@@ -502,7 +503,7 @@ if [ "$BUILD_OFFLINE_BUNDLE" = true ]; then
     chmod +x "$STAGING_DIR/install_offline.sh"
 
     info "生成离线 .env"
-    RERANKER_BUNDLE_PATH="${RERANKER_MODEL_PATH:-models/local_models/reranker/$(sanitize_model_name "${RERANKER_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}")}"
+    RERANKER_BUNDLE_PATH="${RERANKER_MODEL_PATH:-models/local_models/reranker/$(sanitize_model_name "${RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}")}"
     cat > "$STAGING_DIR/env.offline" << ENVEOF
 # Offline bundle configuration
 OPENAI_BASE_URL=http://localhost:11434/v1
@@ -516,14 +517,14 @@ LLM_MAX_RETRIES=${LLM_MAX_RETRIES:-1}
 EMBEDDING_MODEL=${EMBEDDING_MODEL:-BAAI/bge-small-zh-v1.5}
 EMBEDDING_MODEL_PATH=${EMBEDDING_MODEL_PATH:-models/local_models/bge-small-zh-v1.5}
 EMBEDDING_DIMENSION=${EMBEDDING_DIMENSION:-512}
-EMBEDDING_DEVICE=${EMBEDDING_DEVICE:-cpu}
+EMBEDDING_DEVICE=${EMBEDDING_DEVICE:-auto}
 EMBEDDING_NORMALIZE=${EMBEDDING_NORMALIZE:-true}
 EMBEDDING_BATCH_SIZE=${EMBEDDING_BATCH_SIZE:-8}
 
-RERANKER_ENABLED=${RERANKER_ENABLED:-false}
-RERANKER_MODEL=${RERANKER_MODEL:-cross-encoder/ms-marco-MiniLM-L-6-v2}
+RERANKER_ENABLED=${RERANKER_ENABLED:-true}
+RERANKER_MODEL=${RERANKER_MODEL:-BAAI/bge-reranker-v2-m3}
 RERANKER_MODEL_PATH=$RERANKER_BUNDLE_PATH
-RERANKER_DEVICE=${RERANKER_DEVICE:-cpu}
+RERANKER_DEVICE=${RERANKER_DEVICE:-auto}
 RERANKER_WARMUP=${RERANKER_WARMUP:-false}
 RERANKER_CANDIDATE_TOP_K=${RERANKER_CANDIDATE_TOP_K:-10}
 RERANKER_TOP_K=${RERANKER_TOP_K:-5}

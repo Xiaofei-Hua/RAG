@@ -7,7 +7,39 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
-No changes yet.
+### Changed — reranker default-on + device auto-detect (`reranker-default-on`)
+
+`[breaking]` The cross-encoder reranker is now **enabled by default** and the
+embedding/reranker **device defaults to `auto`**. Previously both were opt-in
+(`RERANKER_ENABLED=false`, `EMBEDDING_DEVICE=cpu`, `RERANKER_DEVICE=cpu`,
+`RERANKER_MODEL=cross-encoder/ms-marco-MiniLM-L-6-v2`, `RERANKER_MODEL_PATH=""`).
+
+- **What changed**: `RERANKER_ENABLED` defaults to `true`; the default reranker
+  model is `BAAI/bge-reranker-v2-m3` (multilingual, Chinese-capable) loaded from
+  the shipped local path `models/local_models/reranker/bge-reranker-v2-m3`
+  (air-gapped self-contained — no network download); `EMBEDDING_DEVICE` /
+  `RERANKER_DEVICE` default to `auto`, which resolves to `cuda` when the
+  installed torch wheel actually ships a kernel for the GPU's compute capability
+  (`sm_xx` check, mirroring the e2e skip guard) and silently degrades to `cpu`
+  otherwise. The exported device is always a concrete `cuda`/`cpu`, never the
+  literal `auto`, so `device=` consumers need no changes.
+- **Why**: the reranker is part of the shipped retrieval stack, not an opt-in
+  extra — a Chinese-capable cross-encoder measurably improves final ranking
+  precision after RRF fusion, and `auto` lets GPU-equipped hosts use it by
+  default while CPU-only / air-gapped hosts stay safe. Loading from the local
+  path avoids a cold-start network download on offline deploys.
+- **How to migrate**: no action required for new deployments. Existing
+  deployments keep their current behaviour if a `.env` overrides these vars.
+  To opt out, set `RERANKER_ENABLED=false`; to force CPU, set
+  `EMBEDDING_DEVICE=cpu` and `RERANKER_DEVICE=cpu`. Note `HybridRetrieverConfig()`
+  with no args now defaults to `enable_reranker=True` with a wider candidate
+  pool (`dense/sparse_top_k=10`).
+- New regression tests pin the defaults (`test_reranker_defaults_on`) and the
+  `auto` probe logic across cuda/cpu/degrade branches (`test_auto_device_resolves`).
+  Deploy templates (`.env.example`, `deploy.sh` incl. the offline-bundle
+  `:-` fallbacks) and docs (README env table/quickstart, API.md admin/config,
+  technical report) are updated to match. See
+  `docs/specs/reranker-default-on/` for the full spec.
 
 ## [0.1.0] - 2026-06-27
 
