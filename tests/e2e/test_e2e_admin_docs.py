@@ -58,7 +58,7 @@ class TestAdminEval:
     def test_inferences_endpoint(self, client):
         # Produce an inference first.
         client.post("/api/chat", json={
-            "message": "发动机振动偏高如何诊断？",
+            "message": "git 合并冲突如何解决？",
             "session_id": "e2e-admin-inf",
             "mode": "fast",
         })
@@ -148,7 +148,7 @@ class TestDocuments:
 
         # Unique filename AND content to avoid dedup (registry persists across tests).
         token = _uuid.uuid4().hex[:8]
-        content = f"# 测试手册\n\n发动机振动诊断要点。唯一标识:{token}\n\n液压系统压力排查。"
+        content = f"# 测试文档\n\ngit 合并冲突排查要点。唯一标识:{token}\n\ndocker 部署步骤。"
         resp = client.post(
             "/api/documents/upload",
             files={"file": (f"test_{token}.md", content.encode("utf-8"), "text/markdown")},
@@ -220,7 +220,7 @@ class TestSessions:
 class TestRetrievalAPI:
     def test_hybrid_retrieval(self, client):
         resp = client.post("/api/retrieval", json={
-            "query": "振动",
+            "query": "合并",
             "top_k": 3,
         })
         # May return results or empty depending on mock; just assert it responds.

@@ -33,8 +33,8 @@ class BM25Config:
     b: float = 0.75  # Document length normalization
     top_k: int = 5  # Number of results
     # Token-length floors split by script: Chinese tokens (containing CJK) use
-    # min_token_length_zh so high-value aviation single-character terms
-    # (泵/阀/轴/桨/油) survive; English tokens use min_token_length_en to drop
+    # min_token_length_zh so high-value single-character CJK terms
+    # (e.g. 库/表/链/油) survive; English tokens use min_token_length_en to drop
     # single-letter noise. A single min_token_length would mis-handle one or
     # the other (dropping Chinese单字 at >=2, or keeping English 'a' at 1).
     min_token_length_zh: int = 1
@@ -128,14 +128,14 @@ class BM25Retriever:
     def _normalize_text(self, text: str) -> str:
         """Normalize query/document text for robust matching."""
         normalized = text.lower()
-        # Domain-specific token normalization (e.g. ATA chapter unification for
-        # aviation). Applied only when the active profile declares such
-        # patterns — a no-op for domain-agnostic profiles.
+        # Domain-specific token normalization (e.g. chapter-code unification for
+        # a domain that uses such codes). Applied only when the active profile
+        # declares such patterns — a no-op for domain-agnostic profiles.
         from core.prompts.domain_profile import get_active_profile
 
         for pattern in get_active_profile().query_patterns:
             try:
-                # Normalize ATA-style "ATA 32" / "ATA-32" -> "ata32" so the
+                # Normalize code-style "ATA 32" / "ATA-32" -> "ata32" so the
                 # token form matches across query and docs.
                 if "ata" in pattern:
                     normalized = re.sub(r"\bata[\s\-_:]*([0-9]{2})\b", r"ata\1", normalized)

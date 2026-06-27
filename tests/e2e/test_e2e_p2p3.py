@@ -107,15 +107,15 @@ class TestMemoryInjection:
         class _Ctx:
             shared_state = {
                 "relevant_memories": [
-                    {"content": "振动限值应为 4.0 IPS", "type": "correction"},
+                    {"content": "git 默认分支名应为 main", "type": "correction"},
                 ]
             }
-        docs = [Document(page_content="检索到的手册片段", metadata={"score": 0.9})]
+        docs = [Document(page_content="检索到的文档片段", metadata={"score": 0.9})]
         out = RetrieveSkill._inject_memories(_Ctx(), docs)
         # Memory doc first.
         assert len(out) == 2
         assert out[0].metadata.get("is_memory") is True
-        assert "振动限值" in out[0].page_content
+        assert "默认分支" in out[0].page_content
 
 
 # ===========================================================================

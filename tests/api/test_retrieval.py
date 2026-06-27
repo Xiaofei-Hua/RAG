@@ -20,26 +20,26 @@ BASE = "http://localhost:8000"
 PASSED = 0
 FAILED = 0
 
-TEST_DOC = """# B737 发动机振动故障排查指南
+TEST_DOC = """# Git 合并冲突排查指南
 
-## ATA 72 - 发动机
+## 合并 - 基础概念
 
-### 故障现象：发动机振动异常
+### 常见问题：合并冲突
 
-#### 排故步骤：
-1. 通过振动监测系统（VMS）确认振动值
-2. 检查风扇叶片是否有损伤或外来物
-3. 检查发动机安装螺栓力矩
-4. 进行发动机地面运转测试
-5. 如振动值超标，需进行孔探检查
+#### 解决步骤：
+1. 通过 git status 确认冲突文件
+2. 打开带冲突标记的文件
+3. 保留正确内容并删除冲突标记
+4. 运行 git add 标记冲突已解决
+5. 执行 git commit 完成合并提交
 
-#### 故障代码：
-- ENG-VIB-HIGH：发动机振动值超标
-- ENG-VIB-SENSOR：振动传感器故障
+#### 常见标识：
+- MERGE-CONFLICT-01：标准文本冲突
+- MERGE-CONFLICT-02：二进制文件冲突
 
 #### 相关参考：
-- AMM 72-31-00 发动机振动测试程序
-- FIM 72-31 TASK 801 振动排故流程
+- git merge 官方文档
+- git rebase 与 merge 的区别说明
 """
 
 
@@ -117,7 +117,7 @@ def ensure_document_indexed():
         return None
 
     print("  上传测试文档到知识库...")
-    status, body = _upload("test_retrieval_vibration.md", TEST_DOC)
+    status, body = _upload("test_retrieval_git.md", TEST_DOC)
     if status in (200, 409):
         print("  等待索引完成...")
         if status == 200 and body.get("id"):
@@ -131,13 +131,13 @@ def test_hybrid():
     print("\n  [混合检索] POST /api/retrieval")
 
     status, body = _req("POST", "/api/retrieval", {
-        "query": "发动机振动异常如何排查",
+        "query": "git 合并冲突如何解决",
         "top_k": 5,
     })
     assert_ok("返回 200", status, body)
     if status == 200:
         assert_true("results 是列表", isinstance(body.get("results"), list))
-        assert_true("query 回显正确", body.get("query") == "发动机振动异常如何排查")
+        assert_true("query 回显正确", body.get("query") == "git 合并冲突如何解决")
         assert_true("total 字段存在", "total" in body)
         assert_true("retrieval_time_ms > 0", body.get("retrieval_time_ms", 0) > 0)
         if body["results"]:
@@ -153,7 +153,7 @@ def test_dense():
     print("\n  [纯向量检索] POST /api/retrieval/dense")
 
     status, body = _req("POST", "/api/retrieval/dense", {
-        "query": "发动机振动异常如何排查",
+        "query": "git 合并冲突如何解决",
         "top_k": 5,
     })
     assert_ok("返回 200", status, body)
@@ -168,7 +168,7 @@ def test_sparse():
     print("\n  [纯关键词检索] POST /api/retrieval/sparse")
 
     status, body = _req("POST", "/api/retrieval/sparse", {
-        "query": "ENG-VIB-HIGH 振动",
+        "query": "MERGE-CONFLICT-01 冲突",
         "top_k": 5,
     })
     assert_ok("返回 200", status, body)

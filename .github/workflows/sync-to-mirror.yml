@@ -21,6 +21,8 @@ jobs:
           known_hosts: github.com
 
       - name: Push to mirror
+        # NOTE: the mirror org name "PHMgogooo" is an external GitHub dependency
+        # (the org must be renamed on the GitHub side; not editable in-repo).
         run: |
           git remote add mirror git@github.com:PHMgogooo/RAG.git
           git push mirror --all --force

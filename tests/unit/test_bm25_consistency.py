@@ -69,7 +69,7 @@ class TestBM25SingletonUnification:
         before = [d for d in singleton._documents if marker in d.page_content]
         try:
             doc = Document(
-                page_content=f"{marker} 发动机振动异常的频谱分析方法",
+                page_content=f"{marker} 服务启动失败的排查方法",
                 metadata={"source": "consistency_test", "title": "t", "score": 0.9},
             )
             singleton.add_documents([doc])

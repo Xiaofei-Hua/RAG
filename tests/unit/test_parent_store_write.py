@@ -50,7 +50,7 @@ class TestNonMarkdownSplitTagsParent:
         parent_id; the parent_store holds its full text."""
         from api.routers.documents import _split_documents
 
-        small = Document(page_content="液压泵压力低于阈值。" * 5, metadata={"source": "hyd.md"})
+        small = Document(page_content="服务实例内存占用过高。" * 5, metadata={"source": "svc.md"})
         result = _split_documents([small])
         assert result, "splitter returned nothing"
         for chunk in result:
@@ -62,7 +62,7 @@ class TestNonMarkdownSplitTagsParent:
         pid = result[0].metadata["parent_id"]
         parent = store.get(pid)
         assert parent is not None, "parent not stored"
-        assert "液压泵压力" in parent["content"]
+        assert "内存占用" in parent["content"]
 
     def test_large_doc_children_share_parent_and_store_has_full_text(self):
         """A large doc is split into chunks; all chunks share one parent_id and
@@ -73,19 +73,19 @@ class TestNonMarkdownSplitTagsParent:
         from api.routers.documents import _split_documents
 
         paragraphs = [
-            "起落架收放系统采用液压驱动,主液压泵提供压力。",
-            "低温环境下液压油粘度升高,泵的输出压力可能下降。",
-            "蓄压器用于吸收液压冲击并维持系统压力稳定。",
-            "电磁阀控制收放作动筒的油路方向,响应时间影响收放速度。",
-            "密封件老化会导致内泄漏,降低系统效率。",
-            "液压油滤芯堵塞会引起泵的吸入阻力增大。",
-            "压力传感器实时监测系统压力并向飞控报告。",
-            "应急放起落架系统采用独立的手动液压回路。",
-            "液压泵的磨损状态可通过金属屑检测器监控。",
-            "系统压力过低时会触发警告并建议尽快着陆。",
+            "微服务部署通常使用容器编排平台进行管理,集群调度负责调度 Pod。",
+            "高负载下日志收集吞吐量升高,聚合服务的写入延迟可能上升。",
+            "缓存层用于吸收数据库读取压力并维持响应延迟稳定。",
+            "负载均衡器控制流量分发到多个实例的方向,响应时间影响整体吞吐。",
+            "索引失效会导致全表扫描,降低查询效率。",
+            "磁盘空间耗尽会引起日志写入失败并触发告警。",
+            "监控探针实时采集系统指标并向控制台报告。",
+            "故障转移机制采用独立的备用实例进行接管。",
+            "数据库的连接状态可通过健康检查端点监控。",
+            "系统负载过高时会触发告警并建议尽快扩容。",
         ] * 8  # ~80 distinct paragraphs, > 3840 chars, semantically varied
         big_text = "\n\n".join(paragraphs)
-        big = Document(page_content=big_text, metadata={"source": "gear.md"})
+        big = Document(page_content=big_text, metadata={"source": "infra.md"})
         result = _split_documents([big])
         # If the splitter isn't available in this env, fall back to asserting
         # tagging still happened on the single (un-split) chunk.

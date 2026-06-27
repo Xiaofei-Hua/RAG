@@ -99,14 +99,14 @@ class TestMemoryInjection:
         class _Ctx:
             shared_state = {
                 "relevant_memories": [
-                    {"content": "振动限值应为 4.0 IPS", "type": "correction"},
+                    {"content": "git 默认分支名应为 main", "type": "correction"},
                 ]
             }
-        docs = [Document(page_content="检索到的手册内容", metadata={"score": 0.8})]
+        docs = [Document(page_content="检索到的文档内容", metadata={"score": 0.8})]
         out = RetrieveSkill._inject_memories(_Ctx(), docs)
         assert len(out) == 2
         # Memory first.
-        assert "振动限值" in out[0].page_content
+        assert "默认分支" in out[0].page_content
         assert out[0].metadata.get("is_memory") is True
 
     def test_inject_memories_noop_without_state(self):
@@ -123,9 +123,9 @@ class TestMemoryInjection:
         from agent.memory.types import MemoryEntry, MemoryQuery
 
         store = MemoryStore(str(tmp_path / "mem.db"))
-        store.store(MemoryEntry(id="m1", content="振动限值 4.0 IPS"))
+        store.store(MemoryEntry(id="m1", content="git 默认分支 main"))
         # retrieve should work (LIKE fallback if no embeddings).
-        results = store.retrieve(MemoryQuery(query="振动"))
+        results = store.retrieve(MemoryQuery(query="分支"))
         assert len(results) >= 1
         store.close()
 
@@ -148,8 +148,8 @@ class TestSelfReflection:
 
         # Hard claim + clear reasoning => confident.
         r = reflect_on_reasoning(
-            "振动限值应为 4.0 IPS。",
-            "根据手册第12页，振动限值为4.0 IPS，这是明确的。",
+            "git 默认分支名应为 main。",
+            "根据官方文档，git 默认分支为 main，这是明确的。",
         )
         assert r.confident is True
 
@@ -157,7 +157,7 @@ class TestSelfReflection:
         from agent.skills.generate.self_reflection import reflect_on_reasoning
 
         r = reflect_on_reasoning(
-            "振动限值应为 4.0 IPS。",
+            "git 默认分支名应为 main。",
             "我猜测可能大概是这个值，不太确定。",
         )
         assert r.confident is False
@@ -167,8 +167,8 @@ class TestSelfReflection:
         from agent.skills.generate.self_reflection import reflect_on_reasoning
 
         r = reflect_on_reasoning(
-            "振动限值应为 4.0 IPS。",
-            "手册说4.0但另一方面又说不超过5.0，存在矛盾。",
+            "超时应为 30 秒。",
+            "文档说30秒但另一方面又说不超过60秒，存在矛盾。",
         )
         assert r.confident is False
 
@@ -213,7 +213,7 @@ class TestPII:
     def test_no_false_positive(self):
         from agent.guardrails.pii import detect_pii
 
-        assert detect_pii("发动机振动偏高，频谱分析") == []
+        assert detect_pii("数据库连接池配置优化") == []
 
     def test_redact(self):
         from agent.guardrails.pii import redact_pii

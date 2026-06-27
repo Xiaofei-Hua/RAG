@@ -7,6 +7,52 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Changed — main pipeline domain-generalization (`domain-generalization`)
+
+`[breaking]` The platform's default pipeline is now **domain-agnostic**. All
+aviation/PHM content is confined to the optional `data/profiles/aviation_phm.yaml`
+example profile; the main code path, branding, docs, eval golden set, and test
+fixtures no longer carry any aviation-specific assumptions. The `DOMAIN_PROFILE`
+mechanism (`DomainProfile` + `data/profiles/*.yaml`) is fully retained —
+`aviation_phm` remains a loadable example proving the system can embed an
+aerospace domain.
+
+- **What changed (breaking)**:
+  - **API response metadata**: the key `diagnosis` → `structured_answer`. A new
+    sibling key `section_labels` (the active profile's `section_template`)
+    accompanies it so the UI renders profile-specific captions instead of
+    hardcoded generic labels.
+  - **`StructuredAnswer` fields renamed** (positional slots, semantics unchanged):
+    `conclusion`→`summary`, `possible_causes`→`details`,
+    `troubleshooting_steps`→`steps`, `safety_risks`→`notes`,
+    `evidence_sources`→`sources`, `info_gaps`→`gaps`.
+  - **`PHMDiagnosis` type alias removed** (backend `api/routers/chat.py` and
+    frontend `web/src/stores/chat.ts`).
+  - **PII operational-id detection has no built-in domain fallback**. A profile
+    that omits `pii_operational_patterns` now yields no operational patterns even
+    when `PII_DETECT_OPERATIONAL_IDS=on` (previously it inherited built-in
+    aircraft tail-number/MSN regexes). This "default behaviour unchanged"
+    conclusion rests on `PII_DETECT_OPERATIONAL_IDS` defaulting to `off` — do
+    **not** flip that default without re-reviewing this contract.
+  - **`DomainProfile.pii_operational_patterns_declared` field removed** (it
+    existed only to gate the legacy fallback).
+- **Why**: the platform is domain-adaptive; the main pipeline must not couple to
+  any single domain. Field/key names carried diagnosis/medical bias; the PII
+  fallback silently propagated aviation behaviour to any new profile that forgot
+  to declare the key.
+- **How to migrate**:
+  - API/frontend consumers reading `metadata.diagnosis` → read
+    `metadata.structured_answer`; field accesses `conclusion`/`safety_risks`/etc.
+    → `summary`/`notes`/etc. The frontend store + `ChatView` already updated.
+  - A third-party domain profile that relied on implicit aircraft tail-number/MSN
+    redaction must now **explicitly declare** its `pii_operational_patterns` in
+    its YAML (no code change). The bundled `general` (empty) and `aviation_phm`
+    (declared) profiles are unaffected.
+- Tests added: `tests/unit/test_pii.py::TestOperationalIDsNoBuiltInFallback`
+  pins the no-fallback contract; field/key renames pinned by existing
+  characterization tests. See `docs/specs/domain-generalization/` for the full
+  spec + critic/defender review.
+
 ### Changed — reranker default-on + device auto-detect (`reranker-default-on`)
 
 `[breaking]` The cross-encoder reranker is now **enabled by default** and the

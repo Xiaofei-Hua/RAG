@@ -57,7 +57,7 @@ class _FakeAIMessage:
 class _FakeLLM:
     """Deterministic chat model. Returns a canned answer for any call."""
 
-    def __init__(self, answer: str = "【诊断结论】这是测试诊断。仅供参考，注意安全风险。"):
+    def __init__(self, answer: str = "这是测试回答。仅供参考。"):
         self._answer = answer
 
     def invoke(self, messages, **kwargs):
@@ -92,19 +92,19 @@ class _FakeLLM:
 
 
 class _FakeRetriever:
-    """Returns two canned PHM docs with scores."""
+    """Returns two canned domain-neutral docs with scores."""
 
     def retrieve(self, query, top_k=None, filter_expr=None):
         from langchain_core.documents import Document
 
         return [
             Document(
-                page_content="发动机振动偏高时应进行频谱分析，1倍频主导通常指示不平衡。",
-                metadata={"source": "engine_manual", "title": "振动诊断", "score": 0.92},
+                page_content="Git 合并冲突通常由同一文件的多分支改动引起，需手动编辑冲突标记后提交。",
+                metadata={"source": "git_guide", "title": "合并冲突排查", "score": 0.92},
             ),
             Document(
-                page_content="检查支承刚度与紧固件，必要时进行现场动平衡。",
-                metadata={"source": "engine_manual", "title": "振动排查", "score": 0.80},
+                page_content="解决冲突后应运行测试确认无回归，再完成合并提交。",
+                metadata={"source": "git_guide", "title": "冲突后验证", "score": 0.80},
             ),
         ][: (top_k or 4)]
 
@@ -133,11 +133,11 @@ class _FakeHarness:
     def _result(self):
         from langchain_core.messages import AIMessage, ToolMessage
 
-        canned = "【诊断结论】发动机振动偏高，最可能为转子不平衡，仅供参考注意安全风险。"
+        canned = "Git 合并冲突需要手动编辑冲突标记后提交，仅供参考。"
         return {
             "messages": [
                 ToolMessage(
-                    content="发动机振动偏高时应进行频谱分析，1倍频主导通常指示不平衡。",
+                    content="Git 合并冲突通常由同一文件的多分支改动引起，需手动编辑冲突标记后提交。",
                     tool_call_id="c1",
                 ),
                 AIMessage(
@@ -147,9 +147,9 @@ class _FakeHarness:
             ],
             "_sources": [
                 {
-                    "source": "engine_manual",
-                    "title": "振动诊断",
-                    "content": "发动机振动偏高时应进行频谱分析",
+                    "source": "git_guide",
+                    "title": "合并冲突排查",
+                    "content": "Git 合并冲突通常由同一文件的多分支改动引起",
                     "score": 0.92,
                 }
             ],
@@ -166,7 +166,7 @@ class _FakeHarness:
         # generate update. The streaming endpoint keys off node names.
         from langchain_core.messages import AIMessage
 
-        canned = "【诊断结论】发动机振动偏高，最可能为转子不平衡，仅供参考注意安全风险。"
+        canned = "Git 合并冲突需要手动编辑冲突标记后提交，仅供参考。"
 
         yield (
             "updates",
@@ -174,8 +174,8 @@ class _FakeHarness:
                 "retrieve": {
                     "messages": [
                         {
-                            "content": "发动机振动偏高时应进行频谱分析，1倍频主导通常指示不平衡。",
-                            "metadata": {"source": "engine_manual", "title": "振动诊断"},
+                            "content": "Git 合并冲突通常由同一文件的多分支改动引起，需手动编辑冲突标记后提交。",
+                            "metadata": {"source": "git_guide", "title": "合并冲突排查"},
                         }
                     ]
                 }
@@ -204,8 +204,9 @@ class _FakeIntentClassifier:
     """Keyword fast-path, falls back to a fake default general_chat."""
 
     _RAG_KEYWORDS = frozenset([
-        "振动", "液压", "航电", "发动机", "故障", "诊断", "排故", "排查",
-        "压力", "温度", "滑油", "传感器", "电源", "信号",
+        # Domain-neutral technical keywords so generic queries route to RAG.
+        "git", "docker", "http", "https", "部署", "配置", "合并", "冲突",
+        "分支", "接口", "服务", "命令", "异常", "排查", "查询", "缓存",
     ])
     _CHAT_KEYWORDS = frozenset(["你好", "谢谢", "再见", "你是谁", "你能做什么", "hello", "hi"])
 
@@ -448,7 +449,7 @@ def install():
     async def _fake_fast_generate_async(query, **kwargs):
         docs = retriever.retrieve(query)
         return SimpleNamespace(
-            answer="【诊断结论】快速模式诊断结果。仅供参考注意安全风险。",
+            answer="快速模式检索结果。Git 合并冲突需手动编辑冲突标记。仅供参考。",
             sources=[
                 {
                     "source": d.metadata["source"],
@@ -471,7 +472,7 @@ def install():
     # crashes because _FakeLLM is not a LangChain Runnable. Emit the same
     # SSE-shaped events the real generator yields so the endpoint assembles a
     # non-empty full_response + sources.
-    _FAST_CANNED = "【诊断结论】快速模式诊断结果。仅供参考注意安全风险。"
+    _FAST_CANNED = "快速模式检索结果。Git 合并冲突需手动编辑冲突标记。仅供参考。"
 
     async def _fake_fast_generate_stream(query, top_k=3, **kwargs):
         docs = retriever.retrieve(query, top_k=top_k)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-RAG 航空排故系统 — 全链路功能测试
+RAG 智能问答系统 — 全链路功能测试
 
 覆盖:
   1. 后端健康检查 & Milvus 连通性
@@ -116,35 +116,35 @@ def section(title):
 
 # ── Test Content ─────────────────────────────────────────────────────────────
 
-TEST_DOC = """# B737 液压系统故障排查指南
+TEST_DOC = """# Git 合并冲突排查指南
 
-## ATA 29 - 液压系统
+## 合并 - 基础概念
 
-### 故障现象：液压系统压力低
+### 常见问题：合并冲突
 
-#### 排故步骤：
-1. 检查液压油量是否在正常范围内
-2. 检查液压泵出口压力是否符合标准（3000 ± 200 PSI）
-3. 检查液压滤芯是否堵塞，压差指示器是否弹出
-4. 检查液压系统是否有外部泄漏
-5. 检查相关电磁阀工作是否正常
+#### 解决步骤：
+1. 通过 git status 确认冲突文件
+2. 打开带冲突标记的文件
+3. 保留正确内容并删除冲突标记
+4. 运行 git add 标记冲突已解决
+5. 检查相关测试是否通过
 
-#### 故障代码：
-- HYD-PRESS-LOW-A：A系统压力低
-- HYD-PRESS-LOW-B：B系统压力低
+#### 常见标识：
+- MERGE-CONFLICT-01：标准文本冲突
+- MERGE-CONFLICT-02：二进制文件冲突
 
-### 故障现象：发动机振动异常
+### 常见问题：分支管理
 
-#### 排故步骤：
-1. 通过振动监测系统（VMS）确认振动值
-2. 检查风扇叶片是否有损伤或外来物
-3. 检查发动机安装螺栓力矩
-4. 进行发动机地面运转测试
-5. 如振动值超标，需进行孔探检查
+#### 解决步骤：
+1. 通过 git branch 查看本地分支
+2. 检查远程跟踪分支是否同步
+3. 切换到目标分支再进行合并
+4. 必要时使用 git rebase 整理历史
+5. 如历史混乱，可重置后再提交
 
 #### 相关参考：
-- AMM 72-31-00 发动机振动测试程序
-- FIM 72-31 TASK 801 振动排故流程
+- git merge 官方文档
+- git rebase 与 merge 的区别说明
 """
 
 
@@ -247,7 +247,7 @@ def test_chat_rag(session_id):
         _wait_for_indexed(body.get("id"))
 
     status, body = _req("POST", "/api/chat", {
-        "message": "B737液压系统压力低如何排查？",
+        "message": "git 合并冲突如何解决？",
         "session_id": session_id,
         "stream": False,
     }, timeout=60)
@@ -264,7 +264,7 @@ def test_chat_stream(session_id):
     import http.client
     conn = http.client.HTTPConnection("localhost", 8000, timeout=60)
     body = json.dumps({
-        "message": "发动机振动异常的排故流程是什么？",
+        "message": "git 分支管理的常用命令是什么？",
         "session_id": session_id,
         "stream": True,
     }).encode()
@@ -312,14 +312,14 @@ def test_milvus_direct():
 
     # Test retrieval via chat endpoint (end-to-end)
     status, body = _req("POST", "/api/chat", {
-        "message": "液压系统压力低如何排查？",
+        "message": "git 合并冲突如何解决？",
         "stream": False,
     }, timeout=60)
     assert_ok("Milvus 检索后对话返回 200", status, body)
     if status == 200:
         answer = body.get("response", "")
-        assert_true("回答包含相关内容 (含 '液压' 或 '压力')",
-                    "液压" in answer or "压力" in answer,
+        assert_true("回答包含相关内容 (含 '合并' 或 '冲突')",
+                    "合并" in answer or "冲突" in answer,
                     f"answer: {answer[:100]}...")
         print(f"  → 回答片段: {answer[:120]}...")
 
@@ -332,7 +332,7 @@ def test_bm25_and_hybrid():
 
     # Use a keyword-heavy query that BM25 should match well
     status, body = _req("POST", "/api/chat", {
-        "message": "故障代码 HYD-PRESS-LOW-A 是什么意思？",
+        "message": "标识 MERGE-CONFLICT-01 是什么意思？",
         "stream": False,
     }, timeout=60)
     assert_ok("关键词检索对话返回 200", status, body)
@@ -347,7 +347,7 @@ def test_bm25_and_hybrid():
 def main():
     print()
     print("=" * 60)
-    print("  航空排故 RAG 系统 — 全链路功能测试")
+    print("  RAG 智能问答系统 — 全链路功能测试")
     print("=" * 60)
 
     # Pre-check: backend must be running

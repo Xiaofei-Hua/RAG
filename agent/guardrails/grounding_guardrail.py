@@ -4,8 +4,8 @@ generation hot path.
 
 Unlike the offline ``agent/eval/judge.py`` (full RAGAS-style faithfulness over
 all claims), this is a fast online variant focused on "hard claims" (values,
-steps, conclusions) — the statements most dangerous to hallucinate in an
-aviation PHM diagnosis setting. It reuses the judge's claim-extraction and
+steps, conclusions) — the statements most dangerous to hallucinate in a
+structured-domain-answer setting. It reuses the judge's claim-extraction and
 entailment machinery so behaviour is consistent between online enforcement
 and offline eval.
 

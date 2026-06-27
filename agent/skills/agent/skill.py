@@ -139,7 +139,7 @@ class AgentSkill(BaseSkill):
                         status=SkillStatus.SUCCESS,
                         messages=[
                             AIMessage(
-                                content="我需要先检索相关文档才能准确回答您的问题。请稍候，正在为您查询维修手册中的相关内容。"
+                                content="我需要先检索相关文档才能准确回答您的问题。请稍候，正在为您检索知识库中的相关内容。"
                             )
                         ],
                         metadata={
@@ -238,7 +238,7 @@ class AgentSkill(BaseSkill):
                         status=SkillStatus.SUCCESS,
                         messages=[
                             AIMessage(
-                                content="我需要先检索相关文档才能准确回答您的问题。请稍候，正在为您查询维修手册中的相关内容。"
+                                content="我需要先检索相关文档才能准确回答您的问题。请稍候，正在为您检索知识库中的相关内容。"
                             )
                         ],
                         metadata={

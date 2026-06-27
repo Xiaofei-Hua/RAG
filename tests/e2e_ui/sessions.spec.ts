@@ -14,11 +14,11 @@ const SHOT_DIR = "sessions";
 async function seedSession(page: import("@playwright/test").Page): Promise<void> {
   await page.goto("/");
   const input = page.getByTestId("chat-input");
-  await input.fill("发动机振动异常如何排查？");
+  await input.fill("git 合并冲突如何解决？");
   await input.press("Enter");
   // Wait for the answer so the session is registered.
   await expect(page.locator("[data-testid='message'].assistant").last())
-    .toContainText(/诊断|振动/, { timeout: 30_000 });
+    .toContainText(/合并|冲突/, { timeout: 30_000 });
 }
 
 test.describe("Sessions UI", () => {

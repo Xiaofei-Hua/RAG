@@ -214,7 +214,11 @@ class TestProfileDrivenBehaviour:
         answer = "【诊断结论】振动偏高\n【排查步骤】1. 频谱分析"
         diag = _extract_structured_answer(answer)
         assert diag is not None
-        assert "振动" in diag.conclusion
+        # Field renamed conclusion->summary (domain-generalization REQ-DG-004).
+        assert "振动" in diag.summary
+        # The old diagnosis-leaning field names must no longer exist.
+        assert not hasattr(diag, "conclusion")
+        assert not hasattr(diag, "safety_risks")
 
     def test_extract_diagnosis_general_returns_none(self, monkeypatch):
         from api.routers.chat import _extract_structured_answer

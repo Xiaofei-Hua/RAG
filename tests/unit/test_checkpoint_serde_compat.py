@@ -314,7 +314,7 @@ class TestStrictMsgpack:
 # F-CS-04 — sqlite-vec transitive dependency (offline/air-gap)
 #
 # langgraph-checkpoint-sqlite 3.x pulls in sqlite-vec (a native C extension).
-# For air-gapped PHM deployments this MUST be installable offline. This test
+# For air-gapped/offline deployments this MUST be installable offline. This test
 # guards that it is importable + the native lib loads in the current env.
 # ===========================================================================
 
@@ -361,7 +361,7 @@ class TestEndToEndInvoke:
 
         h = get_agent_harness(config=HarnessConfig(checkpoint_path=str(tmp_path / "e2e.db")))
         try:
-            result = h.invoke("发动机振动异常的可能原因", thread_id="e2e-serde")
+            result = h.invoke("服务启动失败的可能原因", thread_id="e2e-serde")
             assert isinstance(result, dict)
             assert "messages" in result
         except AttributeError as e:
@@ -379,7 +379,7 @@ class TestEndToEndInvoke:
 
         async def _run():
             await h.astart()
-            return await h.ainvoke("液压系统低压警告的可能原因", thread_id="e2e-async")
+            return await h.ainvoke("缓存命中率下降的可能原因", thread_id="e2e-async")
 
         try:
             result = asyncio.run(_run())

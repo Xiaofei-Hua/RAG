@@ -61,7 +61,8 @@ class GenerateSkillConfig:
 
 # Refusal message when retrieval yields no sufficiently-relevant evidence.
 # Sourced from the active domain profile so it matches the configured domain
-# (aviation refers to 维修手册/故障代码; general is domain-neutral).
+# (a domain like aviation refers to maintenance manuals/fault codes; general is
+# domain-neutral).
 def _refusal_message() -> str:
     return get_active_profile().refusal_message
 

@@ -30,12 +30,12 @@ export default defineConfig({
     // uvicorn subprocess (see tests/e2e_ui/_fakes.py + api/main.py hook) so
     // browser E2E needs no Ollama/Milvus and stays hermetic. PYTEST_RUN=1 only
     // skips the F05 production-config startup guard; it does NOT inject fakes.
-    // DOMAIN_PROFILE=aviation_phm: the e2e_ui fakes/fixtures (sample.md, canned
-    // 【诊断结论】 answers) are an aviation-PHM scenario; the platform default
-    // is the domain-agnostic general profile, so pin aviation here explicitly.
+    // No DOMAIN_PROFILE override: the e2e_ui fakes/fixtures (sample.md, canned
+    // answers) are domain-neutral, matching the platform's default general
+    // (domain-agnostic) profile.
     command: process.env.E2E_NO_WEBSERVER
       ? "echo 'using externally-started backend'"
-      : `cd .. && PYTEST_RUN=1 RAG_E2E_FAKES=1 DOMAIN_PROFILE=aviation_phm uv run uvicorn api.main:app --host 127.0.0.1 --port 8000`,
+      : `cd .. && PYTEST_RUN=1 RAG_E2E_FAKES=1 uv run uvicorn api.main:app --host 127.0.0.1 --port 8000`,
     url: BACKEND,
     reuseExistingServer: true,
     timeout: 120_000,

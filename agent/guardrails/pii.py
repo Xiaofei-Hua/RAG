@@ -25,7 +25,9 @@ __all__ = ["PIIMatch", "detect_pii", "redact_pii", "PII_PATTERNS"]
 class PIIMatch:
     """A single PII detection."""
 
-    kind: str  # phone | id_card | email | bank_card | ip | passport | tail_number | msn
+    # Human PII kinds are fixed (phone/id_card/email/bank_card/ip/passport).
+    # Operational kinds (e.g. tail_number/msn) come from the active profile.
+    kind: str
     value: str
     start: int
     end: int
@@ -41,7 +43,7 @@ def _env_bool(name: str, default: bool) -> bool:
 
 
 # Human PII — always detected (default on). These unambiguously identify a
-# person and are safe to redact across the PHM corpus.
+# person and are safe to redact across any domain corpus.
 # Note: no \b word-boundary anchors — \b does not fire around CJK characters,
 # which would let PII in Chinese text slip through (e.g. "电话13812345678").
 # We use lookarounds instead to avoid partial matches inside longer digit runs.
@@ -73,47 +75,34 @@ PII_PATTERNS: list[tuple[str, re.Pattern]] = [
 ]
 
 
-# Operational identifiers (aircraft tail number, MSN). These are NOT human PII —
-# in PHM maintenance logs they are legitimate operational content. Detection is
-# gated behind PII_DETECT_OPERATIONAL_IDS (default off) so routine maintenance
-# text is not redacted. Operators who consider these sensitive in their
-# deployment can enable them.
-_OPERATIONAL_PATTERNS: list[tuple[str, re.Pattern]] = [
-    # Aircraft registration / tail number, e.g. B-1234, N123AB.
-    ("tail_number", re.compile(r"\b(?:B|N|G|CC)[\-]?\d{3,5}[A-Z]{0,2}\b")),
-    # Manufacturer Serial Number, e.g. MSN 12345.
-    ("msn", re.compile(r"\bMSN\s*\d{3,6}\b", re.IGNORECASE)),
-]
-
-
 def _operational_patterns_from_profile() -> list[tuple[str, re.Pattern]]:
-    """Operational-id patterns from the active domain profile.
+    """Operational-id patterns sourced SOLELY from the active domain profile.
 
-    Aviation defines tail_number / MSN; the general profile explicitly defines
-    none. Falls back to the built-in aviation patterns ONLY when the profile
-    omits the ``pii_operational_patterns`` key entirely (legacy profiles).
-    A profile that explicitly declares the key — even as an empty list — is
-    honoured as "no operational patterns", so the general profile never leaks
-    aviation tail-number/MSN regex even when ``PII_DETECT_OPERATIONAL_IDS`` is on.
+    Operational identifiers (e.g. asset serial numbers, tail numbers, or MSNs
+    in a domain that registers them) are NOT human PII — they are
+    domain-specific operational content. A domain that wants them redacted
+    declares them in its profile's
+    ``pii_operational_patterns``; detection is then gated behind
+    ``PII_DETECT_OPERATIONAL_IDS`` (default off).
+
+    There is NO built-in domain regex fallback: a profile that omits the key
+    (or declares it empty) yields no operational patterns, so the default
+    platform never couples to any specific domain. A third-party profile that
+    relied on the legacy implicit fallback must now declare its patterns
+    explicitly (see CHANGELOG breaking note).
     """
     try:
         from core.prompts.domain_profile import get_active_profile
 
-        profile = get_active_profile()
-        prof_patterns = profile.pii_operational_patterns
-        declared = profile.pii_operational_patterns_declared
+        prof_patterns = get_active_profile().pii_operational_patterns
     except Exception:  # noqa: BLE001
         prof_patterns = []
-        declared = False
     out: list[tuple[str, re.Pattern]] = []
     for spec in prof_patterns:
         try:
             out.append((spec.get("kind", "operational"), re.compile(spec["pattern"])))
         except (KeyError, re.error):
             continue
-    # Backward-compat fallback: only when the profile did NOT declare the key.
-    if not declared and not out:
-        return list(_OPERATIONAL_PATTERNS)
     return out
 
 

@@ -32,24 +32,24 @@ class TestTokenBudget:
         from core.context.token_budget import estimate_tokens
 
         # 3 CJK chars ~ 2 tokens + 1
-        assert estimate_tokens("振动") > 0
+        assert estimate_tokens("数据库") > 0
         assert estimate_tokens("") == 0
         # CJK is more token-dense than ASCII.
-        assert estimate_tokens("振动异常") > estimate_tokens("abcd")
+        assert estimate_tokens("数据库查询") > estimate_tokens("abcd")
 
     def test_build_context_keeps_most_relevant(self):
         from core.context.token_budget import build_context_within_budget
 
         docs = [
             Document(page_content="无关长文本" * 50, metadata={"score": 0.1}),
-            Document(page_content="高度相关的诊断要点", metadata={"score": 0.95}),
+            Document(page_content="高度相关的配置说明", metadata={"score": 0.95}),
             Document(page_content="次相关内容", metadata={"score": 0.5}),
         ]
         # Tiny budget forces dropping the long irrelevant doc.
-        ctx, kept = build_context_within_budget(docs, question="振动", context_token_budget=30)
+        ctx, kept = build_context_within_budget(docs, question="数据库", context_token_budget=30)
         # Most relevant kept first.
-        assert any("诊断要点" in d.page_content for d in kept)
-        assert "诊断要点" in ctx
+        assert any("配置说明" in d.page_content for d in kept)
+        assert "配置说明" in ctx
 
     def test_build_context_all_fit(self):
         from core.context.token_budget import build_context_within_budget
@@ -199,15 +199,15 @@ class TestQueryTransform:
     def test_parse_queries_strips_numbering(self):
         from core.retrieval.query_transform import _parse_queries
 
-        raw = "1. 振动排查\n2) 温度诊断\n\n噪声分析"
+        raw = "1. 日志排查\n2) 性能诊断\n\n网络分析"
         out = _parse_queries(raw, 3)
-        assert out == ["振动排查", "温度诊断", "噪声分析"]
+        assert out == ["日志排查", "性能诊断", "网络分析"]
 
     def test_parse_queries_caps_n(self):
         from core.retrieval.query_transform import _parse_queries
 
         # Each line must be >= 4 chars to pass the length filter.
-        out = _parse_queries("振动如何排查\n温度过高诊断\n噪声分析步骤\n更多内容", 2)
+        out = _parse_queries("日志如何排查\n性能过高诊断\n网络分析步骤\n更多内容", 2)
         assert len(out) == 2
 
     def test_multi_query_fallback_on_llm_failure(self, monkeypatch):
@@ -283,8 +283,8 @@ class TestFormatParsers:
         html_file = tmp_path / "test.html"
         html_file.write_text(
             "<html><body>"
-            "<h1>发动机章节</h1><p>振动分析要点。内容足够长以通过长度检查。</p>"
-            "<h2>液压章节</h2><p>压力排查步骤。</p>"
+            "<h1>部署章节</h1><p>日志分析要点。内容足够长以通过长度检查。</p>"
+            "<h2>缓存章节</h2><p>配置排查步骤。</p>"
             "</body></html>",
             encoding="utf-8",
         )

@@ -306,12 +306,12 @@ class RetrieveSkill(BaseSkill):
         """Pick a query transform: explicit shared_state first, else heuristic.
 
         The heuristic is sourced from the active DomainProfile:
-        - anchor_patterns present (ATA chapter / fault code) -> no transform
+        - anchor_patterns present (precise identifier / code) -> no transform
           (precise anchor, direct retrieval is enough, saves an LLM call).
         - diagnostic_keywords present (如何/为什么/原因) -> hyde (hypothetical
           doc closer to the answer distribution).
-        - short abstract symptom (振动异常/液压低压) -> multi_query (broaden
-          recall across phrasings).
+        - short abstract symptom (e.g. a short status phrase) -> multi_query
+          (broaden recall across phrasings).
         - otherwise -> None (direct retrieval).
 
         Under the general profile, anchors/symptoms are empty and only the
@@ -446,7 +446,7 @@ class RetrieveSkill(BaseSkill):
         ``shared_state["relevant_memories"]`` increment that is persisted into
         the graph state; this node (``retrieve``) then reads it back via its
         own ``SkillContext``. This prepends memory entries as high-priority
-        context so correction memories (e.g. "振动限值应为 4.0 IPS") influence
+        context so correction memories (e.g. a corrected threshold value) influence
         generation.
         """
         shared = getattr(context, "shared_state", None)

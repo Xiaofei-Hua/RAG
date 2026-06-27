@@ -61,11 +61,11 @@ class TestInferenceStore:
             trace_id="t1",
             message_id="m1",
             session_id="s1",
-            query="发动机振动偏高？",
-            retrieved_docs=[{"source": "docA", "content": "振动分析要点"}],
-            answer="【诊断结论】需做动平衡。",
+            query="git 合并冲突如何解决？",
+            retrieved_docs=[{"source": "docA", "content": "合并冲突排查要点"}],
+            answer="需手动编辑冲突标记后提交。",
             route="rag",
-            prompt_profile="phm_diagnosis_v1",
+            prompt_profile="general_v1",
             intent="rag_query",
             latency_ms=123.4,
         )
@@ -74,7 +74,7 @@ class TestInferenceStore:
 
         got = store.get("t1")
         assert got is not None
-        assert got.query == "发动机振动偏高？"
+        assert got.query == "git 合并冲突如何解决？"
         assert got.route == "rag"
         assert len(got.retrieved_docs) == 1
         assert got.retrieved_docs[0]["source"] == "docA"
@@ -117,18 +117,18 @@ class TestCandidates:
             trace_id="t1",
             message_id="m1",
             session_id="s1",
-            query="液压泄漏如何排查？",
-            answer="【诊断结论】存在内漏。",
-            retrieved_docs=[{"source": "hyd_manual", "content": "保压测试"}],
+            query="docker 容器无法启动如何排查？",
+            answer="容器启动失败。",
+            retrieved_docs=[{"source": "docker_doc", "content": "容器日志"}],
         )
 
         # Correction: corrected_answer becomes the golden reference.
         cand = cand_mod.promote_to_candidate(
             inference, feedback_type="correction",
-            corrected_answer="【诊断结论】需保压测试定位泄漏支路。",
+            corrected_answer="需查看容器日志定位失败原因。",
         )
         assert cand is not None
-        assert cand.corrected_answer.startswith("【诊断结论】")
+        assert cand.corrected_answer.startswith("需查看")
 
         listed = cand_mod.list_candidates()
         assert len(listed) == 1
@@ -139,7 +139,7 @@ class TestCandidates:
             cand.candidate_id, dataset_path=dataset_path
         )
         assert promoted is not None
-        assert promoted.reference_answer.startswith("【诊断结论】")
+        assert promoted.reference_answer.startswith("需查看")
 
         # Candidate file is consumed after promotion.
         assert cand_mod.list_candidates() == []
@@ -147,7 +147,7 @@ class TestCandidates:
         # Dataset now has the case.
         from agent.eval.dataset import load_dataset
         loaded = load_dataset(dataset_path)
-        assert any(c.reference_answer.startswith("【诊断结论】") for c in loaded)
+        assert any(c.reference_answer.startswith("需查看") for c in loaded)
 
     def test_promote_skips_empty_query(self, tmp_path, monkeypatch):
         from agent.eval import candidates as cand_mod
@@ -176,8 +176,8 @@ class TestFlywheel:
         store = InferenceStore(str(tmp_path / "inf.db"))
         store.record(InferenceRecord(
             trace_id="t1", message_id="m1", session_id="s1",
-            query="振动偏高如何处理？",
-            answer="【诊断结论】必须立即更换发动机。",
+            query="git 分支冲突如何处理？",
+            answer="必须立即回滚提交。",
             retrieved_docs=[{"source": "doc", "content": "建议进一步检查"}],
             route="rag",
         ))

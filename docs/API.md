@@ -103,32 +103,33 @@ POST /api/chat
 
 ```json
 {
-  "response": "航空发动机振动异常的诊断结论...",
+  "response": "git 合并冲突的解决要点...",
   "session_id": "session_abc123",
   "intent": "rag_query",
   "sources": [
     {
       "content": "相关文档片段...",
-      "source": "engine_manual.md",
-      "title": "发动机维修手册",
+      "source": "git_guide.md",
+      "title": "合并冲突排查",
       "score": 0.87
     }
   ],
   "processing_time_ms": 3520.5,
   "metadata": {
     "intent_confidence": 0.95,
-    "intent_reasoning": "故障诊断类技术问题",
+    "intent_reasoning": "知识库检索类问题",
     "source_count": 3,
-    "diagnosis": {
-      "conclusion": "发动机振动值超标...",
-      "possible_causes": ["轴承磨损", "叶片不平衡"],
-      "troubleshooting_steps": ["检查振动传感器", "进行动平衡测试"],
-      "safety_risks": "振动持续超标可能导致...",
-      "evidence_sources": ["来源: engine_manual.md"],
-      "info_gaps": "缺少历史振动趋势数据"
+    "structured_answer": {
+      "summary": "git 合并冲突需手动编辑...",
+      "details": ["同一文件多分支改动", "冲突标记未清理"],
+      "steps": ["打开带冲突标记的文件", "编辑后提交"],
+      "notes": "解决后应运行测试确认无回归...",
+      "sources": ["来源: git_guide.md"],
+      "gaps": "缺少历史合并记录"
     },
+    "section_labels": ["摘要", "要点", "步骤", "备注", "来源", "信息缺口"],
     "route": "rag",
-    "prompt_profile": "phm_diagnosis_v1",
+    "prompt_profile": "general_v1",
     "force_rag": false
   }
 }
@@ -145,7 +146,8 @@ POST /api/chat
 | `processing_time_ms` | float | 总处理耗时（毫秒） |
 | `metadata.route` | string | 路由类型：`rag` / `general_chat` / `fast` |
 | `metadata.prompt_profile` | string | Prompt 配置标识 |
-| `metadata.diagnosis` | StructuredAnswer \| null | 结构化回答数据（仅当 active profile 定义了 `section_template` 时返回；如航空 PHM 的诊断结构。`PHMDiagnosis` 为向后兼容别名） |
+| `metadata.structured_answer` | StructuredAnswer \| null | 结构化回答数据（仅当 active profile 定义了 `section_template` 时返回；字段为通用位置槽位，展示标签见 `section_labels`） |
+| `metadata.section_labels` | string[] | active profile 的 section_template 标签，按位置对应 `structured_answer` 字段（用于 UI 渲染领域相关标题） |
 
 **`metadata.route` 取值说明：**
 
@@ -222,7 +224,7 @@ data: {JSON}\n\n
 | `正在评估文档相关性...` | 文档评估中（仅 thinking 模式） |
 | `正在优化查询...` | 查询改写中（仅 thinking 模式） |
 | `正在生成回答...` | LLM 生成中 |
-| `检测为PHM技术问题，已切换知识库诊断模式...` | 意图覆盖提示 |
+| `检测为领域技术问题，已切换知识库检索模式...` | 意图覆盖提示 |
 
 ##### node — 当前执行节点
 
@@ -262,8 +264,8 @@ data: {JSON}\n\n
   "sources": [
     {
       "content": "文档片段...",
-      "source": "manual.md",
-      "title": "维修手册",
+      "source": "guide.md",
+      "title": "技术文档",
       "score": 0.85
     }
   ],
@@ -272,9 +274,10 @@ data: {JSON}\n\n
     "intent_confidence": 0.95,
     "intent_reasoning": "...",
     "source_count": 3,
-    "diagnosis": null,
+    "structured_answer": null,
+    "section_labels": [],
     "route": "rag",
-    "prompt_profile": "phm_diagnosis_v1",
+    "prompt_profile": "general_v1",
     "force_rag": false
   }
 }
@@ -314,7 +317,7 @@ def chat_stream(message: str, session_id: str = None, mode: str = "thinking"):
                 elif event["type"] == "done":
                     return event
 
-result = chat_stream("发动机振动异常如何排查？")
+result = chat_stream("git 合并冲突如何解决？")
 ```
 
 **JavaScript (fetch)：**
@@ -382,7 +385,7 @@ GET /api/chat/history/{session_id}
 {
   "session_id": "session_abc123",
   "messages": [
-    { "role": "user", "content": "发动机振动异常如何排查？" },
+    { "role": "user", "content": "git 合并冲突如何解决？" },
     { "role": "assistant", "content": "根据知识库检索结果..." }
   ],
   "total_messages": 4
@@ -422,9 +425,9 @@ profile 变化（默认 `general`；以下示例为 `DOMAIN_PROFILE=aviation_phm
 ```json
 {
   "loaded": true,
-  "prompt_profile": "phm_diagnosis_v1",
+  "prompt_profile": "general_v1",
   "generate_prompt_signature": "0df94211b3ee",
-  "generate_prompt_preview": "你是地面健康管理（PHM）平台中的航空故障诊断助手..."
+  "generate_prompt_preview": "你是知识库问答助手..."
 }
 ```
 
@@ -607,7 +610,7 @@ GET /api/sessions
     {
       "session_id": "session_abc123",
       "message_count": 6,
-      "title": "发动机振动异常排查",
+      "title": "git 合并冲突排查",
       "created_at": 1713696000.0,
       "last_active": 1713699600.0
     }
@@ -674,7 +677,7 @@ POST /api/sessions/{session_id}/extend
 |------|------|------|----------|
 | 混合检索 | `POST /api/retrieval` | dense 向量 + BM25 关键词，RRF 融合排序 | 通用检索，兼顾语义和关键词 |
 | 纯向量检索 | `POST /api/retrieval/dense` | 仅 embedding 余弦相似度 | 意思相近但关键词不同的查询 |
-| 纯关键词检索 | `POST /api/retrieval/sparse` | 仅 BM25 词频匹配 | 精确关键词（ATA 编号、零件号、故障代码） |
+| 纯关键词检索 | `POST /api/retrieval/sparse` | 仅 BM25 词频匹配 | 精确关键词（标识符、配置项、错误代码） |
 
 ---
 
@@ -697,12 +700,12 @@ POST /api/retrieval
 
 ```json
 {
-  "query": "发动机振动异常如何排查",
+  "query": "git 合并冲突如何解决",
   "results": [
     {
-      "content": "当发动机振动值超过限制时，应按以下步骤排查：1. 检查振动传感器...",
-      "source": "engine_manual.md",
-      "title": "发动机维修手册",
+      "content": "当 git 合并冲突出现时，应按以下步骤解决：1. 查看冲突文件...",
+      "source": "git_guide.md",
+      "title": "合并冲突排查",
       "score": 0.87,
       "retrieval_score": 0.032,
       "rerank_score": 0.87,
@@ -719,7 +722,7 @@ POST /api/retrieval
 ```bash
 curl -X POST http://localhost:8000/api/retrieval \
   -H "Content-Type: application/json" \
-  -d '{"query":"发动机振动异常如何排查","top_k":5}'
+  -d '{"query":"git 合并冲突如何解决","top_k":5}'
 ```
 
 ---
@@ -761,10 +764,10 @@ POST /api/retrieval/sparse
 #### cURL 示例
 
 ```bash
-# ATA 编号精确匹配
+# 标识符精确匹配
 curl -X POST http://localhost:8000/api/retrieval/sparse \
   -H "Content-Type: application/json" \
-  -d '{"query":"ATA72 发动机振动","top_k":5}'
+  -d '{"query":"MERGE-CONFLICT-01 合并","top_k":5}'
 ```
 
 ---
@@ -822,8 +825,8 @@ curl -X POST http://localhost:8000/api/feedback \
   -d '{
     "session_id": "session_abc",
     "feedback_type": "CORRECTION",
-    "original_answer": "振动限值为 5.0 IPS",
-    "corrected_answer": "振动限值应为 4.0 IPS，参考手册第 12 页"
+    "original_answer": "git 默认分支名为 master",
+    "corrected_answer": "git 默认分支名应为 main，参考官方文档"
   }'
 ```
 
@@ -856,7 +859,7 @@ GET /api/feedback/{session_id}
     {
       "id": "fb_002",
       "type": "correction",
-      "content": "振动限值应为 4.0 IPS",
+      "content": "git 默认分支名应为 main",
       "timestamp": 1713696100.0
     }
   ]
@@ -1256,22 +1259,19 @@ interface SourceDocument {
 
 ### StructuredAnswer
 
-结构化回答。字段名通用；active profile 的 `section_template` 标签按位置填入
-（如航空 PHM 的「诊断结论/可能原因/排查步骤/风险与安全提示/依据来源/信息缺口」）。
-profile 无 section 模板时（如默认 general），后端返回 `diagnosis: null`，回答为自由文本。
-
-> 向后兼容：`PHMDiagnosis` 是 `StructuredAnswer` 的类型别名（历史命名）。
+结构化回答。字段为通用位置槽位；active profile 的 `section_template` 标签按位置填入
+（随响应附带的 `section_labels` 提供，如可选示例 aviation_phm 下为「诊断结论/可能原因/...」）。
+profile 无 section 模板时（如默认 general），后端返回 `structured_answer: null`，回答为自由文本。
 
 ```typescript
 interface StructuredAnswer {
-  conclusion: string
-  possible_causes: string[]
-  troubleshooting_steps: string[]
-  safety_risks: string
-  evidence_sources: string[]
-  info_gaps: string
+  summary: string
+  details: string[]
+  steps: string[]
+  notes: string
+  sources: string[]
+  gaps: string
 }
-// type PHMDiagnosis = StructuredAnswer  // 向后兼容别名
 ```
 
 ### DocumentInfo
@@ -1385,7 +1385,7 @@ curl http://localhost:8000/health
 ```bash
 curl -X POST http://localhost:8000/api/chat \
   -H "Content-Type: application/json" \
-  -d '{"message":"发动机振动异常如何排查？","mode":"thinking"}'
+  -d '{"message":"git 合并冲突如何解决？","mode":"thinking"}'
 ```
 
 ### 3. 发送消息（SSE 流式）
@@ -1393,7 +1393,7 @@ curl -X POST http://localhost:8000/api/chat \
 ```bash
 curl -N -X POST http://localhost:8000/api/chat/stream \
   -H "Content-Type: application/json" \
-  -d '{"message":"发动机振动异常如何排查？","stream":true,"mode":"thinking"}'
+  -d '{"message":"git 合并冲突如何解决？","stream":true,"mode":"thinking"}'
 ```
 
 ### 4. 知识库检索（不调用 LLM）
@@ -1402,17 +1402,17 @@ curl -N -X POST http://localhost:8000/api/chat/stream \
 # 混合检索（推荐）
 curl -X POST http://localhost:8000/api/retrieval \
   -H "Content-Type: application/json" \
-  -d '{"query":"发动机振动异常","top_k":5}'
+  -d '{"query":"git 合并冲突","top_k":5}'
 
 # 纯向量检索
 curl -X POST http://localhost:8000/api/retrieval/dense \
   -H "Content-Type: application/json" \
-  -d '{"query":"发动机振动异常","top_k":5}'
+  -d '{"query":"git 合并冲突","top_k":5}'
 
 # 纯 BM25 关键词检索
 curl -X POST http://localhost:8000/api/retrieval/sparse \
   -H "Content-Type: application/json" \
-  -d '{"query":"ATA72 发动机振动","top_k":5}'
+  -d '{"query":"MERGE-CONFLICT-01 合并","top_k":5}'
 ```
 
 ### 5. 上传文档到知识库

@@ -114,7 +114,7 @@ class TestAgentNoToolCallFallback:
         skill = AgentSkill()
         skill._invoke_model = _fake_invoke  # instance-level override
 
-        ctx = SkillContext(messages=[HumanMessage(content="振动异常")], shared_state={})
+        ctx = SkillContext(messages=[HumanMessage(content="服务异常")], shared_state={})
         result = skill.execute(ctx)
         assert state["calls"] == 2, f"expected 2 invokes (nudge retry), got {state['calls']}"
         assert result.metadata.get("no_tool_call_nudged", 0) >= 1

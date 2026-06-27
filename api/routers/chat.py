@@ -92,22 +92,21 @@ class ChatResponse(BaseModel):
 class StructuredAnswer(BaseModel):
     """Structured answer extracted from a model response.
 
-    Field names are generic; the active domain profile's section labels fill
-    them positionally (conclusion, causes, steps, safety, sources, gaps).
-    Profiles without a section template yield free-form answers (caller gets
-    None from ``_extract_structured_answer``).
+    Fields are domain-neutral positional slots. The active domain profile's
+    ``section_template`` labels fill them positionally (summary, details, steps,
+    notes, sources, gaps); the matching labels are returned alongside as
+    ``section_labels`` so the UI can render the profile-specific captions
+    (e.g. an aviation profile shows "风险与安全提示" for ``notes``) instead of
+    hardcoding generic labels. Profiles without a section template yield
+    free-form answers (caller gets None from ``_extract_structured_answer``).
     """
 
-    conclusion: str = ""
-    possible_causes: list[str] = Field(default_factory=list)
-    troubleshooting_steps: list[str] = Field(default_factory=list)
-    safety_risks: str = ""
-    evidence_sources: list[str] = Field(default_factory=list)
-    info_gaps: str = ""
-
-
-# Backward-compatible alias (the type was historically named PHMDiagnosis).
-PHMDiagnosis = StructuredAnswer
+    summary: str = ""
+    details: list[str] = Field(default_factory=list)
+    steps: list[str] = Field(default_factory=list)
+    notes: str = ""
+    sources: list[str] = Field(default_factory=list)
+    gaps: str = ""
 
 
 class ChatHistoryResponse(BaseModel):
@@ -281,9 +280,11 @@ def _extract_structured_answer(answer: str) -> StructuredAnswer | None:
     if not any(extracted.values()):
         return None
 
-    # Map extracted sections into the StructuredAnswer schema. Field names are
-    # generic; the active profile's section labels fill them positionally
-    # (conclusion, causes, steps, safety, sources, gaps). Profiles with fewer
+    # Map extracted sections into the StructuredAnswer schema. Fields are
+    # domain-neutral positional slots; the active profile's section labels fill
+    # them positionally (summary, details, steps, notes, sources, gaps). The
+    # UI renders the profile's own captions via ``section_labels`` (F-C1), so
+    # these field names carry no domain semantics. Profiles with fewer
     # sections simply leave later fields empty.
     vals = list(extracted.values())
 
@@ -291,12 +292,12 @@ def _extract_structured_answer(answer: str) -> StructuredAnswer | None:
         return vals[i] if i < len(vals) else ""
 
     return StructuredAnswer(
-        conclusion=_at(0),
-        possible_causes=_extract_numbered_items(_at(1)),
-        troubleshooting_steps=_extract_numbered_items(_at(2)),
-        safety_risks=_at(3),
-        evidence_sources=_extract_numbered_items(_at(4)),
-        info_gaps=_at(5),
+        summary=_at(0),
+        details=_extract_numbered_items(_at(1)),
+        steps=_extract_numbered_items(_at(2)),
+        notes=_at(3),
+        sources=_extract_numbered_items(_at(4)),
+        gaps=_at(5),
     )
 
 
@@ -325,7 +326,7 @@ def _looks_like_domain_query(message: str) -> bool:
     if any(k in text for k in keywords):
         return True
 
-    # Domain-specific query patterns (e.g. ATA chapter numbers for aviation).
+    # Domain-specific query patterns (e.g. chapter codes for a domain that uses them).
     for pattern in profile.query_patterns:
         try:
             if re.search(pattern, text, flags=re.IGNORECASE):
@@ -369,7 +370,7 @@ def _build_metadata(
     intent_confidence: float,
     intent_reasoning: str,
     source_count: int,
-    diagnosis,
+    structured_answer,
     force_rag: bool = False,
     reasoning: str = "",
     confidence=None,
@@ -384,12 +385,19 @@ def _build_metadata(
     route returns the same key set, so the frontend / eval flywheel can rely
     on it. Characterization tests in test_e2e_chat.py pin trace_id,
     prompt_profile, message_id, route, confidence_level, refused.
+
+    ``structured_answer`` carries the domain-neutral positional slots; the
+    accompanying ``section_labels`` are the active profile's section captions
+    so the UI renders profile-specific labels (e.g. an aviation profile shows
+    "风险与安全提示") rather than hardcoded generic text (domain-generalization
+    F-C1).
     """
     meta = {
         "intent_confidence": intent_confidence,
         "intent_reasoning": intent_reasoning,
         "source_count": source_count,
-        "diagnosis": diagnosis.model_dump() if diagnosis else None,
+        "structured_answer": structured_answer.model_dump() if structured_answer else None,
+        "section_labels": _active_sections(),
         "route": route,
         "prompt_profile": prompt_profile,
         "force_rag": force_rag,
@@ -509,7 +517,7 @@ async def chat(
                 intent_confidence=1.0,
                 intent_reasoning="Identity/capability shortcut",
                 source_count=0,
-                diagnosis=None,
+                structured_answer=None,
             )
             _capture(
                 http_request,
@@ -557,7 +565,7 @@ async def chat(
                 intent_confidence=1.0,
                 intent_reasoning="Fast mode (no classification)",
                 source_count=result.retrieval_count,
-                diagnosis=None,
+                structured_answer=None,
             )
             # Fast mode surfaces retrieval/generation timing for the client.
             fast_meta["retrieval_time_ms"] = result.retrieval_time_ms
@@ -593,12 +601,12 @@ async def chat(
 
         log.info(f"Intent classified: {intent_result.intent.value}")
 
-        # Step 2: Route based on intent + PHM heuristic safeguard
+        # Step 2: Route based on intent + domain heuristic safeguard
         use_rag = intent_result.intent.value != "general_chat"
         if not use_rag and _looks_like_domain_query(request.message):
             use_rag = True
             force_rag = True
-            log.info("Intent override: forcing RAG route for PHM-like query")
+            log.info("Intent override: forcing RAG route for domain-like query")
 
         if not use_rag:
             # Direct LLM response without retrieval
@@ -663,7 +671,7 @@ async def chat(
             session_memory.save_message, session_id, AIMessage(content=answer)
         )
 
-        diagnosis = _extract_structured_answer(answer)
+        structured_answer = _extract_structured_answer(answer)
 
         main_meta = _build_metadata(
             route=route,
@@ -673,7 +681,7 @@ async def chat(
             intent_confidence=intent_result.confidence,
             intent_reasoning=intent_result.reasoning,
             source_count=len(sources),
-            diagnosis=diagnosis,
+            structured_answer=structured_answer,
             force_rag=force_rag,
             reasoning=reasoning_text,
             confidence=gen_confidence,
@@ -854,7 +862,7 @@ async def chat_stream(
                             intent_confidence=1.0,
                             intent_reasoning="Identity/capability shortcut",
                             source_count=0,
-                            diagnosis=None,
+                            structured_answer=None,
                         ),
                     }
                 )
@@ -890,7 +898,7 @@ async def chat_stream(
                 await session_memory.save_message(session_id, HumanMessage(content=request.message))
                 await session_memory.save_message(session_id, AIMessage(content=full_response))
 
-                diagnosis = _extract_structured_answer(full_response)
+                structured_answer = _extract_structured_answer(full_response)
                 yield _sse(
                     {
                         "type": "done",
@@ -905,7 +913,7 @@ async def chat_stream(
                             intent_confidence=1.0,
                             intent_reasoning="Fast mode (no classification)",
                             source_count=len(sources_data),
-                            diagnosis=diagnosis,
+                            structured_answer=structured_answer,
                         ),
                     }
                 )
@@ -965,17 +973,23 @@ async def chat_stream(
                 await session_memory.save_message(session_id, HumanMessage(content=request.message))
                 await session_memory.save_message(session_id, AIMessage(content=full_response))
 
-                diagnosis = _extract_structured_answer(full_response)
+                structured_answer = _extract_structured_answer(full_response)
                 done_payload = {
                     "type": "done",
                     "full_response": full_response,
                     "sources": [],
                     "processing_time_ms": (time.perf_counter() - start_time) * 1000,
+                    # Inline dict mirrors _build_metadata() for this stream-only
+                    # general_chat branch (F-07). Keys renamed to match the
+                    # centralized contract; section_labels added for UI parity.
                     "metadata": {
                         "intent_confidence": intent_result.confidence,
                         "intent_reasoning": intent_result.reasoning,
                         "source_count": 0,
-                        "diagnosis": diagnosis.model_dump() if diagnosis else None,
+                        "structured_answer": (
+                            structured_answer.model_dump() if structured_answer else None
+                        ),
+                        "section_labels": _active_sections(),
                         "route": "general_chat",
                         "prompt_profile": _profile().prompt_profile_general,
                         "force_rag": force_rag,
@@ -1074,7 +1088,7 @@ async def chat_stream(
                 await session_memory.save_message(session_id, AIMessage(content=full_response))
 
                 sources = _extract_sources(collected_messages)
-                diagnosis = _extract_structured_answer(full_response)
+                structured_answer = _extract_structured_answer(full_response)
                 # Capture the streamed RAG inference into the eval flywheel
                 # (parity with the non-streaming chat() path). Without this,
                 # negative feedback on a streamed answer has no inference to
@@ -1088,7 +1102,7 @@ async def chat_stream(
                     intent_confidence=intent_result.confidence,
                     intent_reasoning=intent_result.reasoning,
                     source_count=len(sources),
-                    diagnosis=diagnosis,
+                    structured_answer=structured_answer,
                     force_rag=force_rag,
                     confidence=gen_confidence,
                     refused=gen_refused,

@@ -1,11 +1,12 @@
 # 领域自适应 RAG 智能问答平台
 
-面向任意知识领域的本地 RAG 智能问答平台（首发航空地面健康管理 PHM 与维修排故场景，
-现已通用化）。通过 `DOMAIN_PROFILE` 切换或新增领域——同一套代码可服务航空排故、
-通用知识库等任意垂直领域，新增领域只需在 `data/profiles/` 下加一份 YAML，无需改代码。
+面向任意知识领域的本地 RAG 智能问答平台。通过 `DOMAIN_PROFILE` 切换或新增领域——
+同一套代码可服务通用知识库、运维排障等任意垂直领域，新增领域只需在 `data/profiles/`
+下加一份 YAML，无需改代码。仓库自带一份 `aviation_phm` 可选示例 profile，用于演示
+如何把系统嵌入航空航天领域；主链路默认领域无关。
 
 系统能够导入各类手册/文档等知识资料，通过混合检索与大语言模型生成带依据的回答
-（在航空等故障诊断类领域下进一步输出结构化诊断结论、可能原因、排查步骤和安全提示）。
+（在配置了结构化输出模板的领域下，可进一步输出摘要、要点、步骤等结构化回答）。
 
 项目默认领域无关（`DOMAIN_PROFILE=general`），使用本地 Ollama 与 Qwen3 模型，知识库和
 会话数据均可在本机运行，适合内网、离线环境和需要保护技术资料的场景。
@@ -31,7 +32,7 @@
 | Embedding | 默认 BGE-small-zh-v1.5（可替换） |
 | 检索 | Milvus Lite、BM25、RRF |
 | 会话存储 | Redis，可自动降级到 SQLite |
-| 领域适配 | `DOMAIN_PROFILE` + `data/profiles/*.yaml`（默认 general；航空设 aviation_phm） |
+| 领域适配 | `DOMAIN_PROFILE` + `data/profiles/*.yaml`（默认 general；可选示例 aviation_phm） |
 | 前端 | Vue 3、Vite、TypeScript、Pinia |
 
 ## 工作流程
@@ -104,7 +105,7 @@ EMBEDDING_MODEL_PATH=models/local_models/bge-small-zh-v1.5
 EMBEDDING_DIMENSION=512
 EMBEDDING_DEVICE=auto
 
-# 领域 profile（默认 general 领域无关；航空排故场景设 aviation_phm）
+# 领域 profile（默认 general 领域无关；嵌入航空航天示例设 aviation_phm）
 # 新增领域：在 data/profiles/ 下新增 <name>.yaml 即可，无需改代码。
 DOMAIN_PROFILE=general
 ```
@@ -143,7 +144,7 @@ tail -f logs/frontend.log
 
 ```bash
 curl -X POST http://localhost:8000/api/documents/upload \
-  -F "file=@md/phm_test_knowledge_base.md"
+  -F "file=@md/general_test_knowledge_base.md"
 ```
 
 支持上传 `.md`、`.txt` 和 `.pdf`。PDF 会按页面解析：优先使用 `pypdfium2`
@@ -167,7 +168,7 @@ PaddleX MKLDNN 路径以避免部分主机上的 oneDNN/PIR 推理错误。
 上传完成并建立索引后，即可在前端询问：
 
 ```text
-液压系统压力低应该如何排查？
+git 合并冲突如何解决？
 ```
 
 也可以直接调用问答 API：
@@ -175,7 +176,7 @@ PaddleX MKLDNN 路径以避免部分主机上的 oneDNN/PIR 推理错误。
 ```bash
 curl -X POST http://localhost:8000/api/chat \
   -H "Content-Type: application/json" \
-  -d '{"message":"液压系统压力低应该如何排查？","mode":"thinking"}'
+  -d '{"message":"git 合并冲突如何解决？","mode":"thinking"}'
 ```
 
 ## 手动启动
@@ -325,7 +326,7 @@ location /rag/ {
 | `EMBEDDING_DIMENSION` | `512` | Embedding 输出向量维度 |
 | `EMBEDDING_DEVICE` | `auto` | Embedding 运行设备；`auto` 自动探测（CUDA 可用且 wheel 含本机 sm_xx 时用 `cuda`，否则 `cpu`），也可显式设 `cpu`/`cuda` |
 | `EMBEDDING_NORMALIZE` | `true` | 是否归一化 Embedding 向量 |
-| `DOMAIN_PROFILE` | `general` | 领域 profile（`data/profiles/<name>.yaml`）；默认领域无关，航空排故设 `aviation_phm` |
+| `DOMAIN_PROFILE` | `general` | 领域 profile（`data/profiles/<name>.yaml`）；默认领域无关，可选示例 `aviation_phm` |
 | `EMBEDDING_BATCH_SIZE` | `8` | Embedding 编码批大小 |
 | `RERANKER_ENABLED` | `true` | 是否在 RRF 融合后启用 Cross-Encoder 重排序（默认开启；设 `false` 关闭） |
 | `RERANKER_MODEL` | `BAAI/bge-reranker-v2-m3` | 重排序模型（多语言 cross-encoder） |
@@ -439,7 +440,7 @@ uv run python scripts/download_reranker.py
 配置 `RERANKER_WARMUP=true` 后，服务启动时会加载模型，
 避免首个检索请求承担模型加载耗时。
 
-默认 `BAAI/bge-reranker-v2-m3` 是多语言 cross-encoder，对中文（航空 PHM、通用中文
+默认 `BAAI/bge-reranker-v2-m3` 是多语言 cross-encoder，对中文（通用中文知识库、可选示例
 知识库）和英文均有效。如需降低资源占用，可改用更轻量的模型（例如
 `cross-encoder/ms-marco-MiniLM-L-6-v2`，但主要面向英文），再根据显存、延迟和检索
 效果决定是否切换。

@@ -13,6 +13,7 @@ Run: pytest tests/unit/test_thinking_refusal.py -v
 
 from __future__ import annotations
 
+import os
 import sys
 
 import pytest
@@ -84,26 +85,44 @@ class TestStructureCheckLastSection:
     def test_truncated_answer_flagged(self):
         """An answer with a leading section but missing the last sections
         (信息缺口/依据来源) MUST be treated as truncated (structure hint appended),
-        not silently allowed (old behavior only checked sections[:2])."""
+        not silently allowed (old behavior only checked sections[:2]).
+
+        The structure check only fires under a profile with a non-empty
+        ``section_template`` (the default general profile has none). The bundled
+        ``aviation_phm`` example profile carries the 6-section template, so this
+        test pins the profile explicitly (REQ-DG-011: an optional aviation
+        example profile is retained to prove the platform can embed an
+        aerospace domain)."""
         from agent.guardrails.output_guardrails import OutputGuardrail
         from agent.guardrails.types import GuardrailAction
+        from core.prompts.domain_profile import reset_active_profile
 
-        guard = OutputGuardrail()
-        # Leading section present, last sections (依据来源/信息缺口) absent.
-        truncated = "【诊断结论】发动机振动异常。\n【可能原因】叶片损坏。\n【排查步骤】检查叶"
-        result = guard._check_structure(truncated)
-        # Should NOT be a plain ALLOW (it's truncated) — either SANITIZE with hint or ALLOW
-        # if no hint configured. The key assertion: it doesn't silently pass a truncated answer.
-        # With the aviation profile's structure_hint, expect SANITIZE.
-        if result.action == GuardrailAction.SANITIZE:
-            assert "疑似被截断" in (result.reason or "")
-        # A complete answer should ALLOW.
-        complete = (
-            "【诊断结论】x\n【可能原因】y\n【排查步骤】z\n"
-            "【风险与安全提示】w\n【依据来源】s\n【信息缺口】无"
-        )
-        result2 = guard._check_structure(complete)
-        assert result2.action == GuardrailAction.ALLOW
+        _prev = os.environ.get("DOMAIN_PROFILE")
+        os.environ["DOMAIN_PROFILE"] = "aviation_phm"
+        reset_active_profile()
+        try:
+            guard = OutputGuardrail()
+            # Leading section present, last sections (依据来源/信息缺口) absent.
+            # 6-section content is the aviation example profile's structure (REQ-DG-011).
+            truncated = "【诊断结论】发动机振动异常。\n【可能原因】叶片损坏。\n【排查步骤】检查叶"
+            result = guard._check_structure(truncated)
+            # Should NOT be a plain ALLOW (it's truncated) — either SANITIZE with hint or ALLOW
+            # if no hint configured. The key assertion: it doesn't silently pass a truncated answer.
+            # With the aviation profile's structure_hint, expect SANITIZE.
+            if result.action == GuardrailAction.SANITIZE:
+                assert "疑似被截断" in (result.reason or "")
+            # A complete answer should ALLOW.
+            complete = (
+                "【诊断结论】x\n【可能原因】y\n【排查步骤】z\n"
+                "【风险与安全提示】w\n【依据来源】s\n【信息缺口】无"
+            )
+            result2 = guard._check_structure(complete)
+            assert result2.action == GuardrailAction.ALLOW
+        finally:
+            os.environ.pop("DOMAIN_PROFILE", None)
+            if _prev is not None:
+                os.environ["DOMAIN_PROFILE"] = _prev
+            reset_active_profile()
 
 
 if __name__ == "__main__":

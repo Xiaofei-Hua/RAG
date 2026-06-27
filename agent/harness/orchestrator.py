@@ -149,7 +149,7 @@ class AgentHarness:
     Example:
         >>> harness = AgentHarness()
         >>> harness.register_defaults()
-        >>> result = harness.invoke("发动机振动异常如何排查?")
+        >>> result = harness.invoke("git 合并冲突如何解决?")
     """
 
     def __init__(

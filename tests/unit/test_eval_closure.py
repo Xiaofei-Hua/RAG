@@ -29,14 +29,14 @@ class TestContentIdExtraction:
     def test_content_id_deterministic(self):
         """_content_id MUST be deterministic (same text -> same id), matching
         the golden expected_context_ids algorithm (sha1 of normalised text)."""
-        text = "发动机振动偏高的可能原因包括风扇叶片损伤"
+        text = "git 合并冲突的可能原因包括同一文件多分支改动"
         assert _content_id(text) == _content_id(text)  # deterministic
         assert len(_content_id(text)) == 12
 
     def test_content_id_normalises_whitespace(self):
         """Whitespace differences MUST NOT change the id (normalised first)."""
-        a = _content_id("发动机  振动\n偏高")
-        b = _content_id("发动机 振动 偏高")
+        a = _content_id("git  合并\n冲突")
+        b = _content_id("git 合并 冲突")
         assert a == b
 
     def test_extract_result_returns_context_ids(self):
@@ -45,11 +45,11 @@ class TestContentIdExtraction:
         from langchain_core.messages import AIMessage, ToolMessage
 
         # Simulate a graph result with a ToolMessage carrying context.
-        ctx_text = "发动机振动异常的排查步骤"
+        ctx_text = "git 合并冲突的解决步骤"
         result = {
             "messages": [
                 ToolMessage(content=ctx_text, tool_call_id="c1"),
-                AIMessage(content="诊断结论..."),
+                AIMessage(content="结论..."),
             ]
         }
         answer, intent, sources, contexts, context_ids = EvalRunner._extract_result(result, "query")
@@ -81,7 +81,7 @@ class TestIntentExtraction:
         monkeypatch.setattr(ic_mod, "get_intent_classifier", lambda: _FakeClassifier())
 
         result = {"messages": []}
-        _, intent, _, _, _ = EvalRunner._extract_result(result, "发动机振动异常")
+        _, intent, _, _, _ = EvalRunner._extract_result(result, "git 合并冲突")
         assert intent == "rag_query", f"intent should be classified, got {intent!r}"
 
     def test_extract_result_intent_non_empty_for_query(self, monkeypatch):
@@ -115,28 +115,28 @@ class TestJudgeScopeStripping:
         (appended by OutputGuardrail — has no grounding evidence)."""
         from agent.eval.scorer import _strip_guardrail_boilerplate
 
-        answer = "【诊断结论】发动机振动偏高。\n\n本回答仅供参考，不构成最终维修决策。"
+        answer = "【结论】git 合并冲突。\n\n本回答仅供参考，不构成最终操作决策。"
         stripped = _strip_guardrail_boilerplate(answer)
-        # The disclaimer (from aviation profile) should be removed if present.
-        # At minimum, the diagnostic content survives.
-        assert "诊断结论" in stripped
+        # The disclaimer (from the active profile) should be removed if present.
+        # At minimum, the answer content survives.
+        assert "结论" in stripped
 
     def test_strip_removes_caveat_markers(self):
         """Caveat lines (⚠️/🤔 markers) MUST be stripped before judging."""
         from agent.eval.scorer import _strip_guardrail_boilerplate
 
-        answer = "诊断结论。\n\n> ⚠️ 提示：推理存在不确定性，请结合手册核实。"
+        answer = "结论。\n\n> ⚠️ 提示：推理存在不确定性，请结合文档核实。"
         stripped = _strip_guardrail_boilerplate(answer)
         assert "⚠️" not in stripped
-        assert "诊断结论" in stripped
+        assert "结论" in stripped
 
     def test_strip_preserves_real_answer(self):
         """Real diagnostic content MUST survive the strip."""
         from agent.eval.scorer import _strip_guardrail_boilerplate
 
-        answer = "【诊断结论】发动机振动偏高。【可能原因】叶片损伤。【排查步骤】检查叶片。"
+        answer = "【结论】git 合并冲突。【可能原因】多分支改动。【排查步骤】编辑标记。"
         stripped = _strip_guardrail_boilerplate(answer)
-        assert "诊断结论" in stripped
+        assert "结论" in stripped
         assert "排查步骤" in stripped
 
 
@@ -155,7 +155,7 @@ class TestContextIdScoring:
 
         case = EvalCase(
             id="test_ctx",
-            query="发动机振动",
+            query="git 合并",
             expected_sections=[],
             expected_keywords=[],
             expected_intent="rag_query",

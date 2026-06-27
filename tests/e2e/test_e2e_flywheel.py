@@ -23,7 +23,7 @@ class TestInferenceCapture:
     def test_chat_records_inference(self, client):
         # EVAL_SAMPLE_RATE=1.0 in conftest => everything is captured.
         resp = client.post("/api/chat", json={
-            "message": "发动机振动偏高如何诊断？",
+            "message": "git 合并冲突如何解决？",
             "session_id": "e2e-fly-1",
             "mode": "fast",
         })
@@ -41,7 +41,7 @@ class TestInferenceCapture:
 
     def test_inference_detail_has_retrieved_docs(self, client):
         resp = client.post("/api/chat", json={
-            "message": "液压系统压力不稳定如何排查？",
+            "message": "docker 容器无法启动如何排查？",
             "session_id": "e2e-fly-2",
             "mode": "fast",
         })
@@ -49,7 +49,7 @@ class TestInferenceCapture:
 
         detail = client.get(f"/api/admin/inferences/{trace_id}").json()
         assert detail["trace_id"] == trace_id
-        assert detail["query"] == "液压系统压力不稳定如何排查？"
+        assert detail["query"] == "docker 容器无法启动如何排查？"
         assert len(detail["retrieved_docs"]) > 0
         assert detail["route"] == "fast"
 
@@ -60,7 +60,7 @@ class TestFeedbackToCandidate:
     def test_thumbs_down_promotes_candidate(self, client):
         # 1. Chat to produce a captured inference.
         chat = client.post("/api/chat", json={
-            "message": "发动机温度异常升高如何分析？",
+            "message": "http 状态码 502 如何分析？",
             "session_id": "e2e-fb-1",
             "mode": "fast",
         }).json()
@@ -80,12 +80,12 @@ class TestFeedbackToCandidate:
         # 3. The inference was promoted into the candidate pool.
         cands = client.get("/api/admin/eval/candidates").json()
         cand_queries = [c.get("query", "") for c in cands.get("candidates", [])]
-        assert any("温度异常" in q for q in cand_queries), \
+        assert any("502" in q for q in cand_queries), \
             "negative feedback should promote a candidate"
 
     def test_correction_promotes_with_corrected_answer(self, client):
         chat = client.post("/api/chat", json={
-            "message": "振动限值是多少？",
+            "message": "git 默认分支名是什么？",
             "session_id": "e2e-fb-2",
             "mode": "fast",
         }).json()
@@ -96,7 +96,7 @@ class TestFeedbackToCandidate:
             "trace_id": trace_id,
             "feedback_type": "CORRECTION",
             "original_answer": chat["response"],
-            "corrected_answer": "振动限值应为 4.0 IPS，参考手册第 12 页。",
+            "corrected_answer": "git 默认分支名应为 main，参考官方文档。",
         })
         assert fb.status_code == 200
 
@@ -104,7 +104,7 @@ class TestFeedbackToCandidate:
         # The correction candidate should carry the corrected answer.
         matching = [
             c for c in cands.get("candidates", [])
-            if "限值" in c.get("query", "")
+            if "默认分支" in c.get("query", "")
         ]
         assert len(matching) >= 1
 
@@ -142,7 +142,7 @@ class TestRetrievalMiss:
         monkeypatch.setattr(fly_mod, "get_judge", lambda: _LowFaithJudge())
 
         chat = client.post("/api/chat", json={
-            "message": "滑油金属含量超标如何诊断磨损部位？",
+            "message": "redis 缓存穿透如何防护？",
             "session_id": "e2e-miss-1",
             "mode": "fast",
         }).json()
@@ -156,7 +156,7 @@ class TestRetrievalMiss:
 
         misses = client.get("/api/admin/retrieval-misses?limit=20").json()
         miss_queries = [m.get("query", "") for m in misses.get("misses", [])]
-        assert any("滑油" in q for q in miss_queries), \
+        assert any("缓存穿透" in q for q in miss_queries), \
             "low-faithfulness feedback should record a retrieval miss"
 
 
@@ -168,7 +168,7 @@ class TestCandidatePromotionToGolden:
 
         # First produce a candidate via negative feedback.
         chat = client.post("/api/chat", json={
-            "message": "航电系统供电电压波动如何诊断？",
+            "message": "nginx 反向代理如何配置超时？",
             "session_id": "e2e-golden-1",
             "mode": "fast",
         }).json()
@@ -177,11 +177,11 @@ class TestCandidatePromotionToGolden:
             "session_id": "e2e-golden-1",
             "trace_id": trace_id,
             "feedback_type": "CORRECTION",
-            "corrected_answer": "【诊断结论】电压波动指向电源模块异常。",
+            "corrected_answer": "nginx 超时由 proxy_read_timeout 指令控制。",
         })
 
         cands = client.get("/api/admin/eval/candidates").json()["candidates"]
-        target = next(c for c in cands if "供电" in c.get("query", ""))
+        target = next(c for c in cands if "超时" in c.get("query", ""))
 
         # Promote it into a tmp golden dataset.
         golden_path = str(tmp_path / "golden.yaml")
@@ -192,12 +192,12 @@ class TestCandidatePromotionToGolden:
             target["candidate_id"], dataset_path=golden_path
         )
         assert promoted is not None
-        assert "电源模块" in promoted.reference_answer
+        assert "proxy_read_timeout" in promoted.reference_answer
 
         # Verify the golden dataset now contains it.
         from agent.eval.dataset import load_dataset
         loaded = load_dataset(golden_path)
-        assert any("电源模块" in (c.reference_answer or "") for c in loaded)
+        assert any("proxy_read_timeout" in (c.reference_answer or "") for c in loaded)
 
 
 if __name__ == "__main__":

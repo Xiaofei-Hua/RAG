@@ -145,7 +145,7 @@ async def sparse_retrieve(req: RetrievalRequest):
     """
     纯 BM25 关键词检索 — 仅词频匹配，不使用向量。
 
-    适用场景：精确关键词匹配，如 ATA 编号、零件型号、故障代码。
+    适用场景：精确关键词匹配，如标识符、型号、错误代码。
     """
     from core.retrieval.hybrid_retriever import get_hybrid_retriever
 
