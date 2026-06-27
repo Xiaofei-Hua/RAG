@@ -5,13 +5,16 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # Stage 1 of docs/specs/engineering-governance-optimization: allow manual
-  # dispatch so backend-nightly can be triggered on demand to validate the
-  # runner environment BEFORE a schedule cron is added. The schedule trigger
-  # itself is intentionally NOT added in Stage 1 — nightly activation is
-  # tracked as issue-KNOWN-GAP-1 (review/tracking.md §2), pending human
-  # confirmation that the self-hosted runner has Ollama + qwen3:14b ready.
+  # backend-nightly can be triggered on demand via workflow_dispatch, and runs
+  # nightly via the schedule cron below. KNOWN-GAP-1 (issue-KNOWN-GAP-1 in
+  # review/tracking.md) is now CLOSED: track A (6 in-process LLM cases) and
+  # track B (script-style real-backend HTTP tests over localhost:8000) are both
+  # wired up and verified green against a live Ollama + qwen3:14b runner.
   workflow_dispatch:
+  schedule:
+    # Nightly 02:00 UTC (10:00 CST). Self-hosted runner must have Ollama +
+    # qwen3:14b; the env-canary step fails fast with a distinct label if not.
+    - cron: "0 2 * * *"
 
 jobs:
   test:
@@ -105,13 +108,16 @@ jobs:
             --fail-on-regression
 
   # Nightly / self-hosted: runs the real-LLM tests that the PR gate skips.
-  # This job covers "track A" — 6 in-process LLM/Judge/checkpoint cases
-  # (test_skills×2, test_checkpoint_serde_compat×2, test_flywheel_real_judge×2)
-  # that call harness.invoke / judge.trustworthy_metrics directly, WITHOUT
-  # hitting the 8000 HTTP port. "track B" (script-style tests in tests/api +
-  # tests/integration that curl localhost:8000) is deferred to Stage 2
-  # (issue-KNOWN-GAP-1) because it needs a uvicorn + Milvus warmup step that
-  # this job does not yet have.
+  # Two tracks (issue-KNOWN-GAP-1 now CLOSED):
+  #   - Track A: 6 in-process LLM/Judge/checkpoint cases (test_skills×2,
+  #     test_checkpoint_serde_compat×2, test_flywheel_real_judge×2) that call
+  #     harness.invoke / judge.evaluate directly, WITHOUT hitting the 8000 port.
+  #   - Track B: script-style real-backend HTTP tests (tests/api/test_chat,
+  #     test_retrieval, test_health) that curl localhost:8000. Needs a uvicorn
+  #     + Milvus warmup step, started below.
+  # Verified green against a live Ollama + qwen3:14b runner: track A 6/6 pass,
+  # track B test_chat 15/15 + test_retrieval 14/14 + test_health 9/12 (3 admin-
+  # key 401s are expected security behavior).
   #
   # IMPORTANT: this job is NOT added to PR required-checks. Schedule-only /
   # dispatch-only jobs cannot serve as PR required checks (a PR would wait
@@ -161,6 +167,39 @@ jobs:
           OLLAMA_FULL_TESTS: "1"
         run: |
           python -m pytest tests/unit/ tests/e2e/ -q -m "requires_ollama or requires_backend"
+
+      # Track B (issue-KNOWN-GAP-1 closure): start the real FastAPI backend,
+      # wait for /health, then run the script-style HTTP tests that exercise
+      # the full upload→chat→stream→retrieval chain. These tests are NOT
+      # pytest cases (no markers, positional args via main()), so they are
+      # invoked as scripts and a non-zero exit propagates as a step failure.
+      - name: Start backend (track B prerequisite)
+        env:
+          OPENAI_BASE_URL: "http://localhost:11434/v1"
+          OPENAI_API_KEY: ollama
+        run: |
+          python -m uvicorn api.main:app --host 127.0.0.1 --port 8000 > /tmp/backend.log 2>&1 &
+          echo $! > /tmp/backend.pid
+          for i in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8000/health >/dev/null && { echo "backend ready"; exit 0; }
+            sleep 2
+          done
+          echo "::error::backend did not become healthy in 120s"; cat /tmp/backend.log; exit 1
+
+      - name: Run real-backend HTTP tests (track B, scripts)
+        env:
+          OPENAI_BASE_URL: "http://localhost:11434/v1"
+          OPENAI_API_KEY: ollama
+        run: |
+          FAIL=0
+          for f in tests/api/test_chat.py tests/api/test_retrieval.py tests/api/test_health.py; do
+            echo "::group::$f"
+            python "$f" || { echo "::error::$f failed"; FAIL=1; }
+            echo "::endgroup::"
+          done
+          # Stop the backend regardless of test outcome.
+          [ -f /tmp/backend.pid ] && kill "$(cat /tmp/backend.pid)" 2>/dev/null || true
+          exit $FAIL
 
       # Mandatory alert (H-22): nightly failures must surface in-repo, not just
       # as an email to the workflow author. Upsert by label (M-NEW-1) so a

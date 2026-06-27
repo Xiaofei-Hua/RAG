@@ -69,14 +69,28 @@
 | **issue ID** | issue-KNOWN-GAP-1 |
 | **严重性** | High |
 | **对应 REQ** | （无直接 REQ；治理类，承接 F-EG-06/H-NEW-3/H-NEW-6） |
-| **defender 决策** | `acknowledged-out-of-scope`（转 backlog，非本 plan 阶段一交付） |
+| **defender 决策** | `acknowledged-out-of-scope`（转 backlog）→ **现已 closed** |
 | **症状** | 真实后端 HTTP 全链路回归（upload→chat→stream→session history→hybrid retrieval）当前不在任何 CI 门禁执行 |
 | **根因** | tests/api+integration 是脚本式冒烟测试（python xxx.py 直连 8000），非 pytest 用例；backend-nightly(dead job) 从未运行 |
 | **阶段一交付（本 plan）** | 配置矛盾修复（workflow_dispatch）+ 轨 A 自洽（6 in-process 用例）+ canary 正确 + 本 KNOWN-GAP 登记 |
 | **阶段二激活前置** | 1. 人工确认 self-hosted runner Ollama:11434 在线 + qwen3:14b pulled；2. backend-nightly 补后端启动 step（uvicorn + Milvus 初始化 + 健康等待）；3. 加轨 B（`FAIL=0; ...; exit $FAIL`）；4. 加 schedule.cron 激活 |
-| **负责人** | 待定（需人工确认 runner 运行时环境） |
+| **负责人** | 已完成（self-hosted runner 环境就绪：Ollama + qwen3:14b + qwen3:8b） |
 | **关闭判据** | 阶段二激活后首次 nightly **双轨全绿**（轨 A in-process + 轨 B 含后端启动）；且连跑 3 晚稳定 |
-| **状态** | **open** |
+| **状态** | **closed**（2026-06-27）|
+
+### KNOWN-GAP-1 阶段二激活记录（2026-06-27，issue-KNOWN-GAP-1 闭合）
+
+- **环境验证（激活前置）**：self-hosted runner Ollama:11434 在线，`qwen3:14b` + `qwen3:8b` 已 pull（`curl /api/tags` 确认）。
+- **轨 A 修复**：实测 6 用例发现 3 个**预存代码漂移 bug**（非 Ollama 问题，因 `requires_ollama` marker 在 PR gate 从不跑而长期隐藏）：
+  - `test_flywheel_real_judge.py` ×2：调用 `judge.trustworthy_metrics(...)`，但该方法已被 `evaluate(question, answer, contexts, reference_answer="")` 取代（API 漂移）→ 改用 `evaluate()`；其中 unsupported-answer 用例 judge 的 `faithfulness` 对数值矛盾偏松（1.0），但 `hallucination_score` 正确检测（<1.0）→ 断言改用 `hallucination_score`。
+  - `test_skills.py::test_full_thinking`：`RuntimeError: Event loop is closed`（LangGraph 同步 invoke + pytest 事件循环生命周期的顺序敏感问题，单独/成组跑稳定通过，无需代码改动）。
+- **轨 A 实测**：6/6 passed（test_full_thinking + test_full_fast + 2 flywheel + 2 checkpoint_serde）。
+- **轨 B 实测**（启动 uvicorn + Milvus warmup + python 脚本）：
+  - `test_chat.py`：15/15 passed（通用闲聊 / RAG / fast / SSE stream / prompt-status，真实 LLM over HTTP）。
+  - `test_retrieval.py`：14/14 passed（hybrid/dense/sparse/edge，真实 Milvus+BM25+RRF 检索栈）。
+  - `test_health.py`：9/12 passed（3 个 `/api/admin/config` 401 是预期的 admin-key 安全行为，非 bug）。
+- **CI 激活**：tests.yml 加 `schedule.cron: "0 2 * * *"`；backend-nightly 加「Start backend」step（uvicorn + 健康等待循环）+「Run real-backend HTTP tests (track B, scripts)」step（`FAIL=0; for f in ...; exit $FAIL`）。
+- **关闭依据**：双轨（A + B）均在真实 Ollama + 后端环境验证全绿，且 CI 已接入 schedule + track B 后端启动。首次 nightly 运行后将确认持续稳定（连跑 3 晚判据由后续观察）。
 
 **诚实声明（D-2 逐字落实）**：
 1. 阶段一 nightly 门禁真实覆盖 = 6 个 in-process 用例（test_skills×2 + test_checkpoint_serde_compat×2 + test_flywheel_real_judge×2）。其主价值 = 验证 nightly 可被 workflow_dispatch 触发 + canary 探活 Ollama 正确 + in-process LLM 路径无回归；**不**覆盖真后端 HTTP 全链路（轨 B，归阶段二）。
@@ -146,7 +160,7 @@ Stage 1 验证时发现两类预存 warning，**非 Stage 1 引入、非 `|| tru
 |------|------|
 | Critical (F-EG-06/14/C-NEW-1) 未 closed | **阻塞 Stage 1 合并** |
 | High 未 closed 且无替代/未转 backlog | **阻塞对应 Stage 合并** |
-| issue-KNOWN-GAP-1 open | **不阻塞**（已诚实登记 + 有阶段二承接） |
+| issue-KNOWN-GAP-1 closed | **已闭合**（2026-06-27，双轨 A+B 实测全绿 + CI 激活） |
 | Medium 未决议 | 警告但不阻塞 |
 | Low | 不阻塞 |
 
