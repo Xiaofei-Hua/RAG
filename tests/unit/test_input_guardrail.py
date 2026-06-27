@@ -2,10 +2,10 @@
 """
 F07 — Chinese prompt-injection patterns.
 
-The legacy ``INJECTION_PATTERNS`` list was English-only; the PHM user base is
-Chinese-language, so Chinese injection attempts (忽略以上指令 / 越狱 / 你现在是DAN / ...)
+The legacy ``INJECTION_PATTERNS`` list was English-only; the primary user base
+is Chinese-language, so Chinese injection attempts (忽略以上指令 / 越狱 / 你现在是DAN / ...)
 bypassed every pattern. This test pins the Chinese additions and a negative
-test that normal PHM questions are not false-positive blocked.
+test that normal questions are not false-positive blocked.
 
 Run: pytest tests/unit/test_input_guardrail.py -v
 """
@@ -40,20 +40,20 @@ def test_chinese_injection_blocked(payload):
 
 
 @pytest.mark.parametrize("payload", [
-    "发动机振动异常如何排查？",                 # normal PHM query
-    "液压系统压力低的可能原因是什么",            # contains 系统 but not manipulative
-    "请按维修手册的规则给出排查步骤",            # contains 规则 but legitimate
-    "ATA32 章节的起落架排故模式有哪些",          # contains 模式 but legitimate
+    "git 合并冲突如何解决？",                 # normal query
+    "docker 容器系统启动失败的可能原因是什么",  # contains 系统 but not manipulative
+    "请按官方文档的规则给出部署步骤",            # contains 规则 but legitimate
+    "git 工作流的分支管理模式有哪些",            # contains 模式 but legitimate
 ])
-def test_normal_phm_queries_not_blocked(payload):
+def test_normal_queries_not_blocked(payload):
     from agent.guardrails.input_guardrails import InputGuardrail
     from agent.guardrails.types import GuardrailAction
 
     result = InputGuardrail().validate(payload)
-    # Normal PHM queries must NOT trip the injection detector. (Topic check
-    # allows them too since they carry PHM keywords.)
+    # Normal queries must NOT trip the injection detector. (Topic check
+    # allows them too since they carry neutral technical keywords.)
     assert result.action == GuardrailAction.ALLOW, (
-        f"normal PHM query {payload!r} should be ALLOWed, got {result.action}"
+        f"normal query {payload!r} should be ALLOWed, got {result.action}"
     )
 
 

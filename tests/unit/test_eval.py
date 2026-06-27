@@ -92,7 +92,7 @@ class TestClaimExtraction:
     def test_split_claims_basic(self):
         from agent.eval.judge import split_claims
 
-        text = "【诊断结论】振动偏高。步骤1：采集频谱；步骤2：判断不平衡。"
+        text = "结论：合并冲突。步骤1：查看状态；步骤2：编辑标记。"
         claims = split_claims(text)
         assert len(claims) >= 2
         # Section markers stripped.
@@ -101,11 +101,11 @@ class TestClaimExtraction:
     def test_split_claims_numbering(self):
         from agent.eval.judge import split_claims
 
-        text = "1) 检查振动传感器 2) 测量输出电压 3) 更换故障传感器"
+        text = "1) 检查容器日志 2) 测量响应时间 3) 重启服务进程"
         claims = split_claims(text)
         assert len(claims) == 3
         # Numbering should be stripped, content retained.
-        assert all("检查" in c or "测量" in c or "更换" in c for c in claims)
+        assert all("检查" in c or "测量" in c or "重启" in c for c in claims)
 
     def test_split_claims_empty(self):
         from agent.eval.judge import split_claims
@@ -116,9 +116,9 @@ class TestClaimExtraction:
     def test_is_hard_claim_value(self):
         from agent.eval.judge import is_hard_claim
 
-        assert is_hard_claim("振动限值应为 4.0 IPS")
-        assert is_hard_claim("温度不超过 80℃")
-        assert is_hard_claim("【结论】必须更换轴承")
+        assert is_hard_claim("超时阈值应为 30 秒")
+        assert is_hard_claim("并发不超过 1000")
+        assert is_hard_claim("【结论】必须重启服务")
 
     def test_is_not_hard_claim(self):
         from agent.eval.judge import is_hard_claim
@@ -138,19 +138,19 @@ class TestScorer:
 
         case = EvalCase(
             id="t1",
-            query="发动机振动偏高如何诊断？",
-            expected_sections=["诊断结论", "排查步骤"],
-            expected_keywords=["振动", "频谱分析"],
+            query="git 合并冲突如何解决？",
+            expected_sections=["结论", "步骤"],
+            expected_keywords=["合并", "冲突"],
             expected_intent="rag_query",
             expected_min_sources=1,
         )
         scorer = EvalScorer(use_judge=False)
-        answer = "【诊断结论】振动偏高。需进行频谱分析。"
+        answer = "【结论】合并冲突。需编辑冲突标记。"
         score = scorer.score(case, answer, "rag_query", 2, [])
 
         assert score.judge_used is False
         assert score.faithfulness is None
-        # section: 1/2 covered (诊断结论 present, 排查步骤 absent) = 0.5
+        # section: 1/2 covered (结论 present, 步骤 absent) = 0.5
         assert 0.0 < score.section_coverage <= 1.0
         assert score.overall_score > 0.0
 
@@ -161,13 +161,13 @@ class TestScorer:
         case = EvalCase(
             id="t2",
             query="q",
-            expected_sections=["诊断结论"],
-            expected_keywords=["振动"],
+            expected_sections=["结论"],
+            expected_keywords=["合并"],
             expected_intent="rag_query",
             expected_min_sources=1,
         )
         scorer = EvalScorer(use_judge=False)
-        score = scorer.score(case, "【诊断结论】振动问题", "rag_query", 1, [])
+        score = scorer.score(case, "【结论】合并问题", "rag_query", 1, [])
         assert score.overall_score == pytest.approx(1.0)
 
     def test_composite_with_judge_metrics(self):
@@ -231,18 +231,18 @@ class TestRunnerExtraction:
         result = {
             "messages": [
                 ToolMessage(
-                    content="Source: 手册A\nTitle: 振动\n振动分析要点...",
+                    content="Source: git_doc\nTitle: 合并\n合并冲突排查要点...",
                     tool_call_id="call_1",
                 ),
                 ToolMessage(
-                    content="Source: 手册B\n不平衡诊断步骤...",
+                    content="Source: docker_doc\n容器启动排查步骤...",
                     tool_call_id="call_2",
                 ),
-                AIMessage(content="【诊断结论】振动偏高，建议动平衡。"),
+                AIMessage(content="【结论】合并冲突，建议编辑标记。"),
             ]
         }
         answer, intent, sources, contexts, context_ids = EvalRunner._extract_result(result)
-        assert "振动偏高" in answer
+        assert "合并冲突" in answer
         assert sources == 2
         assert len(contexts) == 2
         assert len(context_ids) == 2  # Stage D: ids extracted from contexts
@@ -298,8 +298,8 @@ class TestStubbedJudge:
         judge = self._make_judge(monkeypatch, ['{"supported": true}'], tmp_path)
         try:
             score, note = judge.faithfulness(
-                "振动偏高需动平衡。",
-                ["手册说明振动高时需做动平衡。"],
+                "合并冲突需编辑标记。",
+                ["文档说明合并冲突时需编辑标记。"],
             )
             assert score == 1.0
         finally:
@@ -314,8 +314,8 @@ class TestStubbedJudge:
         )
         try:
             score, note = judge.faithfulness(
-                "振动偏高。需更换发动机。",
-                ["手册仅提到液压系统。"],
+                "合并冲突。需回滚提交。",
+                ["文档仅提到分支管理。"],
             )
             assert score == 0.0
         finally:

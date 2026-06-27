@@ -18,20 +18,20 @@ BASE = "http://localhost:8000"
 PASSED = 0
 FAILED = 0
 
-TEST_DOC = """# B737 液压系统故障排查指南
+TEST_DOC = """# Docker 部署排查指南
 
-## ATA 29 - 液压系统
+## 容器 - 基础概念
 
-### 故障现象：液压系统压力低
+### 常见问题：容器无法启动
 
 #### 排故步骤：
-1. 检查液压油量是否在正常范围内
-2. 检查液压泵出口压力是否符合标准（3000 ± 200 PSI）
-3. 检查液压滤芯是否堵塞，压差指示器是否弹出
+1. 检查镜像是否存在且标签正确
+2. 检查端口映射是否冲突
+3. 检查环境变量与挂载卷配置
 
-#### 故障代码：
-- HYD-PRESS-LOW-A：A系统压力低
-- HYD-PRESS-LOW-B：B系统压力低
+#### 常见标识：
+- DOCKER-START-FAIL-A：端口占用导致启动失败
+- DOCKER-START-FAIL-B：镜像拉取失败
 """
 
 
@@ -108,7 +108,7 @@ def main():
 
     # 1. Upload
     print("\n  [上传]")
-    status, body = _upload("test_hydraulic.md", TEST_DOC)
+    status, body = _upload("test_doc.md", TEST_DOC)
     assert_ok("上传文档成功", status, body, expected_status=200)
     if status == 200:
         doc_id = body.get("id")
@@ -116,7 +116,7 @@ def main():
 
     # 2. Duplicate upload
     print("\n  [重复上传检测]")
-    status, body = _upload("test_hydraulic.md", TEST_DOC)
+    status, body = _upload("test_doc.md", TEST_DOC)
     assert_ok("重复上传被拒绝 (409)", status, body, expected_status=409)
 
     # 3. Wait for processing (Q6: poll instead of fixed sleep)

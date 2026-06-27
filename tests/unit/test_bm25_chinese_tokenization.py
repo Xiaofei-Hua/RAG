@@ -41,21 +41,21 @@ def _new_retriever(**cfg) -> BM25Retriever:
 class TestJiebaTokenization:
     def test_chinese_sentence_split_into_words(self):
         """A Chinese sentence MUST split into word-level tokens, not collapse to
-        a single whole-sentence token. '发动机叶片振动' → contains 发动机/叶片/振动."""
+        a single whole-sentence token. '数据库查询优化' → contains 数据库/查询/优化."""
         r = _new_retriever()
-        tokens = r._tokenize("发动机叶片振动")
-        assert "发动机" in tokens, f"expected word '发动机' in {tokens}"
-        assert "叶片" in tokens, f"expected word '叶片' in {tokens}"
-        assert "振动" in tokens, f"expected word '振动' in {tokens}"
-        # The pre-fix regression produced ['发动机叶片振动'] (len 1).
+        tokens = r._tokenize("数据库查询优化")
+        assert "数据库" in tokens, f"expected word '数据库' in {tokens}"
+        assert "查询" in tokens, f"expected word '查询' in {tokens}"
+        assert "优化" in tokens, f"expected word '优化' in {tokens}"
+        # The pre-fix regression produced ['数据库查询优化'] (len 1).
         assert len(tokens) > 1, f"sentence collapsed to one token: {tokens}"
 
     def test_multiple_terms_not_one_mega_token(self):
         """Two distinct concepts must not fuse into one token."""
         r = _new_retriever()
-        tokens = r._tokenize("发动机振动 液压低压")
-        assert "发动机" in tokens
-        assert "液压" in tokens
+        tokens = r._tokenize("数据库查询 缓存失效")
+        assert "数据库" in tokens
+        assert "缓存" in tokens
 
     def test_jieba_is_actually_installed(self):
         """The dependency MUST be declared so the jieba path runs (not the
@@ -72,11 +72,11 @@ class TestJiebaTokenization:
 
 class TestScriptAwareMinTokenLength:
     def test_chinese_single_char_kept(self):
-        """High-value aviation单字 (泵/阀/轴/桨) MUST survive — they are the
-        subject of many PHM faults. With the script-aware floor (zh=1) they
+        """High-value CJK单字 (库/表/链) MUST survive — they are the
+        subject of many technical queries. With the script-aware floor (zh=1) they
         are kept even though len==1."""
         r = _new_retriever()
-        for term in ["泵", "阀", "轴"]:
+        for term in ["库", "表", "链"]:
             assert term in r._tokenize(term), f"Chinese单字 {term} was dropped"
 
     def test_english_single_letter_dropped(self):
@@ -90,9 +90,9 @@ class TestScriptAwareMinTokenLength:
     def test_custom_zh_floor_can_drop_short_chinese(self):
         """A caller can raise the zh floor; 单字 then drops, multi-char kept."""
         r = _new_retriever(min_token_length_zh=2)
-        tokens = r._tokenize("泵 叶片")
-        assert "泵" not in tokens
-        assert "叶片" in tokens
+        tokens = r._tokenize("库 参数")
+        assert "库" not in tokens
+        assert "参数" in tokens
 
 
 # ===========================================================================
@@ -129,7 +129,7 @@ class TestFallbackVisibility:
 
         try:
             r = _new_retriever()
-            r._tokenize("发动机振动")
+            r._tokenize("数据库查询")
         finally:
             logger.remove(sink_id)
 
@@ -148,9 +148,9 @@ class TestChineseBM25Recall:
     def _index(self, r: BM25Retriever):
         r.add_documents(
             [
-                Document(page_content="发动机叶片振动是常见故障", metadata={"id": "d1"}),
-                Document(page_content="液压系统压力正常无异常", metadata={"id": "d2"}),
-                Document(page_content="天气晴朗适合飞行训练", metadata={"id": "d3"}),
+                Document(page_content="数据库查询优化是常见操作", metadata={"id": "d1"}),
+                Document(page_content="缓存命中率正常无异常", metadata={"id": "d2"}),
+                Document(page_content="天气晴朗适合户外运动", metadata={"id": "d3"}),
             ]
         )
 
@@ -159,9 +159,9 @@ class TestChineseBM25Recall:
         and be recalled (pre-fix: always 0 results)."""
         r = _new_retriever()
         self._index(r)
-        results = r.retrieve("发动机振动", top_k=3)
+        results = r.retrieve("数据库查询", top_k=3)
         ids = [x.document.metadata["id"] for x in results]
-        assert "d1" in ids, f"expected d1 (发动机/振动 match), got {ids}"
+        assert "d1" in ids, f"expected d1 (数据库/查询 match), got {ids}"
         assert len(results) >= 1
 
     def test_zero_overlap_doc_filtered_out(self):
@@ -169,16 +169,16 @@ class TestChineseBM25Recall:
         — keeping them would inject noise into RRF fusion (design §3)."""
         r = _new_retriever()
         self._index(r)
-        results = r.retrieve("发动机振动", top_k=3)
+        results = r.retrieve("数据库查询", top_k=3)
         ids = [x.document.metadata["id"] for x in results]
-        # d3 (天气晴朗) shares no terms with 发动机振动 → must not appear.
+        # d3 (天气晴朗) shares no terms with 数据库查询 → must not appear.
         assert "d3" not in ids, "zero-overlap doc d3 leaked into results — score>0 filter broken"
 
     def test_chinese_query_score_is_positive(self):
         """The recalled Chinese doc MUST have a positive score (was always 0)."""
         r = _new_retriever()
         self._index(r)
-        results = r.retrieve("发动机振动", top_k=3)
+        results = r.retrieve("数据库查询", top_k=3)
         assert results, "no results for a matching Chinese query"
         assert all(x.score > 0 for x in results), (
             f"non-positive scores: {[(x.document.metadata['id'], x.score) for x in results]}"
@@ -230,11 +230,11 @@ class TestHybridChineseSparseLeg:
         r = BM25Retriever()
         r.add_documents(
             [
-                Document(page_content="发动机叶片振动是常见故障原因", metadata={"id": "d1"}),
-                Document(page_content="液压系统压力偏低报警", metadata={"id": "d2"}),
+                Document(page_content="数据库查询优化是常见操作原因", metadata={"id": "d1"}),
+                Document(page_content="缓存命中率偏低报警", metadata={"id": "d2"}),
             ]
         )
-        results = r.retrieve("发动机振动", top_k=5)
+        results = r.retrieve("数据库查询", top_k=5)
         assert results, "sparse leg returned empty for a Chinese query — P0 regressed"
 
     def test_dense_only_fallback_when_sparse_empty(self):

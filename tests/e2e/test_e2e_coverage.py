@@ -88,14 +88,14 @@ class TestRetrievalEndpoints:
     array. The fake retriever returns 2 canned docs, so we assert non-empty."""
 
     def test_hybrid_retrieval(self, client):
-        resp = client.post("/api/retrieval", json={"query": "发动机振动", "top_k": 3})
+        resp = client.post("/api/retrieval", json={"query": "git 合并", "top_k": 3})
         assert resp.status_code == 200
         body = resp.json()
         assert "results" in body and isinstance(body["results"], list)
 
     @pytest.mark.skipif(not _gpu_kernel_supported(), reason=_REASON)
     def test_dense_retrieval(self, client):
-        resp = client.post("/api/retrieval/dense", json={"query": "发动机振动", "top_k": 3})
+        resp = client.post("/api/retrieval/dense", json={"query": "git 合并", "top_k": 3})
         assert resp.status_code == 200
         body = resp.json()
         assert "results" in body and isinstance(body["results"], list)
@@ -106,7 +106,7 @@ class TestRetrievalEndpoints:
         # in-process client it returns 500. This asserts the endpoint is wired
         # (the route resolves and executes) rather than the index — the live
         # BM25 path is covered by tests/unit/test_bm25_consistency.py.
-        resp = client.post("/api/retrieval/sparse", json={"query": "发动机振动", "top_k": 3})
+        resp = client.post("/api/retrieval/sparse", json={"query": "git 合并", "top_k": 3})
         assert resp.status_code in (200, 500)
 
     def test_retrieval_rejects_empty_query(self, client):
@@ -272,7 +272,7 @@ class TestStreamingSequence:
         with client.stream(
             "POST",
             "/api/chat/stream",
-            json={"message": "发动机振动", "session_id": "e2e-str-fast", "mode": "fast"},
+            json={"message": "git 合并", "session_id": "e2e-str-fast", "mode": "fast"},
         ) as resp:
             assert resp.status_code == 200
             events = _parse_sse(resp.read().decode())
@@ -287,7 +287,7 @@ class TestStreamingSequence:
         with client.stream(
             "POST",
             "/api/chat/stream",
-            json={"message": "发动机振动偏高如何诊断？", "session_id": "e2e-str-rag"},
+            json={"message": "git 合并冲突如何解决？", "session_id": "e2e-str-rag"},
         ) as resp:
             assert resp.status_code == 200
             events = _parse_sse(resp.read().decode())
@@ -325,7 +325,7 @@ class TestDegradationE2E:
         resp = client.post(
             "/api/chat",
             json={
-                "message": "发动机振动偏高如何诊断？",
+                "message": "git 合并冲突如何解决？",
                 "session_id": "e2e-degrade",
             },
         )

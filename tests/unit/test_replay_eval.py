@@ -99,10 +99,10 @@ class TestReplayOffline:
         ev = ReplayEvaluator(scorer=EvalScorer(use_judge=False))
         rec = {
             "id": "r1",
-            "query": "发动机振动偏高？",
-            "answer": "【诊断结论】振动偏高，需动平衡。",
-            "contexts": ["手册说振动高需做动平衡。"],
-            "reference_answer": "需做动平衡。",
+            "query": "git 合并冲突如何解决？",
+            "answer": "需编辑冲突标记后提交。",
+            "contexts": ["文档说合并冲突需编辑标记。"],
+            "reference_answer": "需编辑冲突标记。",
             "intent": "rag_query",
         }
         result = ev.score_record(rec)
@@ -151,8 +151,8 @@ class TestJudgeDegradation:
         judge = self._make_judge_with_dead_llm(monkeypatch, tmp_path)
         try:
             score, note = judge.faithfulness(
-                "振动偏高需动平衡。需检查支承。",
-                ["手册说明振动高时需做动平衡。"],
+                "合并冲突需编辑标记。需查看状态。",
+                ["文档说明合并冲突时需编辑标记。"],
             )
             assert score is None
             assert "unavailable" in note or "无法判定" in note
@@ -164,7 +164,7 @@ class TestJudgeDegradation:
         try:
             # Hard claim (contains a value) but LLM down => None.
             score, note = judge.hallucination_score(
-                "振动限值应为 4.0 IPS。",
+                "超时应为 30 秒。",
                 ["context"],
             )
             assert score is None
@@ -196,7 +196,7 @@ class TestJudgeDegradation:
             # Force trips by repeated failures.
             for _ in range(6):
                 judge._ask("p")
-            m = judge.evaluate("q", "答案为限值 4.0。", ["context"], reference_answer="ref")
+            m = judge.evaluate("q", "答案为超时 30 秒。", ["context"], reference_answer="ref")
             assert m.judge_used is False
             # answer_relevancy uses local embeddings, not the LLM — it can still
             # produce a value even with the circuit open. The NLI metrics must be None.

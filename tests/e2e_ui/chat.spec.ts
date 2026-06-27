@@ -36,17 +36,17 @@ test.describe("Chat UI", () => {
     await screenshot(page, SHOT_DIR, "identity-answer");
   });
 
-  test("deep (thinking) mode answers a RAG question with a diagnosis", async ({ page }) => {
+  test("deep (thinking) mode answers a RAG question", async ({ page }) => {
     await page.goto("/");
     // Ensure thinking mode (default).
     await expect(page.getByTestId("mode-thinking")).toHaveClass(/active/);
     const input = page.getByTestId("chat-input");
-    await input.fill("发动机振动异常如何排查？");
+    await input.fill("git 合并冲突如何解决？");
     await input.press("Enter");
 
-    // Fake harness returns a canned PHM diagnosis answer.
+    // Fake harness returns a canned domain-neutral answer.
     await expect(page.locator("[data-testid='message'].assistant").last())
-      .toContainText(/诊断|振动|不平衡|频谱/, { timeout: 30_000 });
+      .toContainText(/合并|冲突|Git|提交/, { timeout: 30_000 });
     await screenshot(page, SHOT_DIR, "deep-answer");
   });
 
@@ -55,11 +55,11 @@ test.describe("Chat UI", () => {
     await page.getByTestId("mode-fast").click();
     await expect(page.getByTestId("mode-fast")).toHaveClass(/active/);
     const input = page.getByTestId("chat-input");
-    await input.fill("液压系统压力低的排故流程是什么？");
+    await input.fill("git 分支管理的常用命令是什么？");
     await input.press("Enter");
 
     await expect(page.locator("[data-testid='message'].assistant").last())
-      .toContainText(/诊断|液压|压力/, { timeout: 30_000 });
+      .toContainText(/合并|冲突|Git|提交/, { timeout: 30_000 });
     await screenshot(page, SHOT_DIR, "fast-answer");
   });
 
@@ -72,25 +72,25 @@ test.describe("Chat UI", () => {
       { timeout: 30_000 }
     );
     const input = page.getByTestId("chat-input");
-    await input.fill("发动机振动异常如何排查？");
+    await input.fill("git 合并冲突如何解决？");
     await input.press("Enter");
     const resp = await streamResp;
     expect(resp.ok()).toBeTruthy();
 
     // The assistant message should gain content via token events.
     await expect(page.locator("[data-testid='message'].assistant").last())
-      .toContainText(/诊断|振动|不平衡|频谱/, { timeout: 30_000 });
+      .toContainText(/合并|冲突|Git|提交/, { timeout: 30_000 });
     await screenshot(page, SHOT_DIR, "stream-answer");
   });
 
   test("sources panel opens when an answer has sources", async ({ page }) => {
     await page.goto("/");
     const input = page.getByTestId("chat-input");
-    await input.fill("发动机振动异常如何排查？");
+    await input.fill("git 合并冲突如何解决？");
     await input.press("Enter");
     // Wait for the answer to land first.
     await expect(page.locator("[data-testid='message'].assistant").last())
-      .toContainText(/诊断|振动/, { timeout: 30_000 });
+      .toContainText(/合并|冲突/, { timeout: 30_000 });
 
     const toggle = page.getByTestId("sources-toggle");
     if (await toggle.count()) {
@@ -105,10 +105,10 @@ test.describe("Chat UI", () => {
 async function seedAnswer(page: import("@playwright/test").Page): Promise<void> {
   await page.goto("/");
   const input = page.getByTestId("chat-input");
-  await input.fill("发动机振动异常如何排查？");
+  await input.fill("git 合并冲突如何解决？");
   await input.press("Enter");
   await expect(page.locator("[data-testid='message'].assistant").last())
-    .toContainText(/诊断|振动/, { timeout: 30_000 });
+    .toContainText(/合并|冲突/, { timeout: 30_000 });
   // The feedback row renders once streaming completes.
   await expect(page.getByTestId("feedback-row").first()).toBeVisible({ timeout: 10_000 });
 }
@@ -132,7 +132,7 @@ test.describe("Chat feedback", () => {
     await seedAnswer(page);
     await page.getByTestId("feedback-correct-open").first().click();
     await expect(page.getByTestId("correction-box").first()).toBeVisible();
-    await page.getByTestId("correction-input").first().fill("应先检查转子平衡，再测频谱。");
+    await page.getByTestId("correction-input").first().fill("应先切换到目标分支再解决冲突。");
     await screenshot(page, SHOT_DIR, "correction-input");
     await page.getByTestId("correction-submit").first().click();
     await expect(page.getByTestId("feedback-done").first()).toBeVisible({ timeout: 10_000 });

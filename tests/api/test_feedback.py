@@ -86,8 +86,8 @@ def main():
     status, body = _req("POST", "/api/feedback", {
         "session_id": session_id,
         "feedback_type": "CORRECTION",
-        "original_answer": "振动限值为 5.0 IPS",
-        "corrected_answer": "振动限值应为 4.0 IPS，参考手册第 12 页",
+        "original_answer": "git 默认分支名为 master",
+        "corrected_answer": "git 默认分支名应为 main，参考官方文档",
     })
     assert_ok("提交纠正返回 200", status, body)
 

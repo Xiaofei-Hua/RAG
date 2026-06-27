@@ -75,7 +75,7 @@ def test_rag_chat(session_id):
     print("\n  [非流式] RAG 问答")
 
     status, body = _req("POST", "/api/chat", {
-        "message": "液压系统压力低如何排查？",
+        "message": "git 合并冲突如何解决？",
         "session_id": session_id,
         "stream": False,
         "mode": "thinking",
@@ -92,7 +92,7 @@ def test_fast_mode_chat(session_id):
     print("\n  [非流式] 快速模式")
 
     status, body = _req("POST", "/api/chat", {
-        "message": "发动机振动异常的排故流程？",
+        "message": "docker 部署的常用命令？",
         "session_id": session_id,
         "mode": "fast",
     }, timeout=60)
@@ -108,7 +108,7 @@ def test_sse_stream(session_id):
 
     conn = http.client.HTTPConnection("localhost", 8000, timeout=60)
     body = json.dumps({
-        "message": "发动机振动异常如何排查？",
+        "message": "git 合并冲突如何解决？",
         "session_id": session_id,
         "stream": True,
     }).encode()

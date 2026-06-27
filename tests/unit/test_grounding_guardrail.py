@@ -52,13 +52,13 @@ class TestGroundingGuardrail:
     def test_all_hard_claims_grounded(self, monkeypatch):
         # One hard claim, supported -> faithfulness 1.0
         g = self._make_guardrail(monkeypatch, [True])
-        result = g.check("振动限值应为 4.0 IPS。", ["手册写明振动限值 4.0 IPS。"])
+        result = g.check("超时应为 30 秒。", ["文档写明超时 30 秒。"])
         assert result.available
         assert result.faithfulness == 1.0
 
     def test_hard_claim_unsupported(self, monkeypatch):
         g = self._make_guardrail(monkeypatch, [False])
-        result = g.check("振动限值应为 4.0 IPS。", ["手册未提及限值。"])
+        result = g.check("超时应为 30 秒。", ["文档未提及超时。"])
         assert result.faithfulness == 0.0
         assert len(result.unsupported_claims) == 1
 
@@ -74,7 +74,7 @@ class TestGroundingGuardrail:
         class _DeadJudge:
             available = False
         g = GroundingGuardrail(judge=_DeadJudge())
-        result = g.check("振动限值 4.0。", ["ctx"])
+        result = g.check("超时阈值 30。", ["ctx"])
         assert not result.available
         assert result.degraded
         assert result.faithfulness is None
@@ -89,7 +89,7 @@ class TestGroundingGuardrail:
             def _entail(self, *a, **k):
                 return self.entail(*a, **k)
         g = GroundingGuardrail(judge=_ExplodingJudge())
-        result = g.check("振动限值 4.0。", ["ctx"])
+        result = g.check("超时阈值 30。", ["ctx"])
         assert not result.available  # degraded, not raised
 
 
@@ -122,7 +122,7 @@ class TestOutputGuardrailGrounding:
         og = OutputGuardrail()
         # answer with safety disclaimer so only hallucination matters
         result = og.validate(
-            "【诊断结论】测试。仅供参考，注意安全风险。",
+            "【结论】测试。仅供参考。",
             sources=["doc"],
             contexts=["context"],
         )
@@ -145,7 +145,7 @@ class TestOutputGuardrailGrounding:
         from agent.guardrails.output_guardrails import OutputGuardrail
         og = OutputGuardrail()
         result = og.validate(
-            "【诊断结论】测试。仅供参考，注意安全风险。",
+            "【结论】测试。仅供参考。",
             sources=["doc"],
             contexts=["context"],
         )
@@ -169,7 +169,7 @@ class TestOutputGuardrailGrounding:
         from agent.guardrails.output_guardrails import OutputGuardrail
         og = OutputGuardrail()
         result = og.validate(
-            "【诊断结论】测试。仅供参考，注意安全风险。",
+            "【结论】测试。仅供参考。",
             sources=["doc"],
             contexts=["context"],
         )

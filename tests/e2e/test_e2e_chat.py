@@ -25,7 +25,7 @@ class TestIdentityBranch:
     def test_identity_query_skips_llm(self, client):
         """'你是谁' / capability queries return a canned identity response."""
         resp = client.post("/api/chat", json={
-            "message": "你好，请介绍一下PHM系统能做什么？",
+            "message": "你好，请介绍一下你能做什么？",
             "session_id": "e2e-identity",
         })
         assert resp.status_code == 200
@@ -48,7 +48,7 @@ class TestIdentityBranch:
 class TestFastModeBranch:
     def test_fast_mode_returns_sources_and_route(self, client):
         resp = client.post("/api/chat", json={
-            "message": "发动机振动偏高如何诊断？",
+            "message": "git 合并冲突如何解决？",
             "session_id": "e2e-fast",
             "mode": "fast",
         })
@@ -72,19 +72,19 @@ class TestFastModeBranch:
 class TestRagBranch:
     def test_rag_query_returns_answer_with_sources(self, client):
         resp = client.post("/api/chat", json={
-            "message": "发动机振动值偏高，如何进行故障诊断？",
+            "message": "git 合并冲突如何解决？",
             "session_id": "e2e-rag",
         })
         assert resp.status_code == 200
         body = resp.json()
         assert body["metadata"]["route"] == "rag"
-        assert "振动" in body["response"]
+        assert "合并" in body["response"]
         assert len(body["sources"]) > 0
 
     def test_rag_response_has_confidence_metadata(self, client):
         """P0: confidence is computed and surfaced in metadata."""
         resp = client.post("/api/chat", json={
-            "message": "液压系统压力不稳定如何排查？",
+            "message": "docker 容器无法启动如何排查？",
             "session_id": "e2e-rag-conf",
         })
         body = resp.json()
@@ -179,7 +179,7 @@ class TestStreaming:
         with client.stream(
             "POST",
             "/api/chat/stream",
-            json={"message": "发动机振动偏高如何诊断？", "session_id": "e2e-stream"},
+            json={"message": "git 合并冲突如何解决？", "session_id": "e2e-stream"},
         ) as resp:
             assert resp.status_code == 200
             consumer = threading.Thread(target=_consume, args=(resp,), daemon=True)

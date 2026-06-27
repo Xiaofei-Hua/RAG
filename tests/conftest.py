@@ -208,7 +208,7 @@ class FakeLLM:
     plus with_structured_output for the intent classifier.
     """
 
-    def __init__(self, answer: str = "【诊断结论】这是测试诊断。仅供参考，注意安全风险。"):
+    def __init__(self, answer: str = "这是测试回答。仅供参考。"):
         self._answer = answer
 
     def invoke(self, messages, **kwargs):
@@ -262,12 +262,12 @@ def fake_retriever():
         def retrieve(self, query, top_k=None, filter_expr=None):
             return [
                 Document(
-                    page_content="发动机振动偏高时应进行频谱分析，1倍频主导通常指示不平衡。",
-                    metadata={"source": "engine_manual", "title": "振动诊断", "score": 0.92},
+                    page_content="Git 合并冲突通常由同一文件的多分支改动引起，需手动编辑冲突标记后提交。",
+                    metadata={"source": "git_guide", "title": "合并冲突排查", "score": 0.92},
                 ),
                 Document(
-                    page_content="检查支承刚度与紧固件，必要时进行现场动平衡。",
-                    metadata={"source": "engine_manual", "title": "振动排查", "score": 0.80},
+                    page_content="解决冲突后应运行测试确认无回归，再完成合并提交。",
+                    metadata={"source": "git_guide", "title": "冲突后验证", "score": 0.80},
                 )
             ][: (top_k or 4)]
 
@@ -290,13 +290,13 @@ def fake_harness(fake_llm, fake_retriever):
     """
     from langchain_core.messages import AIMessage, ToolMessage
 
-    canned_answer = "【诊断结论】发动机振动偏高，最可能为转子不平衡，仅供参考注意安全风险。"
+    canned_answer = "Git 合并冲突需要手动编辑冲突标记后提交，仅供参考。"
 
     def _build_result():
         return {
             "messages": [
                 ToolMessage(
-                    content="发动机振动偏高时应进行频谱分析，1倍频主导通常指示不平衡。",
+                    content="Git 合并冲突通常由同一文件的多分支改动引起，需手动编辑冲突标记后提交。",
                     tool_call_id="c1",
                 ),
                 AIMessage(
@@ -309,9 +309,9 @@ def fake_harness(fake_llm, fake_retriever):
             ],
             "_sources": [
                 {
-                    "source": "engine_manual",
-                    "title": "振动诊断",
-                    "content": "发动机振动偏高时应进行频谱分析",
+                    "source": "git_guide",
+                    "title": "合并冲突排查",
+                    "content": "Git 合并冲突通常由同一文件的多分支改动引起",
                     "score": 0.92,
                 }
             ],
@@ -342,8 +342,8 @@ def fake_harness(fake_llm, fake_retriever):
                     "retrieve": {
                         "messages": [
                             {
-                                "content": "发动机振动偏高时应进行频谱分析，1倍频主导通常指示不平衡。",
-                                "metadata": {"source": "engine_manual", "title": "振动诊断"},
+                                "content": "Git 合并冲突通常由同一文件的多分支改动引起，需手动编辑冲突标记后提交。",
+                                "metadata": {"source": "git_guide", "title": "合并冲突排查"},
                             }
                         ]
                     }
@@ -468,7 +468,7 @@ def client(tmp_data_dir, fake_llm, fake_retriever, fake_harness, fake_session_me
         from types import SimpleNamespace
         docs = fake_retriever.retrieve(query)
         return SimpleNamespace(
-            answer="【诊断结论】快速模式诊断结果。仅供参考注意安全风险。",
+            answer="快速模式检索结果。Git 合并冲突需手动编辑冲突标记。仅供参考。",
             sources=[
                 {"source": d.metadata["source"], "title": d.metadata["title"],
                  "content": d.page_content, "score": d.metadata["score"]}
@@ -529,8 +529,12 @@ class _FakeIntentClassifier:
     """Uses keyword fast-path; falls back to a fake LLM structured output."""
 
     _RAG_KEYWORDS = frozenset([
-        "振动", "液压", "航电", "发动机", "故障", "诊断", "排故", "排查",
-        "压力", "温度", "滑油", "振动", "传感器", "电源", "信号",
+        # Domain-neutral technical keywords so the routing fast-path fires for
+        # generic queries (git, docker, http, deploy, config, ...). The previous
+        # list carried domain-specific terms which coupled the default test
+        # path to a single domain.
+        "git", "docker", "http", "https", "部署", "配置", "合并", "冲突",
+        "分支", "接口", "服务", "命令", "异常", "排查", "查询", "缓存",
     ])
     _CHAT_KEYWORDS = frozenset(["你好", "谢谢", "再见", "你是谁", "你能做什么", "hello", "hi"])
 

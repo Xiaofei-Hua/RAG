@@ -44,10 +44,10 @@ def test_real_judge_faithfulness_on_supported_answer():
         pytest.skip("LLMJudge unavailable (Ollama down) — graceful degradation path")
 
     metrics = judge.evaluate(
-        question="发动机振动限值是多少？",
-        answer="发动机振动限值应为 4.0 IPS。",
-        contexts=["手册规定：发动机振动限值为 4.0 IPS，超过该值需停机检查。"],
-        reference_answer="振动限值 4.0 IPS。",
+        question="nginx 默认超时是多少秒？",
+        answer="nginx 默认超时应为 60 秒。",
+        contexts=["文档规定：nginx 默认超时为 60 秒，超过该值需排查上游服务。"],
+        reference_answer="默认超时 60 秒。",
     )
     # A well-supported single-claim answer should be faithful.
     assert metrics.faithfulness is not None
@@ -68,10 +68,10 @@ def test_real_judge_faithfulness_on_unsupported_answer():
         pytest.skip("LLMJudge unavailable (Ollama down) — graceful degradation path")
 
     metrics = judge.evaluate(
-        question="发动机振动限值是多少？",
-        answer="发动机振动限值应为 25.0 IPS，这是正常工作范围。",
-        contexts=["手册规定：发动机振动限值为 4.0 IPS，超过该值需停机检查。"],
-        reference_answer="振动限值 4.0 IPS。",
+        question="nginx 默认超时是多少秒？",
+        answer="nginx 默认超时应为 250 秒，这是正常工作范围。",
+        contexts=["文档规定：nginx 默认超时为 60 秒，超过该值需排查上游服务。"],
+        reference_answer="默认超时 60 秒。",
     )
     # A contradicted hard claim should be flagged. The judge surfaces this via
     # hallucination_score (fraction of hard claims lacking context support) — a

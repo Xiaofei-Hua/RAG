@@ -277,7 +277,7 @@ class TestMemoryEnrichmentHook:
 
         class _FakeStore:
             def retrieve(self, query):
-                return [_FakeMem("m1", "振动限值 4.0", "correction")]
+                return [_FakeMem("m1", "git 默认分支 main", "correction")]
 
         monkeypatch.setattr(
             "agent.memory.lifecycle.get_memory_store", lambda: _FakeStore()
@@ -287,14 +287,14 @@ class TestMemoryEnrichmentHook:
         from agent.skills.base import SkillContext
 
         ctx = SkillContext(
-            messages=[HumanMessage(content="振动限值是多少？")], shared_state={}
+            messages=[HumanMessage(content="git 默认分支是什么？")], shared_state={}
         )
         increment = hook("agent", ctx)
         assert increment is not None
         assert "shared_state" in increment
-        assert increment["shared_state"]["relevant_memories"][0]["content"] == "振动限值 4.0"
+        assert increment["shared_state"]["relevant_memories"][0]["content"] == "git 默认分支 main"
         # Also mutates the live context for the current node.
-        assert ctx.shared_state["relevant_memories"][0]["content"] == "振动限值 4.0"
+        assert ctx.shared_state["relevant_memories"][0]["content"] == "git 默认分支 main"
 
     def test_hook_returns_none_for_non_agent_skill(self):
         from agent.memory.lifecycle import create_memory_enrichment_hook
