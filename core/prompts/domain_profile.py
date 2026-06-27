@@ -3,7 +3,7 @@ Domain Profile — 领域自适应配置层
 
 把领域相关内容(prompts / keywords / 输出结构 / 身份文案 / 兜底提示)外置成 YAML,
 使同一套 RAG 代码能服务任意知识库。active profile 由 env ``DOMAIN_PROFILE`` 选择
-(默认 ``general``,领域无关;航空场景设 ``DOMAIN_PROFILE=aviation_phm``)。
+(默认 ``general``,领域无关;可选示例 ``aviation_phm`` 演示嵌入航空航天领域)。
 
 设计要点:
 - DomainProfile 是领域配置的单一事实来源;源码不再出现领域字面量。
@@ -105,8 +105,8 @@ def _general_defaults() -> dict[str, Any]:
         "chat_keywords": ["你好", "谢谢", "再见", "hello", "hi", "thanks", "bye"],
         "query_patterns": [],
         # Query-transform selection heuristics (agent/skills/retrieve/skill.py
-        # ``_decide_transform``). Anchors = precise identifiers (ATA chapter /
-        # fault code) whose presence skips the transform; symptoms = short
+        # ``_decide_transform``). Anchors = precise identifiers (e.g. a chapter
+        # code / fault code) whose presence skips the transform; symptoms = short
         # abstract tokens triggering multi_query; diagnostics = question verbs
         # triggering hyde. General defaults: domain-neutral diagnostics only,
         # empty anchors/symptoms so no domain regex leaks.
@@ -160,11 +160,6 @@ class DomainProfile:
     empty_context_message: str = ""
     retriever_tool_description: str = ""
     pii_operational_patterns: list[dict[str, str]] = field(default_factory=list)
-    # True when the source YAML explicitly declared ``pii_operational_patterns``
-    # (even as []). Distinguishes "explicitly none" from "field absent", so the
-    # pii guardrail only falls back to built-in aviation patterns when a legacy
-    # profile omits the key entirely (backward compat).
-    pii_operational_patterns_declared: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DomainProfile:
@@ -175,19 +170,12 @@ class DomainProfile:
             merged[key] = data.get(key, defaults[key])
         # prompts 单独深度合并(允许 profile 只覆盖部分 prompt)。
         merged["prompts"] = {**defaults["prompts"], **(data.get("prompts") or {})}
-        # pii_operational_patterns_declared: True if the YAML key was present
-        # at all (explicit, even if empty). The built-in general() profile is
-        # treated as explicitly-declared-empty (no aviation fallback leak).
-        merged["pii_operational_patterns_declared"] = "pii_operational_patterns" in data
         return cls(**merged)
 
     @classmethod
     def general(cls) -> DomainProfile:
         """领域无关默认 profile(也是加载失败的回退)。"""
-        prof = cls.from_dict(_general_defaults())
-        # The general() built-in is explicitly-declared (no aviation fallback).
-        prof.pii_operational_patterns_declared = True
-        return prof
+        return cls.from_dict(_general_defaults())
 
     # ---- 便捷访问 ----
 

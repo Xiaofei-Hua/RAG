@@ -150,7 +150,7 @@ class OutputGuardrail:
                 if faith < self._config.grounding_threshold:
                     # Partially unsupported — append a caveat.
                     caveat = (
-                        "\n\n> ⚠️ 提示：本回答部分结论未经手册直接验证，请核对原始资料后再行决策。"
+                        "\n\n> ⚠️ 提示：本回答部分结论未经知识库直接验证，请核对原始资料后再行决策。"
                     )
                     return GuardrailResult(
                         action=GuardrailAction.SANITIZE,

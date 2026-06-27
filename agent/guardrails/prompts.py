@@ -36,7 +36,7 @@ INJECTION_PATTERNS: list[re.Pattern[str]] = [
         r"reveal\s+(your|the)\s+(system|hidden|internal)\s+(prompt|instructions|rules)",
         re.IGNORECASE,
     ),
-    # --- Chinese (previously missing — the PHM user base is Chinese-language) ---
+    # --- Chinese (the primary user base is Chinese-language) ---
     re.compile(
         r"忽略(以上|前面|之前|上面|先前)(的)?(所有|全部)?(指令|规则|提示|提示词|内容|要求|设定)"
     ),

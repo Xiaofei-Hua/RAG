@@ -122,13 +122,13 @@
               </button>
             </div>
             <div
-              v-if="msg.role === 'assistant' && !msg.isStreaming && hasDiagnosis(msg)"
-              class="diagnosis-card"
+              v-if="msg.role === 'assistant' && !msg.isStreaming && hasStructuredAnswer(msg)"
+              class="structured-answer-card"
             >
               <h4>结构化回答</h4>
-              <p v-if="msg.diagnosis?.conclusion"><strong>诊断结论：</strong>{{ msg.diagnosis?.conclusion }}</p>
-              <p v-if="msg.diagnosis?.safety_risks"><strong>风险提示：</strong>{{ msg.diagnosis?.safety_risks }}</p>
-              <p v-if="msg.diagnosis?.info_gaps"><strong>信息缺口：</strong>{{ msg.diagnosis?.info_gaps }}</p>
+              <p v-if="msg.structuredAnswer?.summary"><strong>{{ sectionLabel(msg, 0) }}：</strong>{{ msg.structuredAnswer?.summary }}</p>
+              <p v-if="msg.structuredAnswer?.notes"><strong>{{ sectionLabel(msg, 3) }}：</strong>{{ msg.structuredAnswer?.notes }}</p>
+              <p v-if="msg.structuredAnswer?.gaps"><strong>{{ sectionLabel(msg, 5) }}：</strong>{{ msg.structuredAnswer?.gaps }}</p>
             </div>
             <div class="message-footer" v-if="msg.role === 'assistant' && !msg.isStreaming && msg.processingTime">
               <span class="processing-time">{{ msg.processingTime.toFixed(0) }}ms</span>
@@ -413,18 +413,37 @@ function askQuestion(question: string) {
   handleSend()
 }
 
-function hasDiagnosis(msg: ChatMessage): boolean {
+function hasStructuredAnswer(msg: ChatMessage): boolean {
   return Boolean(
-    msg.diagnosis &&
+    msg.structuredAnswer &&
     (
-      msg.diagnosis.conclusion ||
-      msg.diagnosis.possible_causes?.length ||
-      msg.diagnosis.troubleshooting_steps?.length ||
-      msg.diagnosis.safety_risks ||
-      msg.diagnosis.evidence_sources?.length ||
-      msg.diagnosis.info_gaps
+      msg.structuredAnswer.summary ||
+      msg.structuredAnswer.details?.length ||
+      msg.structuredAnswer.steps?.length ||
+      msg.structuredAnswer.notes ||
+      msg.structuredAnswer.sources?.length ||
+      msg.structuredAnswer.gaps
     )
   )
+}
+
+/**
+ * Caption for a positional StructuredAnswer slot, sourced from the active
+ * domain profile's section_template (carried in metadata.section_labels).
+ * Keeps the UI domain-neutral: an aviation profile renders its own captions
+ * (e.g. "风险与安全提示" for slot 3) without this view hardcoding any domain
+ * text. Falls back to a neutral generic label when no profile label is present
+ * (e.g. older cached messages). [domain-generalization F-C1]
+ */
+function sectionLabel(msg: ChatMessage, index: number): string {
+  const labels = msg.metadata?.section_labels as string[] | undefined
+  if (labels && Array.isArray(labels) && index < labels.length) {
+    return labels[index]
+  }
+  const neutral = ['摘要', '补充说明', '信息缺口']
+  const map = [0, 3, 5]
+  const pos = map.indexOf(index)
+  return pos >= 0 ? neutral[pos] : ''
 }
 
 function getIntentLabel(intent?: string): string {
@@ -438,13 +457,14 @@ function getIntentLabel(intent?: string): string {
 function getProfileLabel(profile?: string): string {
   if (!profile) return ''
   // Domain-neutral labels derived from the profile label embedded in the tag.
-  // Works for any domain (general_v1, phm_diagnosis_v1, etc.) without
-  // hardcoding aviation strings.
+  // Works for any domain (general_v1, <domain>_<suffix>_v1, etc.) without
+  // hardcoding any domain-specific strings.
   if (profile.endsWith('_identity_v1')) return '身份介绍'
   if (profile.endsWith('_general_v1')) return '通用咨询'
   if (profile.endsWith('_fast_v1')) return '快速检索模式'
-  // Generate-style tags carry the domain-specific suffix (e.g. diagnosis_v1
-  // under aviation, v1 under general) — surface the configured domain name.
+  // Generate-style tags carry the domain-specific suffix (e.g. a profile may
+  // set a structured-output suffix; general uses the plain _v1) — surface a
+  // domain-neutral label.
   return '知识库问答'
 }
 
@@ -1021,7 +1041,7 @@ watch(
   background: var(--neutral-200);
 }
 
-.diagnosis-card {
+.structured-answer-card {
   margin-top: 8px;
   padding: 10px 12px;
   border-radius: 8px;
@@ -1029,14 +1049,14 @@ watch(
   background: var(--primary-50);
 }
 
-.diagnosis-card h4 {
+.structured-answer-card h4 {
   margin: 0 0 6px;
   font-size: 12px;
   color: var(--primary-500);
   font-weight: 600;
 }
 
-.diagnosis-card p {
+.structured-answer-card p {
   margin: 4px 0;
   font-size: 12px;
   color: var(--neutral-700);

@@ -359,7 +359,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--query",
         type=str,
-        default="发动机振动异常如何排查？",
+        default="git 合并冲突如何解决？",
         help="Test query",
     )
     parser.add_argument(

@@ -10,7 +10,7 @@ export interface ChatMessage {
   intent?: string
   processingTime?: number
   metadata?: Record<string, any>
-  diagnosis?: StructuredAnswer | null
+  structuredAnswer?: StructuredAnswer | null
   feedbackSubmitted?: boolean
 }
 
@@ -31,16 +31,13 @@ export interface ChatResponse {
 }
 
 export interface StructuredAnswer {
-  conclusion: string
-  possible_causes: string[]
-  troubleshooting_steps: string[]
-  safety_risks: string
-  evidence_sources: string[]
-  info_gaps: string
+  summary: string
+  details: string[]
+  steps: string[]
+  notes: string
+  sources: string[]
+  gaps: string
 }
-
-/** Backward-compatible alias (historically named PHMDiagnosis). */
-export type PHMDiagnosis = StructuredAnswer
 
 export interface StreamEvent {
   type: 'session' | 'status' | 'intent' | 'node' | 'token' | 'done' | 'error'
@@ -123,7 +120,7 @@ export const useChatStore = defineStore('chat', () => {
         intent: data.intent,
         processingTime: data.processing_time_ms,
         metadata: data.metadata,
-        diagnosis: data.metadata?.diagnosis || null,
+        structuredAnswer: data.metadata?.structured_answer || null,
       }
       messages.value.push(assistantMessage)
 
@@ -290,7 +287,7 @@ export const useChatStore = defineStore('chat', () => {
           }
           if (event.metadata) {
             messages.value[messageIndex].metadata = event.metadata
-            messages.value[messageIndex].diagnosis = event.metadata?.diagnosis || null
+            messages.value[messageIndex].structuredAnswer = event.metadata?.structured_answer || null
           }
         }
         break
