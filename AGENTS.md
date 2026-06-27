@@ -86,7 +86,7 @@ python -c "import api.main; print('OK')"
 
 ## 4. Architecture Overview
 
-企业级**领域自适应** RAG 智能平台（首发航空 PHM 故障诊断，现已通用化，默认领域无关；按 `DOMAIN_PROFILE` 切换/新增领域），**Harness + Skills + MCP** 架构，FastAPI + LangGraph + Qwen3:14b（Ollama）+ Milvus Lite + 可替换 Embedding（默认 BGE-small-zh-v1.5），面向内网/离线/气隙部署。
+企业级**领域自适应** RAG 智能平台（默认领域无关；按 `DOMAIN_PROFILE` 切换/新增领域，仓库自带可选示例 `aviation_phm` profile 用于演示嵌入航空航天领域），**Harness + Skills + MCP** 架构，FastAPI + LangGraph + Qwen3:14b（Ollama）+ Milvus Lite + 可替换 Embedding（默认 BGE-small-zh-v1.5），面向内网/离线/气隙部署。
 
 ```
 agent/      # 编排层：harness/skills/context/mcp/eval/guardrails/feedback/memory/metrics
@@ -181,7 +181,7 @@ data/       # 运行时 SQLite（sessions/inferences/candidates/eval/judge_cache
 详见 `docs/specs/prompts/`（`README.md` / `critic.md` / `defender.md` / `tracking.md`）。
 - **严重性量表**：Critical/High/Medium/Low 双轴定义（影响维度 + 触发维度），见 `critic.md` §2。
 - **发现 schema**：8 字段（id/severity/location/symptom/impact/root_cause/recommendation/verification/status）。
-- **FMEA 模式**（适用于故障诊断类领域，如航空 PHM；ARP4761 S×O×D=RPN）+ **STRIDE 模式**（安全基线变更）。
+- **FMEA 模式**（适用于故障诊断类领域，如可选示例 aviation_phm；ARP4761 S×O×D=RPN）+ **STRIDE 模式**（安全基线变更）。
 - **闭环追踪**：`tracking.md` 矩阵，Critical/High 必须 4 列全填才能 `closed`；回归测试永久固化防回归。
 - **辩护者决策树**：事实?→可触发?→成本vs影响?→范围内?→等价替代?，反谄媚反护短。
 

@@ -2,13 +2,13 @@
 
 > 测试环境：WSL2 Ubuntu / NVIDIA RTX 5070 Ti 16GB / Ollama 0.24.0
 > 测试日期：2026-05-27
-> 领域 profile：本报告的实测数据在航空 PHM profile（`DOMAIN_PROFILE=aviation_phm`）下采集；平台本身领域无关，默认 `general`，可按 `DOMAIN_PROFILE` + `data/profiles/*.yaml` 切换/新增领域。
+> 领域 profile：本报告的实测数据在可选示例 aviation_phm profile（`DOMAIN_PROFILE=aviation_phm`）下采集；平台本身领域无关，默认 `general`，可按 `DOMAIN_PROFILE` + `data/profiles/*.yaml` 切换/新增领域。
 
 ---
 
 ## 1. 系统概述
 
-本项目是一个**领域自适应**的企业级 RAG 平台（首发航空地面健康管理 PHM 领域，现已通用化），基于检索增强生成技术，在航空 PHM profile 下为机务人员提供故障诊断、排故引导、知识库问答和维护决策支持；切换至其他领域 profile 即可服务对应垂直知识库。系统采用前后端分离架构：
+本项目是一个**领域自适应**的企业级 RAG 平台，默认领域无关，基于检索增强生成技术提供知识库问答、检索引导与决策支持；仓库自带可选示例 aviation_phm profile，用于演示如何把平台嵌入航空航天领域的故障诊断场景，切换/新增领域 profile 即可服务对应垂直知识库。系统采用前后端分离架构：
 
 - **后端**：FastAPI + LangGraph + Milvus Lite
 - **前端**：Vue 3 + Vite + TypeScript
@@ -196,7 +196,7 @@ sudo ./deploy.sh --build-offline-bundle
 | Qwen3 Thinking | **开启**（捕获推理过程） | **关闭**（/no_think） |
 | 推理过程 | 返回 800-1,600 字符推理内容 | 无推理内容 |
 | 典型延迟 | 10-18 秒 | 9-11 秒 |
-| 适用场景 | 复杂故障诊断、深度分析 | 高频查询、快速响应 |
+| 适用场景 | 复杂结构化分析、深度回答 | 高频查询、快速响应 |
 | 检索质量 | 带查询重写，更高 | 直接检索 |
 | Reasoning 传递 | `metadata.reasoning` 返回前端 | 无 |
 
@@ -325,7 +325,7 @@ START
 | Retrieve Node | — | 3次 | 执行混合检索 |
 | Grade Node | — | — | LLM 结构化输出判断文档相关性 |
 | Rewrite Node | — | — | 优化查询以提升检索质量（最多3轮） |
-| Generate Node | 120s | 2次 | 基于上下文生成 PHM 诊断报告 |
+| Generate Node | 120s | 2次 | 基于上下文生成结构化回答 |
 | Intent Classifier | 10s | 2次 | 意图分类：rag_query / general_chat |
 
 ### 5.3 快速模式性能实测
@@ -345,7 +345,7 @@ START
 ### 6.1 生成节点 Prompt
 
 系统 Prompt 的结构化输出模板由 active profile 的 `section_template` 决定（领域自适应）。
-在航空 PHM profile 下，要求模型严格按以下格式输出：
+在可选示例 aviation_phm profile 下，要求模型严格按以下格式输出：
 
 ```
 【诊断结论】...
@@ -358,18 +358,18 @@ START
 
 核心规则：
 1. 仅使用上下文信息，不编造
-2. 优先引用故障代码、ATA 章节、参数阈值、排故步骤
+2. 优先引用关键标识符、章节、参数阈值、操作步骤
 3. 每条依据标注来源
-4. 存在安全风险时给出风险提示
+4. 存在风险时给出风险提示
 5. 信息不足时列出缺失数据
 
 ### 6.2 查询重写 Prompt
 
-当文档评分不通过时，Rewrite 节点优化用户查询，补全可检索要素（系统/部件、故障现象、故障代码、ATA 章节、运行工况）。
+当文档评分不通过时，Rewrite 节点优化用户查询，补全可检索要素（实体、现象、标识符、章节、场景）。
 
 ### 6.3 文档评分 Prompt
 
-二元评分（相关/不相关），基于文档是否包含相关系统/部件、故障现象、故障代码、ATA 章节、排故流程等要素。
+二元评分（相关/不相关），基于文档是否包含相关实体、现象、标识符、章节、流程等要素。
 
 ---
 
@@ -509,10 +509,10 @@ benchmark 与端到端 eval 实测，以及相对基线的回归对比。两组�
 MSMARCO 未命中的 6 个 case（phloem 流向 / calomel 粉 / cpap 处方 / msn 邮箱等）均为冷门
 术语或专业领域 hard case，dense + BM25 都难召回，属数据集固有难点，非检索栈缺陷。
 
-### 13.2 端到端 Eval（含 LLM 生成，航空 PHM golden 数据集）
+### 13.2 端到端 Eval（含 LLM 生成，可选示例 aviation_phm golden 数据集）
 
-通过 `scripts/run_eval.py --no-judge` 评测航空 PHM golden 数据集（15 cases，覆盖发动机 /
-液压 / 航电 / 闲聊 / 边缘 query；该数据集是平台首个领域的示例 golden，非平台默认）。全链路 Thinking 模式（agent→retrieve→grade→rewrite→
+通过 `scripts/run_eval.py --no-judge` 评测可选示例 aviation_phm golden 数据集（15 cases，覆盖发动机 /
+液压 / 航电 / 闲聊 / 边缘 query；该数据集用于演示在航空航天示例 profile 下的评测，平台默认 general profile 使用领域无关的通用 golden）。全链路 Thinking 模式（agent→retrieve→grade→rewrite→
 generate），并发 1：
 
 | 维度 | 结果 |
@@ -569,7 +569,7 @@ generate），并发 1：
 
 - **升级 Embedding**：bge-small-zh-v1.5（512维）→ bge-large-zh-v1.5（1024维）或 bge-m3（多语言）
 - **两阶段重排序已接入**：Dense 与 BM25 扩大候选召回，经 RRF 融合后可选 Cross-Encoder 重排序；接口保留 `retrieval_score`、`rerank_score` 和 `rerank_applied` 便于排障
-- **中文 Reranker 选型**：默认已采用 `BAAI/bge-reranker-v2-m3`（多语言 cross-encoder，默认开启且优先 GPU），对中文 PHM 与通用中文语料均有效；如需进一步降低资源占用可评估更轻量的 reranker
+- **中文 Reranker 选型**：默认已采用 `BAAI/bge-reranker-v2-m3`（多语言 cross-encoder，默认开启且优先 GPU），对通用中文语料均有效；如需进一步降低资源占用可评估更轻量的 reranker
 - **增大上下文窗口**：当前 2,500 字符截断偏小，建议提升至 4,000-6,000 字符
 - **优化 BM25**：当前 BM25 召回为 0（中文分词未生效），需引入 jieba 分词
 
