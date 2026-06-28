@@ -7,6 +7,49 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Added — API-only deploy capability (`api-only-deploy`)
+
+A new deployment profile ships a `< 4 GB` Docker image with **zero PyTorch**,
+where all inference (LLM + embeddings) goes through Aliyun DashScope APIs and
+the reranker is disabled. The capability is delivered inside the **unified
+codebase** via an `EMBEDDING_PROVIDER` toggle — no long-lived fork.
+
+- `EMBEDDING_PROVIDER` (auto|local|api, default `auto`): dispatches the
+  embedding singleton. `auto` picks `local` when torch is importable, else `api`.
+- New `models/dashscope_embeddings.py` — `DashScopeEmbeddings` implements the
+  LangChain `Embeddings` interface over the DashScope native API (httpx, no SDK,
+  no torch). Uses `text_type` query/document distinction (a quality feature the
+  OpenAI-compatible mode drops); chunks to ≤10 texts/request with `text_index`
+  reassembly; echoes the response dimension to fail fast on mismatch; retries
+  transient HTTP errors, raises on exhaustion (never a zero vector).
+- New `DASHSCOPE_API_KEY`, `DASHSCOPE_BASE_URL`, `EMBEDDING_PROVIDER` env vars.
+- `get_embeddings()` unified entry point; `get_local_embeddings` kept as an alias.
+
+### Changed — embedding dependency split `[breaking]` (`api-only-deploy`)
+
+`[breaking]` The torch-coupled embedding/reranker stack is **no longer
+installed by a bare `uv sync`**. `torch`, `sentence-transformers`,
+`transformers`, and `langchain-huggingface` move into a new `local-models`
+optional-dependency extra; a new empty `api-only` extra names the API-only
+install profile.
+
+- **What changed**: a bare install (or `--extra api-only`) now produces a
+  torch-less environment where `EMBEDDING_PROVIDER` auto-resolves to the
+  DashScope API. `deploy.sh` (bare-metal) and CI now install
+  `--extra local-models` so local inference is unchanged.
+- **Why**: a `< 4 GB` image is impossible with torch in base deps
+  (~3.8 GB torch/CUDA + ~2.3 GB reranker weights + ~9.3 GB LLM weights).
+- **How to migrate**:
+  - Local-inference / GPU deploys: `uv sync --extra ocr --extra local-models`
+    (deploy.sh and CI already updated). Behaviour with torch installed is
+    unchanged (`EMBEDDING_PROVIDER` defaults to `local`).
+  - API-only deploys: `uv sync --extra api-only` (or a bare sync) + the
+    `Dockerfile` (multi-stage). Set `DASHSCOPE_API_KEY` / `OPENAI_API_KEY` /
+    `ADMIN_API_KEY` at runtime — they are never baked into the image.
+- **Security note**: the embedding API sends document text to DashScope; the
+  input guardrail only covers the chat path, so PII compliance for ingestion is
+  the operator's responsibility (design §9 / F-12).
+
 ### Changed — main pipeline domain-generalization (`domain-generalization`)
 
 `[breaking]` The platform's default pipeline is now **domain-agnostic**. All
