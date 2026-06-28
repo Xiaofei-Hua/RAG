@@ -25,7 +25,7 @@ from langchain_core.documents import Document
 from pymilvus import DataType, MilvusClient, MilvusException
 from pymilvus.client.types import MetricType
 
-from utils.env_utils import COLLECTION_NAME, EMBEDDING_DIMENSION, MILVUS_URI
+from utils.env_utils import COLLECTION_NAME
 from utils.log_utils import log
 
 # Type variables
@@ -41,6 +41,22 @@ class SearchMode(Enum):
     HYBRID = "hybrid"
 
 
+def _env(name: str, default: str) -> str:
+    """Read a live attribute from utils.env_utils so test harnesses can
+    redirect paths at runtime (AGENTS.md §6/§10 path sealability). Bypasses
+    the def-time binding of a module-level constant default."""
+    try:
+        import utils.env_utils as _env_mod
+
+        return getattr(_env_mod, name)
+    except (ImportError, AttributeError):
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    return int(_env(name, str(default)))  # type: ignore[arg-type]
+
+
 @dataclass
 class MilvusConfig:
     """
@@ -52,9 +68,9 @@ class MilvusConfig:
     ``MILVUS_INDEX_PARAMS`` / ``MILVUS_SEARCH_PARAMS`` for tunable recall.
     """
 
-    uri: str = MILVUS_URI
-    collection_name: str = COLLECTION_NAME
-    dense_dim: int = EMBEDDING_DIMENSION
+    uri: str = field(default_factory=lambda: _env("MILVUS_URI", "./milvus_data.db"))
+    collection_name: str = field(default_factory=lambda: _env("COLLECTION_NAME", "t_collection01"))
+    dense_dim: int = field(default_factory=lambda: _env_int("EMBEDDING_DIMENSION", 512))
     max_text_length: int = 4000  # Reduced from 6000
     max_metadata_length: int = 500  # Reduced from 1000
     batch_size: int = 20  # Small batch size for low memory

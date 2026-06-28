@@ -91,6 +91,29 @@ class _FakeLLM:
             return None
 
 
+class _FakeEmbeddings:
+    """Deterministic embedding stand-in for the document-upload path.
+
+    The Playwright upload route (POST /api/documents) indexes into Milvus via
+    the REAL MilvusManager.add_documents, which calls get_embeddings(). Without
+    this fake, HuggingFaceEmbeddings loads torch + the BGE weights on every
+    upload — a multi-second cost that made the documents tests timing-sensitive
+    and flaky (and ran real model inference inside a 'hermetic' test). This
+    returns tiny deterministic vectors so the upload path is fast and isolated.
+    """
+
+    def __init__(self, dim: int = 8):
+        self._dim = dim
+
+    def embed_query(self, text: str) -> list[float]:
+        # Deterministic, content-derived vector; stable across runs.
+        base = [float((hash(text) + i) % 97) / 97.0 for i in range(self._dim)]
+        return base
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        return [self.embed_query(t) for t in texts]
+
+
 class _FakeRetriever:
     """Returns two canned domain-neutral docs with scores."""
 
@@ -203,11 +226,27 @@ class _FakeHarness:
 class _FakeIntentClassifier:
     """Keyword fast-path, falls back to a fake default general_chat."""
 
-    _RAG_KEYWORDS = frozenset([
-        # Domain-neutral technical keywords so generic queries route to RAG.
-        "git", "docker", "http", "https", "部署", "配置", "合并", "冲突",
-        "分支", "接口", "服务", "命令", "异常", "排查", "查询", "缓存",
-    ])
+    _RAG_KEYWORDS = frozenset(
+        [
+            # Domain-neutral technical keywords so generic queries route to RAG.
+            "git",
+            "docker",
+            "http",
+            "https",
+            "部署",
+            "配置",
+            "合并",
+            "冲突",
+            "分支",
+            "接口",
+            "服务",
+            "命令",
+            "异常",
+            "排查",
+            "查询",
+            "缓存",
+        ]
+    )
     _CHAT_KEYWORDS = frozenset(["你好", "谢谢", "再见", "你是谁", "你能做什么", "hello", "hi"])
 
     def __init__(self, fake_llm):
@@ -218,13 +257,9 @@ class _FakeIntentClassifier:
 
         text = query.lower()
         if any(kw in text for kw in self._RAG_KEYWORDS):
-            return IntentResult(
-                intent=IntentType.RAG_QUERY, confidence=0.9, reasoning="keyword"
-            )
+            return IntentResult(intent=IntentType.RAG_QUERY, confidence=0.9, reasoning="keyword")
         if any(kw in text for kw in self._CHAT_KEYWORDS):
-            return IntentResult(
-                intent=IntentType.GENERAL_CHAT, confidence=0.9, reasoning="keyword"
-            )
+            return IntentResult(intent=IntentType.GENERAL_CHAT, confidence=0.9, reasoning="keyword")
         return None
 
     async def aclassify(self, query):
@@ -280,10 +315,9 @@ class _FakeSessionMemory:
 
     async def list_sessions(self, skip=0, limit=20):
         all_sessions = [
-            {"session_id": sid, "message_count": len(msgs)}
-            for sid, msgs in self._store.items()
+            {"session_id": sid, "message_count": len(msgs)} for sid, msgs in self._store.items()
         ]
-        return all_sessions[skip: skip + limit], len(all_sessions)
+        return all_sessions[skip : skip + limit], len(all_sessions)
 
     async def clear_session(self, session_id):
         self._store.pop(session_id, None)
@@ -342,14 +376,24 @@ def _redirect_paths(root: str):
     )
     _set("agent.eval.candidates", "CANDIDATES_DIR", Path(os.path.join(root, "eval", "candidates")))
     _set("agent.eval.flywheel", "RETRIEVAL_MISSES_DB", os.path.join(root, "retrieval_misses.db"))
-    _set("agent.eval.judge", "DEFAULT_JUDGE_CACHE_PATH", os.path.join(root, "eval", "judge_cache.db"))
+    _set(
+        "agent.eval.judge", "DEFAULT_JUDGE_CACHE_PATH", os.path.join(root, "eval", "judge_cache.db")
+    )
     _set("agent.memory.store", "DEFAULT_DB_PATH", os.path.join(root, "agent_memory.db"))
     _set("agent.feedback.collector", "DEFAULT_DB_PATH", os.path.join(root, "agent_memory.db"))
     _set("agent.feedback.escalation", "DEFAULT_DB_PATH", os.path.join(root, "agent_memory.db"))
     _set("documents.parent_store", "DEFAULT_DB_PATH", os.path.join(root, "parent_store.db"))
     _set("documents.document_registry", "DEFAULT_DB_PATH", os.path.join(root, "documents.db"))
-    _set("documents.embedding_registry", "DEFAULT_DB_PATH", os.path.join(root, "embedding_registry.db"))
-    _set("agent.harness.orchestrator", "DEFAULT_CHECKPOINT_PATH", os.path.join(root, "checkpoints.db"))
+    _set(
+        "documents.embedding_registry",
+        "DEFAULT_DB_PATH",
+        os.path.join(root, "embedding_registry.db"),
+    )
+    _set(
+        "agent.harness.orchestrator",
+        "DEFAULT_CHECKPOINT_PATH",
+        os.path.join(root, "checkpoints.db"),
+    )
     _set("api.routers.documents", "UPLOAD_TMP_DIR", os.path.join(root, "uploads"))
 
     # Session-memory SQLite fallback path (core/memory/redis_memory.py). Redirect
@@ -430,17 +474,39 @@ def install():
     memory = _FakeSessionMemory()
 
     import agent.harness as harness_mod
+
     harness_mod.get_agent_harness = lambda *a, **k: harness
 
     import core.intent.classifier as intent_mod
+
     intent_mod.get_intent_classifier = lambda *a, **k: _FakeIntentClassifier(llm)
 
     import core.retrieval.hybrid_retriever as hr_mod
+
     hr_mod.get_hybrid_retriever = lambda *a, **k: retriever
 
     import models.llm_models as llm_mod
+
     llm_mod.get_llm = lambda *a, **k: llm
     llm_mod.create_custom_llm = lambda *a, **k: llm
+
+    # Fake the embedding singleton so the document-upload path (MilvusManager
+    # .add_documents + MarkdownParser semantic splitter) does NOT load torch /
+    # BGE weights inside the Playwright subprocess. Keeps uploads fast and
+    # hermetic. EMBEDDING_DIMENSION is read by MilvusConfig.dense_dim at
+    # collection creation; the fake vector length must match it.
+    fake_embeddings = _FakeEmbeddings()
+    try:
+        import utils.env_utils as env_mod
+
+        fake_embeddings = _FakeEmbeddings(dim=env_mod.EMBEDDING_DIMENSION)
+    except Exception:
+        pass
+    import models.embedding_models as emb_mod
+
+    emb_mod.get_embeddings = lambda *a, **k: fake_embeddings
+    emb_mod.get_local_embeddings = lambda *a, **k: fake_embeddings
+    emb_mod._instance = fake_embeddings
 
     from types import SimpleNamespace
 
@@ -516,8 +582,10 @@ def install():
 
     # Force inference sampling on so the flywheel capture path is exercised.
     import agent.eval.sampler as sampler_mod
+
     sampler_mod.should_sample = lambda *a, **k: True
     import agent.eval.capture as capture_mod
+
     capture_mod.should_sample = lambda *a, **k: True
 
     # Skip reranker warmup to keep startup deterministic and fast.

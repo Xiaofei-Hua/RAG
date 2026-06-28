@@ -52,6 +52,10 @@ test.describe("Sessions UI", () => {
   test("delete removes the session from the list", async ({ page }) => {
     await seedSession(page);
     await page.goto("/sessions");
+    // Wait for the seeded session to register in the (process-scoped) store
+    // before counting. Under combined-suite load the chat-turn -> session
+    // registration can race the navigation, leaving the list momentarily empty.
+    await expect(page.getByTestId("session-card").first()).toBeVisible({ timeout: 30_000 });
     const before = await page.getByTestId("session-card").count();
     expect(before).toBeGreaterThan(0);
 
