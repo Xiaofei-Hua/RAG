@@ -48,6 +48,9 @@
               <line x1="12" y1="9" x2="12" y2="13"/>
               <line x1="12" y1="17" x2="12.01" y2="17"/>
             </svg>
+            <svg v-else-if="service.status === 'ready' || service.status === 'cold'" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+              <circle cx="12" cy="12" r="5"/>
+            </svg>
             <svg v-else viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="10"/>
               <line x1="15" y1="9" x2="9" y2="15"/>
@@ -216,12 +219,37 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 
 const healthData = ref<any>({ services: {} })
 const circuitBreakers = ref<any>({})
 const degradationMode = ref('full')
 const metrics = ref<any>({})
+
+// Auto-refresh health while any service is in a transient/degraded state
+// (ready/cold/degraded). The reranker is lazy-loaded (RERANKER_WARMUP=false
+// by default), so it is initially "ready" until the first retrieval loads it
+// into memory; without polling the card would show a stale transient state
+// until the user manually clicks refresh. Once every service is "healthy",
+// the timer stops to avoid needless background traffic.
+let healthPollTimer: ReturnType<typeof setInterval> | null = null
+const HEALTH_POLL_INTERVAL_MS = 4000
+const TRANSIENT_STATES = new Set(['ready', 'cold', 'degraded'])
+
+function _hasTransientService(): boolean {
+  const services = healthData.value.services || {}
+  return Object.values(services).some((s: any) => TRANSIENT_STATES.has(s.status))
+}
+
+function _syncHealthPolling() {
+  const hasTransient = _hasTransientService()
+  if (hasTransient && healthPollTimer === null) {
+    healthPollTimer = setInterval(loadHealth, HEALTH_POLL_INTERVAL_MS)
+  } else if (!hasTransient && healthPollTimer !== null) {
+    clearInterval(healthPollTimer)
+    healthPollTimer = null
+  }
+}
 
 const degradationModes = [
   { value: 'full', label: '正常', icon: '✅' },
@@ -242,6 +270,13 @@ onMounted(async () => {
   await refreshAll()
 })
 
+onUnmounted(() => {
+  if (healthPollTimer !== null) {
+    clearInterval(healthPollTimer)
+    healthPollTimer = null
+  }
+})
+
 async function refreshAll() {
   await Promise.all([
     loadHealth(),
@@ -255,6 +290,7 @@ async function loadHealth() {
   try {
     const response = await fetch('/api/admin/health')
     healthData.value = await response.json()
+    _syncHealthPolling()
   } catch (e) {
     console.error('Load health error:', e)
   }
@@ -314,6 +350,8 @@ function formatServiceName(name: string | number): string {
     milvus: 'Milvus 数据库',
     redis: 'Redis 缓存',
     embedding: '嵌入模型',
+    reranker: '重排模型',
+    retriever: '检索器',
   }
   return names[nameStr] || nameStr.toUpperCase()
 }
@@ -323,6 +361,8 @@ function getStatusLabel(status: string): string {
     healthy: '正常',
     degraded: '降级',
     unhealthy: '异常',
+    ready: '就绪',
+    cold: '未加载',
   }
   return labels[status] || status
 }
@@ -480,6 +520,21 @@ function formatUptime(seconds: number): string {
 
 .health-card.unhealthy {
   border-left-color: var(--error-500);
+}
+
+/* Neutral transient states: model cached-but-not-loaded (ready) or
+   not-yet-cached cold start (cold). These are NOT failures — the service is
+   operational but the lazy-loaded model has not been resident in memory yet.
+   Render grey to distinguish from healthy (green) and degraded/unhealthy. */
+.health-card.ready,
+.health-card.cold {
+  border-left-color: var(--neutral-400);
+}
+
+.health-card.ready .health-icon,
+.health-card.cold .health-icon {
+  background: var(--neutral-100);
+  color: var(--neutral-500);
 }
 
 .health-icon {
