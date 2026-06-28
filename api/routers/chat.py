@@ -616,8 +616,17 @@ async def chat(
 
         log.info(f"Intent classified: {intent_result.intent.value}")
 
-        # Step 2: Route based on intent + domain heuristic safeguard
-        use_rag = intent_result.intent.value != "general_chat"
+        # Step 2: Route based on intent + confidence + domain heuristic.
+        # Bug2 Layer ②: a low-confidence rag_query falls back to general_chat
+        # rather than misrouting ambiguous capability/general questions into
+        # retrieval (the original bug: '你能解决什么问题' was tagged rag_query).
+        # The domain-query override is a stronger signal and still forces RAG.
+        from utils.env_utils import LOW_INTENT_THRESHOLD
+
+        use_rag = (
+            intent_result.intent.value != "general_chat"
+            and intent_result.confidence >= LOW_INTENT_THRESHOLD
+        )
         if not use_rag and _looks_like_domain_query(request.message):
             use_rag = True
             force_rag = True
@@ -942,7 +951,13 @@ async def chat_stream(
 
             intent_classifier = get_intent_classifier()
             intent_result = await intent_classifier.aclassify(request.message)
-            use_rag = intent_result.intent.value != "general_chat"
+            # Bug2 Layer ②: confidence-gated routing (see non-stream comment).
+            from utils.env_utils import LOW_INTENT_THRESHOLD
+
+            use_rag = (
+                intent_result.intent.value != "general_chat"
+                and intent_result.confidence >= LOW_INTENT_THRESHOLD
+            )
             force_rag = False
             if not use_rag and _looks_like_domain_query(request.message):
                 use_rag = True

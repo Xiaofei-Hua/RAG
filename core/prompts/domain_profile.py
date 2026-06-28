@@ -63,9 +63,12 @@ def _general_defaults() -> dict[str, Any]:
             "intent": (
                 "分析用户输入判断意图。意图类型:\n"
                 "1. rag_query: 需查询知识库的专业信息\n"
-                "2. general_chat: 问候/闲聊/一般问题\n"
+                "2. general_chat: 问候/闲聊/一般问题,以及关于助手自身能力/身份/功能的问题"
+                "(如「你能解决什么问题」「你是谁」「你能做什么」)\n"
                 "3. doc_upload: 想上传文档\n"
                 "4. system_cmd: 系统管理\n\n"
+                "注意:询问助手自身能力/功能/身份的问题(即使包含「问题」「解决」等词)"
+                "应归类为 general_chat,而非 rag_query。\n\n"
                 "用户输入:\n{query}\n\n"
                 '返回JSON: {{"intent": "...", "confidence": 0.0-1.0, "reasoning": "..."}}'
             ),
