@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from core.prompts.profile_prompts import (
     GENERAL_CHAT_SYSTEM_PROMPT,
     GENERATE_SYSTEM_PROMPT,
+    INTENT_CLASSIFICATION_PROMPT,
 )
 from utils.log_utils import log
 from utils.think_tag_utils import strip_think_tags
@@ -489,7 +490,12 @@ async def get_rag_graph():
 @router.get("/prompt-status")
 async def get_prompt_status():
     """Return current prompt profile and signature for runtime verification."""
-    signature = hashlib.sha1(GENERATE_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
+    # F-05: aggregate generate + intent prompts so edits to EITHER are
+    # detectable via signature drift (REQ-RG-016). Previously only the generate
+    # prompt was hashed, leaving intent-prompt edits invisible to ops/audit.
+    signature = hashlib.sha1(
+        (GENERATE_SYSTEM_PROMPT + INTENT_CLASSIFICATION_PROMPT).encode("utf-8")
+    ).hexdigest()[:12]
     return {
         "loaded": True,
         "prompt_profile": _profile().prompt_profile_generate,
