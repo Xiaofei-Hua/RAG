@@ -28,7 +28,13 @@ class DocumentRegistry:
     so that document tracking survives server restarts.
     """
 
-    def __init__(self, db_path: str = DEFAULT_DB_PATH):
+    def __init__(self, db_path: str | None = None):
+        # Resolve lazily from the module attribute so tests/conftest.py and the
+        # Playwright fakes harness can redirect DEFAULT_DB_PATH at runtime
+        # (AGENTS.md §6/§10 persistence path-sealability). A default-arg bound
+        # at def time would freeze the original path and leak real-data reads.
+        if db_path is None:
+            db_path = DEFAULT_DB_PATH
         os.makedirs(os.path.dirname(db_path) if os.path.dirname(db_path) else ".", exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row

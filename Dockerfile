@@ -12,7 +12,10 @@ FROM node:20-alpine AS web-builder
 WORKDIR /web
 # Copy manifests first for layer caching.
 COPY web/package.json web/package-lock.json* ./
-RUN npm ci
+# `npm install` (not `npm ci`) tolerates lockfile drift across npm versions;
+# the web-builder is a throwaway stage, so reproducibility is not the goal here
+# (the committed lockfile still drives local/CI installs).
+RUN npm install
 COPY web/ .
 RUN npm run build  # → /web/dist (vue-tsc typecheck + vite build)
 
