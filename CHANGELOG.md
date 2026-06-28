@@ -87,6 +87,50 @@ embedding/reranker **device defaults to `auto`**. Previously both were opt-in
   technical report) are updated to match. See
   `docs/specs/reranker-default-on/` for the full spec.
 
+### Fixed — routing & grading defense (`routing-and-grading-defense`)
+
+A general capability question ("你能解决什么问题") was misrouted to knowledge-base
+retrieval and answered over 3%-relevance docs — a 5-layer defense-chain failure.
+This adds depth-of-defense so any single layer catching the input prevents the
+bug. See `docs/specs/routing-and-grading-defense/` (incl. adversarial review).
+
+- **What changed (breaking)**:
+  - `[breaking]` **Routing is now confidence-gated**: a `rag_query` classified
+    below `LOW_INTENT_THRESHOLD` (default 0.5, env-overridable) falls back to
+    `general_chat` instead of entering the graph. The domain-query override
+    (`_looks_like_domain_query`) is retained as a stronger signal that still
+    forces RAG. Migration: if you relied on low-confidence rag_query reaching
+    retrieval, raise classifier confidence or set `LOW_INTENT_THRESHOLD` lower.
+  - **Capability/identity detection moved to the domain profile**:
+    `_is_identity_capability_query` now reads `capability_keywords` +
+    `capability_patterns` from the active `DomainProfile` instead of a hardcoded
+    regex list (was `api/routers/chat.py:340-356`). Custom profiles can tune
+    which self-referential questions get the canned `identity_response`.
+  - **Rerank score threshold (dual sieve)**: the main retrieval path now filters
+    docs by `sigmoid(rerank_score) < min_rerank_prob` (absolute floor, default
+    0.35) AND batch-internal min-max (`min_rerank_score`, default 0.3). An
+    all-weak batch is correctly emptied and pushed to the A/B shunt. The filter
+    lives in `RetrieveSkill` (does not pollute the hybrid-retriever cache).
+  - **Graph A/B shunt**: when retrieval yields only unusable docs, the generate
+    node distinguishes a genuine KB miss (high-confidence → refuse) from a
+    misrouted general question (low-confidence → `fallback_general_chat`
+    sentinel; the chat router re-runs the `general_chat` LLM path).
+  - **`shared_state` plumbing**: `AgentHarness.invoke/ainvoke/astream` accept a
+    `shared_state` seed; the chat router injects `intent_confidence`. New keys:
+    `intent_confidence`, `intent`, `max_rerank_prob`, `fallback_general_chat`
+    (all backward-compatible; missing → None).
+  - **Intent prompt + signature**: the intent classification prompt now carries
+    an explicit capability/identity rule. The prompt signature
+    (`/api/chat/prompt-status`, startup log) aggregates generate + intent
+    prompts so edits to either are detectable.
+- **Why**: every safety net (identity shortcut, intent classifier, score
+  filter, grade node, refuse-on-low-score) either missed the input or was
+  disabled by design; the answer was the generate node faithfully producing
+  text from 3%-relevance context.
+- **How to migrate**: no data migration. Operators tuning routing should set
+  `LOW_INTENT_THRESHOLD` via env and watch the `rag_hardcompare_*` golden
+  regression cases (they pin genuine rag_query against downgrade).
+
 ## [0.1.0] - 2026-06-27
 
 First tagged release. Consolidates the domain-adaptive refactor, the

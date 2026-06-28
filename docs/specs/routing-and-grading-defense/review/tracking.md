@@ -25,7 +25,26 @@
 - **High**：F-03/F-04/F-08/F-12 closed-in-design-v2；F-05/F-09/F-13 pending-impl（修订已写入 design，待编码落地）；F-06 closed-with-alternative。
 - **v2 须重新过 critic**，重点验证 failtrack-1 用例在 v2 设计下确实能红（即 v1 判据被移除）。
 
-## 待编码后补填
+## 编码闭环状态（实现完成）
 
-- 各 pending-impl 项在编码完成后填入 commit sha + test name，状态改 `closed`。
-- failtrack-1 实现 + 测试通过后，本表 F-01/F-02 状态改 `verified-by-test-failtrack-1`。
+所有 accepted findings 已编码 + 测试固化。commit sha 指本分支 `fix/routing-and-grading-defense`。
+
+| ID | Fix Commit | Regression Test | Status |
+|----|------------|-----------------|--------|
+| F-01 | `1cef5d4` | `test_generate_ab_shunt.py::failtrack-1` | verified-by-test |
+| F-02 | `1cef5d4` | `test_generate_ab_shunt.py::test_shunt_fires_on_first_pass...` | verified-by-test |
+| F-03 | `a9a6ed4` | `test_retrieve_rerank_threshold.py::test_weak_batch_emptied` | verified-by-test |
+| F-04 | `9f45ad3` + `1cef5d4` | `test_generate_ab_shunt.py::test_fallback_branch_sets_sentinel` | verified-by-test |
+| F-05 | `13a56f3` | `test_prompt_signature.py` (2 cases) | verified-by-test |
+| F-06 | `5dfb3f1` + `13a56f3` | golden `rag_hardcompare_14/15` (regression guard) | closed-with-alternative |
+| F-07 | `9f45ad3` | `test_shared_state_threading.py::test_sentinel_metadata...` | verified-by-test |
+| F-08 | `1cef5d4` | `min_relevance_threshold` 复活; `test_generate_ab_shunt.py` | verified-by-test |
+| F-09 | `9f45ad3` | stream 循环累积 sentinel; chat e2e | verified-by-test |
+| F-10 | `98e59d8` | design 注释 | closed-in-design |
+| F-11 | — (out-of-scope) | — | out-of-scope → issue-rg-fastpath-confidence |
+| F-12 | `1cef5d4` | `test_generate_ab_shunt.py` failtrack-1..5 | verified-by-test |
+| F-13 | `5dfb3f1` + `13a56f3` | `test_routing_confidence.py::test_aviation_profile...` | verified-by-test |
+| F-14 | `5dfb3f1` | `_get_float` 用; `test_routing_confidence.py::test_threshold_env_override` | verified-by-test |
+
+**全矩阵**: `pytest tests/unit/ tests/e2e/ -q` → 597 passed, 4 skipped, 0 failed.
+
