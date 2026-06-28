@@ -17,7 +17,6 @@ dependencies = [
     "langchain>=1.0.0,<2.0.0",
     "langchain-core>=1.0.0,<2.0.0",
     "langchain-openai>=1.0.0,<2.0.0",
-    "langchain-huggingface>=1.0.0,<2.0.0",
     "langchain-community>=0.3.0,<2.0.0",
     "langchain-experimental>=0.3.0,<2.0.0",
     "langchain-text-splitters>=1.0.0,<2.0.0",
@@ -28,9 +27,6 @@ dependencies = [
     "langgraph-prebuilt>=1.0.0,<2.0.0",
     "pymilvus>=2.5.0,<2.6.0",
     "milvus-lite>=2.5.0",
-    "sentence-transformers>=3.0.0",
-    "transformers>=4.40.0",
-    "torch>=2.0.0",
     "tiktoken>=0.5.0",
     "unstructured>=0.15.0",
     "pypdf>=4.0.0",
@@ -66,6 +62,20 @@ dev = [
 ]
 redis = ["redis>=5.0.0"]
 ui = ["gradio>=4.0.0"]
+# Local-model inference (torch + sentence-transformers) is opt-in since the
+# api-only deploy capability (docs/specs/api-only-deploy/). A bare `uv sync`
+# produces a torch-less install where EMBEDDING_PROVIDER auto-resolves to the
+# DashScope API; local-inference deploys add `--extra local-models`.
+local-models = [
+    "sentence-transformers>=3.0.0",
+    "transformers>=4.40.0",
+    "torch>=2.0.0",
+    "langchain-huggingface>=1.0.0,<2.0.0",
+]
+# Marker extra documenting the API-only install profile; the base deps already
+# exclude torch, so this adds nothing — it exists so Dockerfile / CI can name
+# the profile explicitly (`uv sync --extra api-only`).
+api-only = []
 # OCR is opt-in: paddlepaddle/paddleocr are large and only needed when
 # PDF_OCR_ENGINE=paddleocr. A minimal CPU-only deploy that uses tesseract (or
 # no OCR) installs the base deps only; OCR-capable deploys run

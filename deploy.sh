@@ -254,10 +254,12 @@ fi
 cd "$PROJECT_DIR"
 
 info "安装 Python 依赖..."
-# Install with the ocr extra so the standard offline bundle retains PaddleOCR
-# capability. The ocr extra was split out of base deps (F20) so minimal CPU
-# deploys can skip it; the bundle deploy keeps OCR by default.
-uv sync --extra ocr
+# Install with the ocr + local-models extras so the standard offline bundle
+# retains PaddleOCR capability AND local embedding/reranker inference (torch).
+# The local-models extra was split out of base deps (api-only-deploy) so the
+# API-only Docker image can ship torch-less; the bare-metal bundle deploy keeps
+# local inference by default. api-only deploys use `uv sync --extra api-only`.
+uv sync --extra ocr --extra local-models
 ok "Python 依赖安装完成"
 
 # ─── 6. Embedding 模型 ─────────────────────────────────────────────────────
