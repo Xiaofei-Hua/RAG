@@ -4889,7 +4889,6 @@ dependencies = [
     { name = "langchain-community" },
     { name = "langchain-core" },
     { name = "langchain-experimental" },
-    { name = "langchain-huggingface" },
     { name = "langchain-openai" },
     { name = "langchain-tavily" },
     { name = "langchain-text-splitters" },
@@ -4912,11 +4911,8 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "python-multipart" },
     { name = "requests" },
-    { name = "sentence-transformers" },
     { name = "tenacity" },
     { name = "tiktoken" },
-    { name = "torch" },
-    { name = "transformers" },
     { name = "unstructured", version = "0.18.32", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version < '3.11'" },
     { name = "unstructured", version = "0.22.21", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version >= '3.11'" },
     { name = "uvicorn", extra = ["standard"] },
@@ -4934,6 +4930,12 @@ doc = [
     { name = "pdfminer-six" },
     { name = "python-docx" },
     { name = "python-pptx" },
+]
+local-models = [
+    { name = "langchain-huggingface" },
+    { name = "sentence-transformers" },
+    { name = "torch" },
+    { name = "transformers" },
 ]
 ocr = [
     { name = "paddleocr" },
@@ -4965,7 +4967,7 @@ requires-dist = [
     { name = "langchain-community", specifier = ">=0.3.0,<2.0.0" },
     { name = "langchain-core", specifier = ">=1.0.0,<2.0.0" },
     { name = "langchain-experimental", specifier = ">=0.3.0,<2.0.0" },
-    { name = "langchain-huggingface", specifier = ">=1.0.0,<2.0.0" },
+    { name = "langchain-huggingface", marker = "extra == 'local-models'", specifier = ">=1.0.0,<2.0.0" },
     { name = "langchain-openai", specifier = ">=1.0.0,<2.0.0" },
     { name = "langchain-tavily", specifier = ">=0.2.0,<2.0.0" },
     { name = "langchain-text-splitters", specifier = ">=1.0.0,<2.0.0" },
@@ -4996,16 +4998,16 @@ requires-dist = [
     { name = "python-pptx", marker = "extra == 'doc'", specifier = ">=0.6.0" },
     { name = "redis", marker = "extra == 'redis'", specifier = ">=5.0.0" },
     { name = "requests", specifier = ">=2.31.0" },
-    { name = "sentence-transformers", specifier = ">=3.0.0" },
+    { name = "sentence-transformers", marker = "extra == 'local-models'", specifier = ">=3.0.0" },
     { name = "tenacity", specifier = ">=8.0.0" },
     { name = "tiktoken", specifier = ">=0.5.0" },
-    { name = "torch", specifier = ">=2.0.0", index = "https://mirrors.aliyun.com/pytorch-wheels/cu132" },
-    { name = "transformers", specifier = ">=4.40.0" },
+    { name = "torch", marker = "extra == 'local-models'", specifier = ">=2.0.0", index = "https://mirrors.aliyun.com/pytorch-wheels/cu132" },
+    { name = "transformers", marker = "extra == 'local-models'", specifier = ">=4.40.0" },
     { name = "unstructured", specifier = ">=0.15.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
     { name = "websockets", specifier = ">=12.0" },
 ]
-provides-extras = ["dev", "redis", "ui", "ocr", "doc"]
+provides-extras = ["dev", "redis", "ui", "local-models", "api-only", "ocr", "doc"]
 
 [package.metadata.requires-dev]
 dev = [{ name = "mypy", specifier = ">=2.1.0" }]

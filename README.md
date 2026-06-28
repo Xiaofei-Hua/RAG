@@ -186,7 +186,10 @@ curl -X POST http://localhost:8000/api/chat \
 安装后端与测试依赖：
 
 ```bash
-uv sync --extra dev
+# 本地推理部署（含 torch/embedding/reranker 本地权重）：
+uv sync --extra dev --extra local-models
+# 或 API-only 部署（零 torch，embedding 走 DashScope API）：
+# uv sync --extra dev --extra api-only
 ```
 
 启动后端：
@@ -321,7 +324,10 @@ location /rag/ {
 | `LLM_MAX_TOKENS` | `4096` | 单次回答最大生成 token |
 | `LLM_TIMEOUT` | `60` | 单次 LLM 请求超时秒数 |
 | `LLM_MAX_RETRIES` | `1` | LLM 客户端重试次数 |
-| `EMBEDDING_MODEL` | `BAAI/bge-small-zh-v1.5` | Hugging Face Embedding 模型 ID |
+| `EMBEDDING_PROVIDER` | `auto` | Embedding 提供方：`auto`（torch 可导入则 `local` 否则 `api`）/ `local`（本地 BGE，需 `--extra local-models`）/ `api`（DashScope `text-embedding-v3`，零 torch）。详见 `docs/specs/api-only-deploy/` |
+| `DASHSCOPE_API_KEY` | _（空）_ | DashScope API Key；`EMBEDDING_PROVIDER=api` 时必填（运行时注入，勿入库）。见 §API-only 部署 |
+| `DASHSCOPE_BASE_URL` | `https://dashscope.aliyuncs.com` | DashScope 服务端点（可覆盖为内网网关） |
+| `EMBEDDING_MODEL` | `BAAI/bge-small-zh-v1.5` | 本地模式为 Hugging Face 模型 ID；API 模式为 DashScope 模型名（如 `text-embedding-v3`） |
 | `EMBEDDING_MODEL_PATH` | `models/local_models/bge-small-zh-v1.5` | Embedding 本地缓存路径 |
 | `EMBEDDING_DIMENSION` | `512` | Embedding 输出向量维度 |
 | `EMBEDDING_DEVICE` | `auto` | Embedding 运行设备；`auto` 自动探测（CUDA 可用且 wheel 含本机 sm_xx 时用 `cuda`，否则 `cpu`），也可显式设 `cpu`/`cuda` |
@@ -403,6 +409,47 @@ uv run python documents/milvus_db.py --action create --drop
 
 然后重新启动服务并上传文档。使用 `./run.sh` 或 `deploy.sh` 时，脚本会按照
 当前 `.env` 自动下载配置的 Embedding 模型到本地路径。
+
+### API-only 部署（DashScope，零 torch）
+
+适用于**镜像 < 4 GB、无 GPU、不可跑本地大模型**的内网/气隙场景。该模式下
+所有推理走远程 API：LLM 走 DashScope Qwen（OpenAI 兼容），embedding 走 DashScope
+`text-embedding-v3`，reranker 关闭（检索回退 RRF 顺序）。torch/
+sentence-transformers/transformers/langchain-huggingface 不进入镜像。
+
+```dotenv
+# .env（API-only 模式）
+EMBEDDING_PROVIDER=api
+EMBEDDING_MODEL=text-embedding-v3
+EMBEDDING_DIMENSION=512          # 必须是 v3 合法集合 {1024,768,512,256,128,64} 之一
+DASHSCOPE_API_KEY=sk-...         # 运行时注入，勿入库
+DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com
+OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+OPENAI_API_KEY=${DASHSCOPE_API_KEY}
+LLM_MODEL=qwen-plus
+RERANKER_ENABLED=false
+```
+
+依赖安装与镜像构建：
+
+```bash
+# 依赖（零 torch）
+uv sync --extra api-only            # 或裸 uv sync
+
+# 容器镜像（多阶段，< 4 GB；见 Dockerfile / .dockerignore）
+docker build -t rag-platform:api-only .
+# 运行：secrets 走 -e 注入，不烘进镜像
+docker run -p 8000:8000 \
+  -e DASHSCOPE_API_KEY=sk-... -e OPENAI_API_KEY=sk-... -e ADMIN_API_KEY=... \
+  rag-platform:api-only
+```
+
+> **PII 合规提醒**：embedding API 会把上传的文档原文发送到 DashScope。对话层
+> 的输入脱敏（`agent/guardrails/pii.py`）**不覆盖摄入路径**——若部署合规要求
+> PII 不出域，需在摄入前另行脱敏（见 `docs/specs/api-only-deploy/design.md` §9）。
+
+完整设计、对抗式评审与迁移说明见 `docs/specs/api-only-deploy/`，依赖拆分变更见
+`CHANGELOG.md [Unreleased]`。
 
 ### 两阶段重排序（默认开启）
 
@@ -613,7 +660,7 @@ JSONL 格式见 `data/eval/replay_samples.jsonl`，每行一条 `{id, query, ans
 
 ### 离线性声明
 
-整套自测评机制设计为零外部网络依赖：
+整套自测评机制设计为零外部网络依赖（`EMBEDDING_PROVIDER=local`；API-only 部署下 embedding 走 DashScope，见 §API-only 部署）：
 
 | 组件 | 离线方式 |
 |------|---------|

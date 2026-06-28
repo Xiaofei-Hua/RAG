@@ -462,11 +462,12 @@ START
 |------|------|------|
 | LangChain | ≥1.0.0 | LLM 编排框架 |
 | LangGraph | ≥1.0.0 | 有状态工作流 |
-| langchain-openai | — | OpenAI 兼容接口 |
-| langchain-huggingface | — | 本地 Embedding |
+| langchain-openai | — | OpenAI 兼容接口（LLM；任何 OpenAI 兼容端点） |
+| langchain-huggingface | — | 本地 Embedding（`local-models` extra） |
 | pymilvus | ≥2.5.0 | Milvus Python SDK |
 | milvus-lite | ≥2.5.0 | 轻量级向量数据库 |
-| sentence-transformers | ≥3.0.0 | Embedding 模型 |
+| sentence-transformers | ≥3.0.0 | 本地 Embedding/Reranker 模型（`local-models` extra） |
+| torch | ≥2.0.0 | 本地推理后端（`local-models` extra；API-only 镜像不含） |
 | FastAPI | ≥0.109.0 | Web 框架 |
 | uvicorn | ≥0.27.0 | ASGI 服务器 |
 | pydantic | ≥2.0.0 | 数据校验 |

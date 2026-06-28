@@ -139,10 +139,10 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install dependencies (with ocr + dev extras)
+      - name: Install dependencies (with ocr + dev + local-models extras)
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[ocr,dev]"
+          pip install -e ".[ocr,dev,local-models]"
 
       # Env canary: the only external dependency of track A is Ollama (Milvus
       # is Lite/embedded, no server/port). Probe the model list endpoint and

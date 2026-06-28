@@ -87,6 +87,17 @@ EMBEDDING_DEVICE = _resolve_device("EMBEDDING_DEVICE", "auto")
 EMBEDDING_NORMALIZE = _get_bool("EMBEDDING_NORMALIZE", True)
 EMBEDDING_BATCH_SIZE = _get_int("EMBEDDING_BATCH_SIZE", 8)
 
+# Embedding provider selection (api-only-deploy). ``auto`` resolves to ``local``
+# when torch + langchain_huggingface are importable, otherwise ``api`` — this
+# makes the airgapped API-only image (torch absent) pick DashScope automatically.
+# Note (design §2.3, F-06): ``_detect_device`` short-circuiting on ``api`` is NOT
+# how REQ-AO-001 closes; the real closure is the dep restructure (local-models
+# extra) + lazy import. Existing ``try: import torch except: cpu`` already degrades
+# safely, so EMBEDDING_DEVICE/RERANKER_DEVICE resolve to "cpu" in torch-less images.
+EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "auto").strip().lower()
+DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
+DASHSCOPE_BASE_URL = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com").rstrip("/")
+
 # Optional cross-encoder reranker. Default on (REQ-RD-001): a Chinese-capable
 # cross-encoder is part of the shipped retrieval stack, not an opt-in extra.
 # The default model is the local bge-reranker-v2-m3 directory so air-gapped
