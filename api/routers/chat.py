@@ -338,22 +338,35 @@ def _looks_like_domain_query(message: str) -> bool:
 
 
 def _is_identity_capability_query(message: str) -> bool:
-    """Detect 'who are you / what can you do' style questions."""
+    """Detect 'who are you / what can you do' style questions.
+
+    Bug2 Layer ①: detection is driven by the active domain profile's
+    ``capability_keywords`` (substring fast-path) and ``capability_patterns``
+    (regex fuzzy fallback), NOT a hardcoded regex list. This satisfies the
+    "no domain literals in source" invariant (core/prompts/domain_profile.py)
+    and lets each domain tune which self-referential questions get the canned
+    ``identity_response``. The regex layer is the fuzzy backstop so the
+    keyword list need not be exhaustive — Layer ② confidence gate catches
+    anything missed here.
+    """
+    from core.prompts.domain_profile import get_active_profile
+
     text = (message or "").strip().lower()
     if not text:
         return False
-    patterns = [
-        r"你是谁",
-        r"你是干什么的",
-        r"你有什么功能",
-        r"你能做什么",
-        r"你的功能",
-        r"介绍一下你",
-        r"你会什么",
-        r"who are you",
-        r"what can you do",
-    ]
-    return any(re.search(p, text, flags=re.IGNORECASE) for p in patterns)
+    profile = get_active_profile()
+    # Substring match (lowercased; .lower() only matters for English patterns).
+    keywords = [kw.lower() for kw in profile.capability_keywords]
+    if any(k in text for k in keywords):
+        return True
+    # Regex fuzzy fallback (IGNORECASE covers English; Chinese has no case).
+    for pattern in profile.capability_patterns:
+        try:
+            if re.search(pattern, text, flags=re.IGNORECASE):
+                return True
+        except re.error:
+            continue
+    return False
 
 
 def _sse(event: dict) -> str:
@@ -411,7 +424,9 @@ def _build_metadata(
     # the same shape so the refactor is behavior-preserving.
     meta["reasoning"] = reasoning
     meta["confidence"] = confidence
-    meta["confidence_level"] = confidence_level if confidence_level is not None else _confidence_level(confidence)
+    meta["confidence_level"] = (
+        confidence_level if confidence_level is not None else _confidence_level(confidence)
+    )
     meta["refused"] = refused
     return meta
 
@@ -721,7 +736,9 @@ async def chat(
             handler = get_degradation_handler()
             degraded = handler.generate_degraded_response(request.message, str(e))
             degraded_time = (time.perf_counter() - start_time) * 1000
-            degraded_meta = _degraded_metadata(message_id=message_id, trace_id=trace_id, error=str(e))
+            degraded_meta = _degraded_metadata(
+                message_id=message_id, trace_id=trace_id, error=str(e)
+            )
             # Degraded responses are always sampled (importance sampling).
             _capture(
                 http_request,
@@ -826,8 +843,7 @@ async def chat_stream(
         # the message. The non-stream chat() path sets the same pair.
         message_id = str(uuid.uuid4())
         trace_id = (
-            getattr(getattr(request, "state", None), "trace_id", "")
-            or str(uuid.uuid4())[:16]
+            getattr(getattr(request, "state", None), "trace_id", "") or str(uuid.uuid4())[:16]
         )
         try:
             # Send session info

@@ -103,6 +103,26 @@ def _general_defaults() -> dict[str, Any]:
         # when unset, preserving per-profile simplicity.
         "domain_keywords": [],
         "chat_keywords": ["你好", "谢谢", "再见", "hello", "hi", "thanks", "bye"],
+        # Capability/identity detection (Bug2 Layer ①). Substring triggers cover
+        # the exact phrasings; capability_patterns (regex) is the fuzzy fallback
+        # catching variants (你能解决/你能帮/你能处理/你会…) so the list need not
+        # be exhaustive — Layer ② confidence gate backstops anything missed.
+        "capability_keywords": [
+            "你是谁",
+            "你能做什么",
+            "你会什么",
+            "你的功能",
+            "介绍你",
+            "who are you",
+            "what can you do",
+        ],
+        "capability_patterns": [
+            r"你是(谁|干什么的|什么)",
+            r"你(能|可以|会)(做|解决|处理|帮|回答).{0,6}(什么|哪些|问题|任务|功能)",
+            r"介绍.{0,2}你",
+            r"你的功能",
+            r"(who are you|what can you do)",
+        ],
         "query_patterns": [],
         # Query-transform selection heuristics (agent/skills/retrieve/skill.py
         # ``_decide_transform``). Anchors = precise identifiers (e.g. a chapter
@@ -147,6 +167,15 @@ class DomainProfile:
     # question words). Falls back to rag_keywords when empty.
     domain_keywords: list[str] = field(default_factory=list)
     chat_keywords: list[str] = field(default_factory=list)
+    # Capability/identity detection (Bug2 Layer ①): substring triggers +
+    # regex fuzzy variants for "who are you / what can you do" style questions.
+    # Double-track mirrors chat_keywords (substring fast-path) + query_patterns
+    # (regex); the regex layer is a fuzzy fallback so the list need not be
+    # exhaustive. Detection consumes these instead of a hardcoded regex list
+    # (was api/routers/chat.py:340-356), satisfying the "no domain literals in
+    # source" invariant (this file's module docstring).
+    capability_keywords: list[str] = field(default_factory=list)
+    capability_patterns: list[str] = field(default_factory=list)
     # 可选 regex 模式列表(如 ATA 编号),用于 query 增强识别。
     query_patterns: list[str] = field(default_factory=list)
     # Query-transform selection heuristics for ``_decide_transform``:
