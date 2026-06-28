@@ -352,7 +352,7 @@ location /rag/ {
 | `OTEL_SAMPLE_RATE` | `1.0` | Trace 采样率，范围 0～1 |
 | `OTEL_CONSOLE_EXPORTER` | `false` | 是否将 Span 输出到控制台 |
 | `MILVUS_DB_URI` | `./milvus_data.db` | Milvus Lite 数据库路径 |
-| `COLLECTION_NAME` | `t_collection01` | Milvus collection 名称 |
+| `COLLECTION_NAME` | `rag_knowledge_base` | Milvus collection 名称 |
 | `PDF_EXTRACT_TABLES` | `true` | 是否将明确列分隔的 PDF 表格转为 Markdown chunk |
 | `PDF_OCR_ENABLED` | `false` | 是否对扫描页/图片页启用 OCR |
 | `PDF_OCR_ENGINE` | `paddleocr` | OCR 引擎，目前支持 `paddleocr`、`tesseract` |

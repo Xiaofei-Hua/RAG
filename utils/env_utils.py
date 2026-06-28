@@ -130,7 +130,7 @@ OTEL_CONSOLE_EXPORTER = _get_bool("OTEL_CONSOLE_EXPORTER", False)
 
 # Storage. Do not use the name `MILVUS_URI`; pymilvus reserves it for servers.
 MILVUS_URI = os.getenv("MILVUS_DB_URI", "./milvus_data.db")
-COLLECTION_NAME = os.getenv("COLLECTION_NAME", "t_collection01")
+COLLECTION_NAME = os.getenv("COLLECTION_NAME", "rag_knowledge_base")
 
 # Vector index tuning. AUTOINDEX is the safe default (works on Milvus Lite).
 # Switch to HNSW / IVF_FLAT on a standalone Milvus server for tunable

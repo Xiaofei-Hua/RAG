@@ -1190,7 +1190,7 @@ GET /api/admin/config
   },
   "milvus": {
     "uri": "./milvus_data.db",
-    "collection": "t_collection01"
+    "collection": "rag_knowledge_base"
   },
   "pdf_ingestion": {
     "extract_tables": true,
