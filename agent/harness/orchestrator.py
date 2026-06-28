@@ -700,6 +700,7 @@ class AgentHarness:
         thread_id: str | None = None,
         max_rewrites: int | None = None,
         mode: str | None = None,
+        shared_state: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """
         Invoke the agent with a question (thinking mode by default).
@@ -709,6 +710,8 @@ class AgentHarness:
             thread_id: Optional thread ID for session continuity
             max_rewrites: Max rewrite attempts (default from config)
             mode: Execution mode override ('thinking', 'fast')
+            shared_state: Optional seed for the cross-node scratchpad (Bug2 Layer
+                ②/⑤: chat router injects intent_confidence for the A/B shunt)
 
         Returns:
             Final agent state after execution
@@ -733,6 +736,7 @@ class AgentHarness:
             "messages": [HumanMessage(content=question)],
             "rewrite_count": 0,
             "max_rewrites": max_rewrites,
+            "shared_state": dict(shared_state or {}),
         }
 
         run_collector = self._begin_run()
@@ -794,8 +798,14 @@ class AgentHarness:
         thread_id: str | None = None,
         max_rewrites: int | None = None,
         mode: str | None = None,
+        shared_state: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        """Invoke the graph through its native asynchronous execution path."""
+        """Invoke the graph through its native asynchronous execution path.
+
+        ``shared_state`` seeds the graph's cross-node scratchpad (merged via the
+        ``merge_shared_state`` reducer). Bug2 Layer ②/⑤: the chat router injects
+        ``intent_confidence`` here so GenerateSkill's A/B shunt can read it.
+        """
         plan = self._planner.plan(query=question, mode=mode)
         if plan.plan_type == PlanType.FAST:
             from core.fast_mode import fast_generate_async
@@ -815,10 +825,11 @@ class AgentHarness:
         await self.astart()
         thread_id = thread_id or self._config.thread_id
         max_rewrites = max_rewrites or self._config.max_rewrites
-        inputs = {
+        inputs: dict[str, Any] = {
             "messages": [HumanMessage(content=question)],
             "rewrite_count": 0,
             "max_rewrites": max_rewrites,
+            "shared_state": dict(shared_state or {}),
         }
         config = {"configurable": {"thread_id": thread_id}}
 
@@ -835,8 +846,11 @@ class AgentHarness:
         thread_id: str | None = None,
         stream_mode: Any = "values",
         max_rewrites: int | None = None,
+        shared_state: dict[str, Any] | None = None,
     ) -> AsyncIterator[Any]:
-        """Stream graph updates and custom token events natively through asyncio."""
+        """Stream graph updates and custom token events natively through asyncio.
+
+        ``shared_state`` seeds the cross-node scratchpad (Bug2 Layer ②/⑤)."""
         await self.astart()
         thread_id = thread_id or self._config.thread_id
         max_rewrites = max_rewrites or self._config.max_rewrites
@@ -844,6 +858,7 @@ class AgentHarness:
             "messages": [HumanMessage(content=question)],
             "rewrite_count": 0,
             "max_rewrites": max_rewrites,
+            "shared_state": dict(shared_state or {}),
         }
         config = {"configurable": {"thread_id": thread_id}}
 
