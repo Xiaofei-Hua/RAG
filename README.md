@@ -235,6 +235,10 @@ Reranker 模型、PaddleOCR 模型、Python 依赖和前端 `web/dist` 构建产
 部署脚本完成后，使用 `./run.sh` 启动开发模式，或按下一节使用 FastAPI
 托管生产静态文件。
 
+> 上述为**本地推理部署**（含 torch / 本地 LLM / 本地 embedding 权重，需 GPU 或
+> 大内存）。若目标环境**无 GPU、镜像 < 4 GB、仅 API 连接**，请改用
+> [API-only 部署（DashScope，零 torch）](#api-only-部署dashscope零-torch)。
+
 ### 构建离线部署包
 
 在一台有网络的同架构机器上完成预热并打包：
@@ -551,10 +555,11 @@ curl http://localhost:8000/api/admin/config
 
 ## 测试
 
-安装开发依赖并运行 pytest 单元测试：
+安装开发依赖并运行 pytest 单元测试（本地推理 profile，含 torch；API-only 测试用
+`--extra api-only` 替代 `--extra local-models`）：
 
 ```bash
-uv sync --extra dev
+uv sync --extra dev --extra local-models
 uv run pytest
 ```
 

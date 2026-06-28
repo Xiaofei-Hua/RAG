@@ -1163,11 +1163,13 @@ GET /api/admin/config
   },
   "embedding": {
     "model": "BAAI/bge-small-zh-v1.5",
+    "provider": "local",
     "local_path": "/path/to/models/local_models/bge-small-zh-v1.5",
     "dimension": 512,
     "device": "cuda",
     "normalize": true,
-    "batch_size": 8
+    "batch_size": 8,
+    "api_base_url": null
   },
   "reranker": {
     "enabled": true,
@@ -1460,3 +1462,36 @@ curl -X POST http://localhost:8000/api/feedback \
              ──────────────────────────
              仅 1 次 LLM 调用，耗时 3~8 秒，速度快
 ```
+
+---
+
+## 附录 D：部署模式与配置
+
+平台支持两种部署 profile，由 `EMBEDDING_PROVIDER` + 依赖 extra 切换，**同一份代码**。
+
+| 维度 | 本地推理（默认） | API-only |
+|------|------------------|----------|
+| 依赖安装 | `uv sync --extra ocr --extra local-models` | `uv sync --extra api-only`（或裸 sync） |
+| torch / 本地权重 | ✅ 含（embedding + reranker 本地推理） | ❌ 不含（镜像 ~0.43 GB，无 GPU 友好） |
+| LLM | 本地 Ollama（`OPENAI_BASE_URL=http://localhost:11434/v1`） | DashScope Qwen 或任意 OpenAI 兼容端点 |
+| Embedding | 本地 BGE（`EMBEDDING_PROVIDER=local`） | DashScope `text-embedding-v3`（`EMBEDDING_PROVIDER=api`） |
+| Reranker | 本地 bge-reranker-v2-m3（`RERANKER_ENABLED=true`） | 关闭，回退 RRF 顺序（`RERANKER_ENABLED=false`） |
+| 镜像 | `deploy.sh` 裸机部署（≥ 8 GB 含权重） | `docker build -t rag-platform:api-only .`（< 4 GB） |
+
+### 关键环境变量
+
+| 变量 | 本地推理 | API-only | 说明 |
+|------|----------|----------|------|
+| `EMBEDDING_PROVIDER` | `local`（或 `auto`） | `api` | `auto` = torch 可导入则 `local` 否则 `api` |
+| `DASHSCOPE_API_KEY` | — | **必填**（运行时注入） | DashScope embedding 鉴权；空值会 fail-fast |
+| `DASHSCOPE_BASE_URL` | — | `https://dashscope.aliyuncs.com` | 可覆盖为内网网关 |
+| `OPENAI_BASE_URL` | `http://localhost:11434/v1` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | LLM 端点 |
+| `EMBEDDING_DIMENSION` | 512（BGE-small） | 512（v3 合法集合之一） | 必须 = Milvus collection 维度 |
+
+> **安全**：`DASHSCOPE_API_KEY` / `OPENAI_API_KEY` / `ADMIN_API_KEY` 均为运行时 secret，
+> 通过 `docker run -e` 或 secret 挂载注入，**绝不烘进镜像**。`/api/admin/config` 响应中
+> `embedding.api_base_url` 仅在 `provider=api` 时返回端点，永不返回 key。
+>
+> **PII 合规**：API-only 模式下，文档原文会发送到 DashScope 做 embedding；对话层的输入
+> 脱敏不覆盖摄入路径，数据驻留要求由部署方负责。详见
+> `docs/specs/api-only-deploy/design.md` §9 与 `README.md`「API-only 部署」节。
