@@ -250,12 +250,14 @@ async def get_config(_: None = Depends(require_admin)):
     """Get current configuration."""
     from utils.env_utils import (
         COLLECTION_NAME,
+        DASHSCOPE_BASE_URL,
         EMBEDDING_BATCH_SIZE,
         EMBEDDING_DEVICE,
         EMBEDDING_DIMENSION,
         EMBEDDING_MODEL,
         EMBEDDING_MODEL_PATH,
         EMBEDDING_NORMALIZE,
+        EMBEDDING_PROVIDER,
         LLM_MAX_RETRIES,
         LLM_MAX_TOKENS,
         LLM_MODEL,
@@ -294,11 +296,13 @@ async def get_config(_: None = Depends(require_admin)):
         },
         "embedding": {
             "model": EMBEDDING_MODEL,
+            "provider": EMBEDDING_PROVIDER,
             "local_path": EMBEDDING_MODEL_PATH,
             "dimension": EMBEDDING_DIMENSION,
             "device": EMBEDDING_DEVICE,
             "normalize": EMBEDDING_NORMALIZE,
             "batch_size": EMBEDDING_BATCH_SIZE,
+            "api_base_url": DASHSCOPE_BASE_URL if EMBEDDING_PROVIDER == "api" else None,
         },
         "reranker": {
             "enabled": RERANKER_ENABLED,
