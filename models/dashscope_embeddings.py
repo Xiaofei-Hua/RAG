@@ -52,9 +52,7 @@ def _validate_base_url(base_url: str) -> None:
     """
     parsed = urlparse(base_url)
     if parsed.scheme not in {"http", "https"}:
-        raise ValueError(
-            f"DASHSCOPE_BASE_URL must use http or https, got scheme={parsed.scheme!r}"
-        )
+        raise ValueError(f"DASHSCOPE_BASE_URL must use http or https, got scheme={parsed.scheme!r}")
     if not parsed.netloc:
         raise ValueError(f"DASHSCOPE_BASE_URL has no host: {base_url!r}")
 
@@ -132,20 +130,19 @@ class DashScopeEmbeddings(Embeddings):
         """
         if not texts:
             return []
-        results: list[list[float]] = [None] * len(texts)  # type: ignore[list-item]
+        # Dict-keyed accumulation avoids a None-initialized typed list.
+        placed: dict[int, list[float]] = {}
         for start in range(0, len(texts), self._batch_size):
             chunk = texts[start : start + self._batch_size]
             vectors = self._embed_batch(chunk, text_type="document")
             for offset, vector in enumerate(vectors):
                 self._echo_check(vector)
-                results[start + offset] = vector
-        return results
+                placed[start + offset] = vector
+        return [placed[i] for i in range(len(texts))]
 
     # -- internals ----------------------------------------------------------
 
-    def _build_payload(
-        self, texts: list[str], text_type: str
-    ) -> dict[str, object]:
+    def _build_payload(self, texts: list[str], text_type: str) -> dict[str, object]:
         parameters: dict[str, object] = {
             "text_type": text_type,
             "output_type": "dense",  # F-03: pin dense so parsing is unambiguous.
@@ -163,7 +160,8 @@ class DashScopeEmbeddings(Embeddings):
         data = self._post(payload)
         embeddings = data.get("output", {}).get("embeddings", [])
         # Reassemble by text_index (defensive — API returns in input order).
-        ordered: list[list[float]] = [None] * len(texts)  # type: ignore[list-item]
+        # A dict avoids the None-initialized typed-list workaround.
+        placed: dict[int, list[float]] = {}
         for item in embeddings:
             idx = item.get("text_index")
             if not isinstance(idx, int) or not 0 <= idx < len(texts):
@@ -171,12 +169,11 @@ class DashScopeEmbeddings(Embeddings):
                     f"DashScope returned out-of-range text_index={idx!r} "
                     f"for batch size {len(texts)}"
                 )
-            ordered[idx] = list(item["embedding"])
-        missing = [i for i, v in enumerate(ordered) if v is None]
+            placed[idx] = list(item["embedding"])
+        missing = [i for i in range(len(texts)) if i not in placed]
         if missing:
-            raise RuntimeError(
-                f"DashScope response missing embeddings for indices {missing}"
-            )
+            raise RuntimeError(f"DashScope response missing embeddings for indices {missing}")
+        ordered = [placed[i] for i in range(len(texts))]
         usage = data.get("usage", {})
         log.debug(
             f"DashScope embedded {len(texts)} texts ({text_type}); "
@@ -212,11 +209,12 @@ class DashScopeEmbeddings(Embeddings):
         last_exc: Exception | None = None
         delay = self._retry_delay
         for attempt in range(self._max_retries + 1):
+            is_last = attempt == self._max_retries
             try:
                 response = httpx.post(url, json=payload, headers=headers, timeout=self._timeout)
             except httpx.HTTPError as exc:
                 last_exc = exc
-                if attempt < self._max_retries:
+                if not is_last:
                     log.warning(
                         f"DashScope request failed (attempt {attempt + 1}): {exc}; "
                         f"retry in {delay:.1f}s"
@@ -224,14 +222,14 @@ class DashScopeEmbeddings(Embeddings):
                     time.sleep(delay)
                     delay *= self._retry_backoff
                     continue
-                raise RuntimeError(f"DashScope request failed after retries: {exc}") from exc
+                break  # exhausted -> fall through to terminal raise
 
             status = response.status_code
             if status == 200:
                 return response.json()
 
             body = response.text
-            if status in _RETRYABLE_STATUS and attempt < self._max_retries:
+            if status in _RETRYABLE_STATUS and not is_last:
                 log.warning(
                     f"DashScope returned HTTP {status} (attempt {attempt + 1}); "
                     f"retry in {delay:.1f}s. body={body[:200]}"
@@ -239,11 +237,10 @@ class DashScopeEmbeddings(Embeddings):
                 time.sleep(delay)
                 delay *= self._retry_backoff
                 continue
-
             # Non-retryable (4xx business error) or retries exhausted.
             raise RuntimeError(
                 f"DashScope embedding request failed: HTTP {status}, body={body[:500]}"
             )
 
-        # Unreachable: every path either returns or raises inside the loop.
-        raise RuntimeError(f"DashScope request failed after retries: {last_exc}")  # pragma: no cover
+        # Reached only when retries are exhausted on a network error.
+        raise RuntimeError(f"DashScope request failed after retries: {last_exc}") from last_exc
