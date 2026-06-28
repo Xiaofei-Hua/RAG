@@ -21,7 +21,6 @@ from typing import Any
 from utils.env_utils import (
     EMBEDDING_BATCH_SIZE,
     EMBEDDING_DEVICE,
-    EMBEDDING_DIMENSION,
     EMBEDDING_MODEL,
     EMBEDDING_MODEL_PATH,
     EMBEDDING_NORMALIZE,
@@ -69,9 +68,7 @@ def _resolve_provider() -> str:
     if raw == "auto":
         return "local" if _torch_available() else "api"
     if raw not in {"local", "api"}:
-        raise ValueError(
-            f"EMBEDDING_PROVIDER must be one of auto|local|api, got {raw!r}"
-        )
+        raise ValueError(f"EMBEDDING_PROVIDER must be one of auto|local|api, got {raw!r}")
     return raw
 
 

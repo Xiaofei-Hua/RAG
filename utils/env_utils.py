@@ -96,9 +96,7 @@ EMBEDDING_BATCH_SIZE = _get_int("EMBEDDING_BATCH_SIZE", 8)
 # safely, so EMBEDDING_DEVICE/RERANKER_DEVICE resolve to "cpu" in torch-less images.
 EMBEDDING_PROVIDER = os.getenv("EMBEDDING_PROVIDER", "auto").strip().lower()
 DASHSCOPE_API_KEY = os.getenv("DASHSCOPE_API_KEY", "")
-DASHSCOPE_BASE_URL = os.getenv(
-    "DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com"
-).rstrip("/")
+DASHSCOPE_BASE_URL = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com").rstrip("/")
 
 # Optional cross-encoder reranker. Default on (REQ-RD-001): a Chinese-capable
 # cross-encoder is part of the shipped retrieval stack, not an opt-in extra.

@@ -14,8 +14,8 @@ import httpx
 import pytest
 
 from models.dashscope_embeddings import (
-    DashScopeEmbeddings,
     _V3_V4_DIMENSIONS,
+    DashScopeEmbeddings,
     _validate_base_url,
 )
 
@@ -44,9 +44,7 @@ def _ds_response(dim: int, count: int, usage_tokens: int = 25) -> dict:
     """Build a DashScope-shaped response with ``count`` vectors of length ``dim``."""
     return {
         "output": {
-            "embeddings": [
-                {"text_index": i, "embedding": [0.1] * dim} for i in range(count)
-            ]
+            "embeddings": [{"text_index": i, "embedding": [0.1] * dim} for i in range(count)]
         },
         "usage": {"total_tokens": usage_tokens},
         "request_id": "test-req",
@@ -280,8 +278,10 @@ class TestRetryAndErrors:
                 return _make_response({"message": "boom"}, status=500)
             return _make_response(_ds_response(512, 1))
 
-        with patch("models.dashscope_embeddings.httpx.post", side_effect=fake_post), \
-             patch("models.dashscope_embeddings.time.sleep"):
+        with (
+            patch("models.dashscope_embeddings.httpx.post", side_effect=fake_post),
+            patch("models.dashscope_embeddings.time.sleep"),
+        ):
             vec = emb.embed_query("x")
         assert calls["n"] == 2
         assert len(vec) == 512
@@ -294,8 +294,10 @@ class TestRetryAndErrors:
             calls["n"] += 1
             return _make_response({"message": "bad model"}, status=400)
 
-        with patch("models.dashscope_embeddings.httpx.post", side_effect=fake_post), \
-             patch("models.dashscope_embeddings.time.sleep"):
+        with (
+            patch("models.dashscope_embeddings.httpx.post", side_effect=fake_post),
+            patch("models.dashscope_embeddings.time.sleep"),
+        ):
             with pytest.raises(RuntimeError, match="HTTP 400"):
                 emb.embed_query("x")
         assert calls["n"] == 1
@@ -308,8 +310,10 @@ class TestRetryAndErrors:
             calls["n"] += 1
             raise httpx.ConnectError("refused")
 
-        with patch("models.dashscope_embeddings.httpx.post", side_effect=fake_post), \
-             patch("models.dashscope_embeddings.time.sleep"):
+        with (
+            patch("models.dashscope_embeddings.httpx.post", side_effect=fake_post),
+            patch("models.dashscope_embeddings.time.sleep"),
+        ):
             with pytest.raises(RuntimeError, match="failed after retries"):
                 emb.embed_query("x")
         assert calls["n"] == emb._max_retries + 1
