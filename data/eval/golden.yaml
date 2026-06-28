@@ -193,6 +193,46 @@ cases:
     tags: [chat, capability]
     source: seed
 
+  # Bug2 target-bug regression: '你能解决什么问题' was misrouted to RAG and
+  # answered over 3%-relevance docs. MUST classify general_chat (Layer ①/③)
+  # and, if it ever reaches the graph, shunt via Layer ⑤ sentinel.
+  - id: chat_capability_13
+    query: 你能解决什么问题
+    expected_sections: []
+    expected_keywords: ["知识库", "问答", "检索"]
+    expected_intent: general_chat
+    expected_min_sources: 0
+    difficulty: easy
+    reference_answer: |
+      我是一个领域自适应的 RAG 智能问答助手，可以基于导入的知识库进行检索并生成带
+      依据的回答。
+    tags: [chat, capability, regression]
+    source: seed
+
+  # F-06 hard rag_query regression guard: these are genuine domain queries that
+  # the classifier might label at borderline confidence. They MUST stay rag_query
+  # (not be downgraded to general_chat by the LOW_INTENT_THRESHOLD gate). Pinned
+  # so threshold tuning can't silently regress real RAG queries.
+  - id: rag_hardcompare_14
+    query: 关系型数据库和 NoSQL 各自适合什么场景？
+    expected_sections: []
+    expected_keywords: ["数据库", "事务", "场景"]
+    expected_intent: rag_query
+    expected_min_sources: 1
+    difficulty: hard
+    tags: [rag, regression, hard]
+    source: seed
+
+  - id: rag_hardcompare_15
+    query: REST 和 GraphQL 各自的优缺点是什么？
+    expected_sections: []
+    expected_keywords: ["REST", "GraphQL", "API"]
+    expected_intent: rag_query
+    expected_min_sources: 1
+    difficulty: hard
+    tags: [rag, regression, hard]
+    source: seed
+
   # ---- Edge cases (3) ----
   - id: edge_ambiguous_13
     query: 异常

@@ -119,6 +119,36 @@ class GenerateSkill(BaseSkill):
         question = self._extract_question(messages)
         ctx = self._extract_context(messages)
 
+        # Bug2 Layer ⑤ — A/B shunt (must run BEFORE the empty-context check so
+        # it takes priority). Distinguishes a misrouted general question (low
+        # intent_confidence, weak docs) from a genuine KB miss (high
+        # confidence, no usable docs). See _should_fallback_or_refuse.
+        shunt = self._should_fallback_or_refuse(context)
+        if shunt == "fallback_general_chat":
+            log.info("GenerateSkill: shunting to general_chat (misrouted general question)")
+            # Empty AIMessage; chat.py detects the sentinel and re-runs the
+            # general_chat LLM path. Single-key increment (F-04): do NOT echo
+            # the whole shared_state back, or intent_confidence gets clobbered.
+            return SkillResult(
+                status=SkillStatus.SUCCESS,
+                messages=[AIMessage(content="")],
+                next_action=None,
+                state_updates={"shared_state": {"fallback_general_chat": True}},
+            )
+        if shunt == "refuse":
+            log.info("GenerateSkill: refusing — high-confidence query but KB missing")
+            return SkillResult(
+                status=SkillStatus.PARTIAL,
+                messages=[
+                    AIMessage(
+                        content=REFUSAL_MESSAGE,
+                        additional_kwargs={"confidence": 0.0, "refused": True},
+                    )
+                ],
+                next_action=None,
+                metadata={"confidence": 0.0, "refused": True},
+            )
+
         # If no context, return empty-knowledge message
         if not ctx or not ctx.strip():
             return SkillResult(
@@ -367,6 +397,28 @@ class GenerateSkill(BaseSkill):
 
         question = self._extract_question(messages)
         ctx = self._extract_context(messages)
+
+        # Bug2 Layer ⑤ — A/B shunt (parity with the sync path; see execute).
+        shunt = self._should_fallback_or_refuse(context)
+        if shunt == "fallback_general_chat":
+            log.info("GenerateSkill (async): shunting to general_chat (misrouted)")
+            return SkillResult(
+                status=SkillStatus.SUCCESS,
+                messages=[AIMessage(content="")],
+                state_updates={"shared_state": {"fallback_general_chat": True}},
+            )
+        if shunt == "refuse":
+            log.info("GenerateSkill (async): refusing — high-confidence but KB missing")
+            return SkillResult(
+                status=SkillStatus.PARTIAL,
+                messages=[
+                    AIMessage(
+                        content=REFUSAL_MESSAGE,
+                        additional_kwargs={"confidence": 0.0, "refused": True},
+                    )
+                ],
+                metadata={"confidence": 0.0, "refused": True},
+            )
 
         if not ctx or not ctx.strip():
             return SkillResult(
@@ -764,6 +816,37 @@ class GenerateSkill(BaseSkill):
             return True
         # Scores present: trust the grade node's relevance judgement.
         return False
+
+    def _should_fallback_or_refuse(self, context: SkillContext) -> str | None:
+        """Bug2 Layer ⑤ — A/B shunt decision (v2: prob-gated).
+
+        Evaluates on EVERY generate entry (decoupled from rewrite_count —
+        critic F-02: the real misroute trajectory is first-pass grade=yes with
+        rewrite_count=0, so a rewrite-exhausted gate never fires). Uses
+        ``max_rerank_prob`` (the shared sigmoid ruler with Layer ④, critic F-01:
+        has_context was always True after min-max) to judge absolute usability.
+
+        Returns:
+          - None: proceed with normal generation (degraded, or usable context)
+          - "refuse": high-confidence RAG query but KB genuinely missing
+          - "fallback_general_chat": low-confidence (misrouted general question)
+
+        Hot-path discipline (AGENTS.md §0.3): max_rerank_prob=None (reranker
+        degraded) -> no shunt (prefer recall over refuse; unavailable != 0).
+        intent_confidence=None -> conservative refuse (don't fabricate).
+        """
+        from utils.env_utils import LOW_INTENT_THRESHOLD
+
+        max_rerank_prob = context.shared_state.get("max_rerank_prob")
+        if max_rerank_prob is None:
+            return None  # reranker degraded: no credible score, no shunt
+        if max_rerank_prob >= self._skill_config.min_relevance_threshold:
+            return None  # absolutely usable -> normal generation
+        # Context absolutely unusable: distinguish two failures.
+        intent_conf = context.shared_state.get("intent_confidence")
+        if intent_conf is not None and intent_conf < LOW_INTENT_THRESHOLD:
+            return "fallback_general_chat"  # misrouted general question
+        return "refuse"  # high-confidence but KB genuinely missing
 
     def _compute_confidence(
         self,

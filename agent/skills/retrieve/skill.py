@@ -11,6 +11,7 @@ This skill is used in both:
 
 from __future__ import annotations
 
+import math
 import re
 import time
 from dataclasses import dataclass
@@ -34,6 +35,25 @@ class RetrieveSkillConfig:
     max_context_length: int = 2500
     # When True, returns results as ToolMessage (for graph compat)
     return_as_tool_message: bool = True
+    # Bug2 Layer ④ — rerank score dual sieve. rerank_score is a raw
+    # cross-encoder logit (unbounded, can be negative; see
+    # core/retrieval/reranker.py:204). min_rerank_prob is the SIGMOID ABSOLUTE
+    # floor: sigmoid(score) < this -> dropped (cuts all-weak batches that pure
+    # min-max cannot filter, since min-max forces the batch-top to 1.0). The
+    # min-max-relative min_rerank_score is a batch-internal secondary filter.
+    # Both default off-effect when <= 0. Reranker-degraded docs (rerank_applied
+    # is not True) bypass filtering; empty-set handling is delegated to Layer ⑤.
+    min_rerank_score: float = 0.3
+    min_rerank_prob: float = 0.35
+
+
+def _sigmoid(s: float) -> float:
+    """Numerically stable sigmoid; avoids math.exp overflow for |s| > ~710."""
+    if s >= 0:
+        z = math.exp(-s)
+        return 1.0 / (1.0 + z)
+    z = math.exp(s)
+    return z / (1.0 + z)
 
 
 class RetrieveSkill(BaseSkill):
@@ -92,6 +112,9 @@ class RetrieveSkill(BaseSkill):
             documents = self._retrieve(query, filter_expr=filter_expr, transform=transform)
             documents = self._maybe_expand_parents(context, documents)
             documents = self._inject_memories(context, documents)
+            # Bug2 Layer ④: drop docs below the rerank relevance floor (cuts
+            # weak batches before grading). Empty result is delegated to Layer ⑤.
+            documents = self._filter_by_rerank_score(documents)
 
             # Build result messages
             result_messages = self._build_result_messages(documents, messages, context)
@@ -106,9 +129,17 @@ class RetrieveSkill(BaseSkill):
             # cross-node (previously this write was lost between nodes).
             state_updates: dict = {}
             mean_rel = self._mean_relevance(documents)
+            shared_updates: dict = {}
             if mean_rel is not None:
                 context.shared_state["retrieval_relevance"] = mean_rel
-                state_updates["shared_state"] = {"retrieval_relevance": mean_rel}
+                shared_updates["retrieval_relevance"] = mean_rel
+            # Bug2 Layer ④ → ⑤: publish the max rerank sigmoid probability as
+            # the shared absolute-usability signal (same ruler as the filter).
+            max_rerank_prob = self._compute_max_rerank_prob(documents)
+            shared_updates["max_rerank_prob"] = max_rerank_prob
+            if shared_updates:
+                context.shared_state.update(shared_updates)
+                state_updates["shared_state"] = shared_updates
 
             return SkillResult(
                 status=SkillStatus.SUCCESS if documents else SkillStatus.PARTIAL,
@@ -176,6 +207,8 @@ class RetrieveSkill(BaseSkill):
                 documents = await self._aretrieve(query, filter_expr, transform)
             documents = self._maybe_expand_parents(context, documents)
             documents = self._inject_memories(context, documents)
+            # Bug2 Layer ④: rerank relevance floor (see sync path comment).
+            documents = self._filter_by_rerank_score(documents)
 
             # Build result messages
             result_messages = self._build_result_messages(documents, messages, context)
@@ -190,9 +223,15 @@ class RetrieveSkill(BaseSkill):
             # the sync path) for cross-node composite confidence.
             state_updates: dict = {}
             mean_rel = self._mean_relevance(documents)
+            shared_updates: dict = {}
             if mean_rel is not None:
                 context.shared_state["retrieval_relevance"] = mean_rel
-                state_updates["shared_state"] = {"retrieval_relevance": mean_rel}
+                shared_updates["retrieval_relevance"] = mean_rel
+            # Bug2 Layer ④ → ⑤: max rerank sigmoid probability (shared ruler).
+            shared_updates["max_rerank_prob"] = self._compute_max_rerank_prob(documents)
+            if shared_updates:
+                context.shared_state.update(shared_updates)
+                state_updates["shared_state"] = shared_updates
 
             return SkillResult(
                 status=SkillStatus.SUCCESS if documents else SkillStatus.PARTIAL,
@@ -231,6 +270,64 @@ class RetrieveSkill(BaseSkill):
         if not scores:
             return None
         return sum(scores) / len(scores)
+
+    def _filter_by_rerank_score(self, documents: list[Document]) -> list[Document]:
+        """Bug2 Layer ④ — dual sieve: sigmoid absolute floor + min-max relative.
+
+        ``rerank_score`` is a raw cross-encoder logit (unbounded, can be
+        negative; ``core/retrieval/reranker.py:204``). Pure min-max has zero
+        filtering power on weak batches (the batch-top is always normalized to
+        1.0). The sigmoid floor gives an absolute relevance signal:
+        ``sigmoid(score) < min_rerank_prob`` is dropped outright, so an
+        all-weak batch (e.g. logits [-6,-5,-4,-3]) is correctly emptied and
+        pushed to Layer ⑤. min-max is a batch-internal secondary filter.
+
+        Docs without ``rerank_applied is True`` (reranker degraded/no reranker,
+        or injected memories) bypass filtering; empty-set handling is delegated
+        to Layer ⑤ A/B shunting.
+        """
+        rel_thr = self._skill_config.min_rerank_score
+        prob_floor = self._skill_config.min_rerank_prob
+        reranked = [d for d in documents if d.metadata.get("rerank_applied") is True]
+        others = [d for d in documents if d.metadata.get("rerank_applied") is not True]
+        if not reranked or (rel_thr <= 0 and prob_floor <= 0):
+            return documents  # degraded/unconfigured: do not filter, hand to Layer ⑤
+        # rerank_applied=True but rerank_score missing = data inconsistency;
+        # treat as unavailable (-inf) rather than sigmoid(0)=0.5, honoring the
+        # hot-path "unavailable != 0" discipline (AGENTS.md §0.3).
+        scores = [
+            float(s) if isinstance(s, (int, float)) else float("-inf")
+            for s in (d.metadata.get("rerank_score") for d in reranked)
+        ]
+        lo, hi = min(scores), max(scores)
+        span = hi - lo
+
+        def _passes(s: float) -> bool:
+            if prob_floor > 0 and _sigmoid(s) < prob_floor:
+                return False
+            if rel_thr > 0 and span >= 1e-9 and ((s - lo) / span) < rel_thr:
+                return False
+            return True
+
+        kept = [d for d, s in zip(reranked, scores) if _passes(s)]
+        return kept + others
+
+    def _compute_max_rerank_prob(self, documents: list[Document]) -> float | None:
+        """Bug2 Layer ④ → ⑤ signal: the batch's max sigmoid probability.
+
+        Published to ``shared_state['max_rerank_prob']`` so GenerateSkill (Layer ⑤)
+        judges absolute usability on the SAME sigmoid scale as the filter above
+        (one ruler, eliminating the v1 'empty-set definition mismatch' F-01).
+        Returns None when no reranked docs exist (reranker degraded) — Layer ⑤
+        then skips the shunt (degradation semantics: prefer recall over refuse).
+        """
+        reranked = [d for d in documents if d.metadata.get("rerank_applied") is True]
+        probs = [
+            _sigmoid(float(d.metadata["rerank_score"]))
+            for d in reranked
+            if isinstance(d.metadata.get("rerank_score"), (int, float))
+        ]
+        return max(probs) if probs else None
 
     def _retrieve(
         self,
@@ -326,7 +423,10 @@ class RetrieveSkill(BaseSkill):
         from core.prompts.domain_profile import get_active_profile
 
         profile = get_active_profile()
-        if any(rx.search(q) for rx in cls._anchor_patterns(profile.profile_label, profile.query_anchor_patterns)):
+        if any(
+            rx.search(q)
+            for rx in cls._anchor_patterns(profile.profile_label, profile.query_anchor_patterns)
+        ):
             return None
         if profile.diagnostic_keywords and any(k in q for k in profile.diagnostic_keywords):
             return "hyde"
@@ -544,11 +644,7 @@ class RetrieveSkill(BaseSkill):
                         "score": item.get("score", 0.0),
                         # Restore parent_id so _maybe_expand_parents works over
                         # the MCP path (critic F-RB-01: server now carries it).
-                        **(
-                            {"parent_id": item["parent_id"]}
-                            if item.get("parent_id")
-                            else {}
-                        ),
+                        **({"parent_id": item["parent_id"]} if item.get("parent_id") else {}),
                     },
                 )
                 documents.append(doc)

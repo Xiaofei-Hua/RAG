@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from core.prompts.profile_prompts import (
     GENERAL_CHAT_SYSTEM_PROMPT,
     GENERATE_SYSTEM_PROMPT,
+    INTENT_CLASSIFICATION_PROMPT,
 )
 from utils.log_utils import log
 from utils.think_tag_utils import strip_think_tags
@@ -338,22 +339,59 @@ def _looks_like_domain_query(message: str) -> bool:
 
 
 def _is_identity_capability_query(message: str) -> bool:
-    """Detect 'who are you / what can you do' style questions."""
+    """Detect 'who are you / what can you do' style questions.
+
+    Bug2 Layer ①: detection is driven by the active domain profile's
+    ``capability_keywords`` (substring fast-path) and ``capability_patterns``
+    (regex fuzzy fallback), NOT a hardcoded regex list. This satisfies the
+    "no domain literals in source" invariant (core/prompts/domain_profile.py)
+    and lets each domain tune which self-referential questions get the canned
+    ``identity_response``. The regex layer is the fuzzy backstop so the
+    keyword list need not be exhaustive — Layer ② confidence gate catches
+    anything missed here.
+    """
+    from core.prompts.domain_profile import get_active_profile
+
     text = (message or "").strip().lower()
     if not text:
         return False
-    patterns = [
-        r"你是谁",
-        r"你是干什么的",
-        r"你有什么功能",
-        r"你能做什么",
-        r"你的功能",
-        r"介绍一下你",
-        r"你会什么",
-        r"who are you",
-        r"what can you do",
-    ]
-    return any(re.search(p, text, flags=re.IGNORECASE) for p in patterns)
+    profile = get_active_profile()
+    # Substring match (lowercased; .lower() only matters for English patterns).
+    keywords = [kw.lower() for kw in profile.capability_keywords]
+    if any(k in text for k in keywords):
+        return True
+    # Regex fuzzy fallback (IGNORECASE covers English; Chinese has no case).
+    for pattern in profile.capability_patterns:
+        try:
+            if re.search(pattern, text, flags=re.IGNORECASE):
+                return True
+        except re.error:
+            continue
+    return False
+
+
+async def _run_general_chat(
+    message: str, session_id: str, session_memory
+) -> tuple[str, list, float | None, bool, str]:
+    """Run the general_chat LLM path (no retrieval).
+
+    Bug2 Layer ⑤: shared by the direct general_chat route (intent=general_chat)
+    and the sentinel takeover (generate node shunted a misrouted general
+    question). Returns (answer, sources, confidence, refused, reasoning).
+    """
+    from core.prompts.profile_prompts import GENERAL_CHAT_SYSTEM_PROMPT
+    from models.llm_models import get_llm
+
+    llm = get_llm()
+    history = await session_memory.get_messages(session_id)
+    history = list(reversed(history))  # oldest-first
+    history_msgs = [SystemMessage(content=GENERAL_CHAT_SYSTEM_PROMPT)]
+    for hm in history:
+        history_msgs.append(hm)
+    history_msgs.append(HumanMessage(content=message))
+    response = await llm.ainvoke(history_msgs)
+    answer = strip_think_tags(response.content)
+    return answer, [], None, False, ""
 
 
 def _sse(event: dict) -> str:
@@ -411,7 +449,9 @@ def _build_metadata(
     # the same shape so the refactor is behavior-preserving.
     meta["reasoning"] = reasoning
     meta["confidence"] = confidence
-    meta["confidence_level"] = confidence_level if confidence_level is not None else _confidence_level(confidence)
+    meta["confidence_level"] = (
+        confidence_level if confidence_level is not None else _confidence_level(confidence)
+    )
     meta["refused"] = refused
     return meta
 
@@ -450,7 +490,12 @@ async def get_rag_graph():
 @router.get("/prompt-status")
 async def get_prompt_status():
     """Return current prompt profile and signature for runtime verification."""
-    signature = hashlib.sha1(GENERATE_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
+    # F-05: aggregate generate + intent prompts so edits to EITHER are
+    # detectable via signature drift (REQ-RG-016). Previously only the generate
+    # prompt was hashed, leaving intent-prompt edits invisible to ops/audit.
+    signature = hashlib.sha1(
+        (GENERATE_SYSTEM_PROMPT + INTENT_CLASSIFICATION_PROMPT).encode("utf-8")
+    ).hexdigest()[:12]
     return {
         "loaded": True,
         "prompt_profile": _profile().prompt_profile_generate,
@@ -601,8 +646,16 @@ async def chat(
 
         log.info(f"Intent classified: {intent_result.intent.value}")
 
-        # Step 2: Route based on intent + domain heuristic safeguard
-        use_rag = intent_result.intent.value != "general_chat"
+        # Step 2: Route based on intent + confidence + domain heuristic.
+        # Bug2 Layer ②: a low-confidence rag_query falls back to general_chat
+        # rather than misrouting ambiguous capability/general questions into
+        # retrieval (the original bug: '你能解决什么问题' was tagged rag_query).
+        # The domain-query override is a stronger signal and still forces RAG.
+        from utils.env_utils import LOW_INTENT_THRESHOLD
+
+        intent_val = intent_result.intent.value
+        use_rag = intent_val != "general_chat" and intent_result.confidence >= LOW_INTENT_THRESHOLD
+        force_rag = False
         if not use_rag and _looks_like_domain_query(request.message):
             use_rag = True
             force_rag = True
@@ -610,22 +663,9 @@ async def chat(
 
         if not use_rag:
             # Direct LLM response without retrieval
-            from models.llm_models import get_llm
-
-            llm = get_llm()
-
-            # Load conversation history for multi-turn context
-            history = await session_memory.get_messages(session_id)
-            history = list(reversed(history))  # oldest-first
-
-            history_msgs = [SystemMessage(content=GENERAL_CHAT_SYSTEM_PROMPT)]
-            for hm in history:
-                history_msgs.append(hm)
-            history_msgs.append(HumanMessage(content=request.message))
-
-            response = await llm.ainvoke(history_msgs)
-            answer = strip_think_tags(response.content)
-            sources = []
+            answer, sources, _gen_conf, _gen_refused, reasoning_text = await _run_general_chat(
+                request.message, session_id, session_memory
+            )
             route = "general_chat"
             prompt_profile = _profile().prompt_profile_general
 
@@ -635,7 +675,72 @@ async def chat(
 
             harness = get_agent_harness()
 
-            result = await harness.ainvoke(request.message, thread_id=session_id)
+            # Bug2 Layer ⑤: inject intent_confidence so GenerateSkill's A/B
+            # shunt can distinguish a misrouted general question (low conf) from
+            # a genuine KB miss (high conf). The merge_shared_state reducer
+            # propagates it to the generate node.
+            result = await harness.ainvoke(
+                request.message,
+                thread_id=session_id,
+                shared_state={
+                    "intent_confidence": intent_result.confidence,
+                    "intent": intent_val,
+                },
+            )
+
+            # Bug2 Layer ⑤ sentinel takeover: if the generate node shunted a
+            # misrouted general question, re-run the general_chat LLM path.
+            shared_after = result.get("shared_state") or {}
+            if shared_after.get("fallback_general_chat"):
+                answer, sources, gen_conf, gen_refused, reasoning_text = await _run_general_chat(
+                    request.message, session_id, session_memory
+                )
+                route = "general_chat"
+                prompt_profile = _profile().prompt_profile_general
+                rag_meta = _build_metadata(
+                    route=route,
+                    prompt_profile=prompt_profile,
+                    message_id=message_id,
+                    trace_id=trace_id,
+                    intent_confidence=intent_result.confidence,
+                    intent_reasoning=intent_result.reasoning or "",
+                    source_count=0,
+                    structured_answer=None,
+                )
+                rag_meta["reasoning"] = reasoning_text
+                rag_meta["confidence"] = gen_conf
+                rag_meta["refused"] = gen_refused
+                processing_time = (time.perf_counter() - start_time) * 1000
+                background_tasks.add_task(
+                    session_memory.save_message,
+                    session_id,
+                    HumanMessage(content=request.message),
+                )
+                background_tasks.add_task(
+                    session_memory.save_message, session_id, AIMessage(content=answer)
+                )
+                _capture(
+                    http_request,
+                    request.message,
+                    answer,
+                    [],
+                    "",
+                    route,
+                    prompt_profile,
+                    "general_chat",
+                    rag_meta,
+                    processing_time,
+                    trace_id,
+                    session_id,
+                )
+                return ChatResponse(
+                    response=answer,
+                    session_id=session_id,
+                    intent="general_chat",
+                    sources=[],
+                    processing_time_ms=processing_time,
+                    metadata=rag_meta,
+                )
 
             # Extract response and sources
             messages = result.get("messages", [])
@@ -721,7 +826,9 @@ async def chat(
             handler = get_degradation_handler()
             degraded = handler.generate_degraded_response(request.message, str(e))
             degraded_time = (time.perf_counter() - start_time) * 1000
-            degraded_meta = _degraded_metadata(message_id=message_id, trace_id=trace_id, error=str(e))
+            degraded_meta = _degraded_metadata(
+                message_id=message_id, trace_id=trace_id, error=str(e)
+            )
             # Degraded responses are always sampled (importance sampling).
             _capture(
                 http_request,
@@ -826,8 +933,7 @@ async def chat_stream(
         # the message. The non-stream chat() path sets the same pair.
         message_id = str(uuid.uuid4())
         trace_id = (
-            getattr(getattr(request, "state", None), "trace_id", "")
-            or str(uuid.uuid4())[:16]
+            getattr(getattr(request, "state", None), "trace_id", "") or str(uuid.uuid4())[:16]
         )
         try:
             # Send session info
@@ -926,7 +1032,13 @@ async def chat_stream(
 
             intent_classifier = get_intent_classifier()
             intent_result = await intent_classifier.aclassify(request.message)
-            use_rag = intent_result.intent.value != "general_chat"
+            # Bug2 Layer ②: confidence-gated routing (see non-stream comment).
+            from utils.env_utils import LOW_INTENT_THRESHOLD
+
+            intent_val = intent_result.intent.value
+            use_rag = (
+                intent_val != "general_chat" and intent_result.confidence >= LOW_INTENT_THRESHOLD
+            )
             force_rag = False
             if not use_rag and _looks_like_domain_query(request.message):
                 use_rag = True
@@ -1010,11 +1122,19 @@ async def chat_stream(
                 # additional_kwargs (parity with the non-streaming path).
                 gen_confidence = None
                 gen_refused = False
+                # Bug2 Layer ⑤: accumulate the fallback sentinel across node
+                # outputs (F-09: the loop previously ignored shared_state).
+                fallback_general_chat = False
 
                 async for event in harness.astream(
                     request.message,
                     thread_id=session_id,
                     stream_mode=["updates", "custom"],
+                    # Bug2 Layer ⑤: inject intent_confidence for the A/B shunt.
+                    shared_state={
+                        "intent_confidence": intent_result.confidence,
+                        "intent": intent_val,
+                    },
                 ):
                     if isinstance(event, tuple) and len(event) == 2 and event[0] == "custom":
                         custom_event = event[1]
@@ -1037,6 +1157,9 @@ async def chat_stream(
                         continue
 
                     for node_name, node_output in event.items():
+                        # Bug2 Layer ⑤ sentinel accumulation (F-09).
+                        if (node_output.get("shared_state") or {}).get("fallback_general_chat"):
+                            fallback_general_chat = True
                         if node_name == "agent":
                             messages = node_output.get("messages", [])
                             if messages:
@@ -1082,6 +1205,54 @@ async def chat_stream(
                                         yield _sse({"type": "token", "content": suffix})
                                 else:
                                     full_response = answer
+
+                # Bug2 Layer ⑤ streaming sentinel takeover (F-07/F-09): the
+                # generate node shunted a misrouted general question (empty
+                # message + fallback_general_chat sentinel). Re-run the
+                # general_chat LLM stream so the user gets a real answer, and
+                # emit the done payload with route=general_chat (NOT rag).
+                if fallback_general_chat:
+                    yield _sse({"type": "status", "message": "正在重新组织回答..."})
+                    from models.llm_models import get_llm
+
+                    llm = get_llm()
+                    history = await session_memory.get_messages(session_id)
+                    history = list(reversed(history))
+                    history_msgs = [SystemMessage(content=GENERAL_CHAT_SYSTEM_PROMPT)]
+                    history_msgs.extend(history)
+                    history_msgs.append(HumanMessage(content=request.message))
+                    full_response = ""
+                    async for chunk in llm.astream(history_msgs):
+                        if hasattr(chunk, "content") and chunk.content:
+                            full_response += chunk.content
+                            yield _sse({"type": "token", "content": chunk.content})
+                    full_response = strip_think_tags(full_response)
+                    await session_memory.save_message(
+                        session_id, HumanMessage(content=request.message)
+                    )
+                    await session_memory.save_message(session_id, AIMessage(content=full_response))
+                    processing_time_ms = (time.perf_counter() - start_time) * 1000
+                    rag_meta = _build_metadata(
+                        route="general_chat",
+                        prompt_profile=_profile().prompt_profile_general,
+                        message_id=message_id,
+                        trace_id=trace_id,
+                        intent_confidence=intent_result.confidence,
+                        intent_reasoning=intent_result.reasoning or "",
+                        source_count=0,
+                        structured_answer=None,
+                        force_rag=force_rag,
+                    )
+                    yield _sse(
+                        {
+                            "type": "done",
+                            "full_response": full_response,
+                            "sources": [],
+                            "processing_time_ms": processing_time_ms,
+                            "metadata": rag_meta,
+                        }
+                    )
+                    return
 
                 # Save to session
                 await session_memory.save_message(session_id, HumanMessage(content=request.message))

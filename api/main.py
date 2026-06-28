@@ -33,7 +33,10 @@ from fastapi.staticfiles import StaticFiles
 from api.middleware.error_handler import ErrorHandlerMiddleware
 from api.middleware.tracing import TracingMiddleware
 from api.routers import admin, chat, documents, feedback, retrieval, sessions
-from core.prompts.profile_prompts import GENERATE_SYSTEM_PROMPT
+from core.prompts.profile_prompts import (
+    GENERATE_SYSTEM_PROMPT,
+    INTENT_CLASSIFICATION_PROMPT,
+)
 from utils.log_utils import log
 
 
@@ -81,7 +84,11 @@ async def lifespan(app: FastAPI):
 
     log.info(f"LLM Circuit: {llm_circuit.state.value}")
     log.info(f"Retriever Circuit: {retriever_circuit.state.value}")
-    prompt_sig = hashlib.sha1(GENERATE_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:12]
+    # F-05: aggregate generate + intent prompts so edits to EITHER are
+    # detectable via signature drift (REQ-RG-016).
+    prompt_sig = hashlib.sha1(
+        (GENERATE_SYSTEM_PROMPT + INTENT_CLASSIFICATION_PROMPT).encode("utf-8")
+    ).hexdigest()[:12]
     from core.prompts.domain_profile import get_active_profile
 
     active_profile = get_active_profile()

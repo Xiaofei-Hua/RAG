@@ -93,12 +93,22 @@ EMBEDDING_BATCH_SIZE = _get_int("EMBEDDING_BATCH_SIZE", 8)
 # deploys load from disk instead of hitting Hugging Face (REQ-RD-002/003).
 RERANKER_ENABLED = _get_bool("RERANKER_ENABLED", True)
 RERANKER_MODEL = os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3")
-RERANKER_MODEL_PATH = _get_path("RERANKER_MODEL_PATH", "models/local_models/reranker/bge-reranker-v2-m3")
+RERANKER_MODEL_PATH = _get_path(
+    "RERANKER_MODEL_PATH", "models/local_models/reranker/bge-reranker-v2-m3"
+)
 RERANKER_DEVICE = _resolve_device("RERANKER_DEVICE", "auto")
 RERANKER_WARMUP = _get_bool("RERANKER_WARMUP", False)
 RERANKER_CANDIDATE_TOP_K = _get_int("RERANKER_CANDIDATE_TOP_K", 10)
 RERANKER_TOP_K = _get_int("RERANKER_TOP_K", 5)
 RERANKER_BATCH_SIZE = _get_int("RERANKER_BATCH_SIZE", 8)
+
+# Intent-routing confidence gate (Bug2 Layer ②). A rag_query classified below
+# this confidence falls back to general_chat (avoids misrouting ambiguous
+# capability/general questions into retrieval). NOTE: prior placeholder — the
+# project has no calibration data yet (defender F-06); tuned via hard rag_query
+# golden regression cases. Domain-query override (_looks_like_domain_query) is a
+# stronger signal and still forces RAG regardless of confidence.
+LOW_INTENT_THRESHOLD = _get_float("LOW_INTENT_THRESHOLD", 0.5)
 
 # OpenTelemetry: disabled by default for local development.
 OTEL_ENABLED = _get_bool("OTEL_ENABLED", False)
