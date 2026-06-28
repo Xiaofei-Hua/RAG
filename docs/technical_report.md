@@ -220,7 +220,7 @@ sudo ./deploy.sh --build-offline-bundle
 | 参数 | 数值 |
 |------|------|
 | 存储后端 | SQLite（本地文件 `milvus_data.db`） |
-| Collection | `t_collection01` |
+| Collection | `rag_knowledge_base` |
 | 索引类型 | AUTOINDEX |
 | 度量类型 | IP（内积） |
 | 最大文本长度 | 4,000 字符 |

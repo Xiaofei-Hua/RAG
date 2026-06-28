@@ -7,6 +7,26 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Changed — Milvus collection default renamed `[breaking]` (`collection-rename`)
+
+`[breaking]` The default `COLLECTION_NAME` changed from `t_collection01` to
+`rag_knowledge_base` — the old name was a placeholder (`t_` prefix, generic
+`collection01`) with no project identity; the new name self-documents what the
+collection holds (the RAG knowledge base) and aligns with the `rag-project`
+package name.
+
+- **What changed**: the code default in `utils/env_utils.py` +
+  `documents/milvus_db.py`, plus all templates/docs (`.env.example`,
+  `deploy.sh` incl. the offline `${COLLECTION_NAME:-...}` fallback, `README.md`,
+  `docs/API.md`, `docs/technical_report.md`).
+- **Why**: a persistent identifier should be formal and self-describing, not a
+  scaffold artifact.
+- **How to migrate**: existing deployments that already have vectors under
+  `t_collection01` should **either** set `COLLECTION_NAME=t_collection01` in
+  their `.env` (keeps the existing collection, zero data movement), **or**
+  accept the new default (starts an empty `rag_knowledge_base` collection and
+  re-import documents). A fresh deployment needs no action.
+
 ### Added — API-only deploy capability (`api-only-deploy`)
 
 A new deployment profile ships a `< 4 GB` Docker image with **zero PyTorch**,
