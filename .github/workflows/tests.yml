@@ -140,6 +140,14 @@ jobs:
   backend-nightly:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: self-hosted
+    # Bounded execution: env-canary fails in seconds if Ollama/the model is
+    # missing; track A (in-process LLM tests) takes a few minutes; track B
+    # (backend boot + 3 HTTP suites) ~10 min. 30 min leaves headroom while
+    # guaranteeing a stuck run can never queue-block the runner indefinitely.
+    # NOTE: GitHub's job timeout does NOT cover the runner-acquisition wait —
+    # that is why the schedule is disabled until a runner is actually
+    # registered (see the `on:` block above).
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
