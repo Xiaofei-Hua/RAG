@@ -59,6 +59,12 @@ dev = [
     # for local `coverage run -m pytest ... && coverage report`. See
     # docs/specs/engineering-governance-optimization Q3.
     "coverage>=7.14.3",
+    # mypy is used by the CI "Type check" step (non-blocking baseline). Declared
+    # here as the SINGLE source of truth so `uv sync --extra dev` installs it
+    # alongside pytest/coverage. Do NOT re-add a `[dependency-groups] dev` —
+    # that created a split source (only one is picked up per install method),
+    # which silently dropped mypy when CI switched to `uv sync --extra dev`.
+    "mypy>=2.1.0",
 ]
 redis = ["redis>=5.0.0"]
 ui = ["gradio>=4.0.0"]

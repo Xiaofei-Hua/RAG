@@ -5,16 +5,20 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # backend-nightly can be triggered on demand via workflow_dispatch, and runs
-  # nightly via the schedule cron below. KNOWN-GAP-1 (issue-KNOWN-GAP-1 in
-  # review/tracking.md) is now CLOSED: track A (6 in-process LLM cases) and
-  # track B (script-style real-backend HTTP tests over localhost:8000) are both
-  # wired up and verified green against a live Ollama + qwen3:14b runner.
+  # backend-nightly runs on demand via workflow_dispatch. KNOWN-GAP-1 (issue-
+  # KNOWN-GAP-1 in review/tracking.md) is CLOSED: track A (6 in-process LLM
+  # cases) and track B (script-style real-backend HTTP tests) are wired up and
+  # verified green against a live Ollama + qwen3:14b runner.
   workflow_dispatch:
-  schedule:
-    # Nightly 02:00 UTC (10:00 CST). Self-hosted runner must have Ollama +
-    # qwen3:14b; the env-canary step fails fast with a distinct label if not.
-    - cron: "0 2 * * *"
+  # NOTE: the nightly `schedule` cron is intentionally disabled. The repo has
+  # NO registered self-hosted runner (gh api .../runners -> total_count:0), so
+  # every scheduled run queued for 24h then timed out — a perpetual red CI
+  # that masked real failures (alert fatigue). To re-enable nightly once a
+  # runner with Ollama + qwen3:14b is registered, uncomment the block below.
+  # The backend-nightly job's runner-ready check (step "Env canary") will then
+  # fail fast with a distinct label if the runner env is not actually ready.
+  # schedule:
+  #   - cron: "0 2 * * *"
 
 jobs:
   test:
@@ -23,19 +27,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      # uv is the project's mandated package manager (AGENTS.md §5). The test
+      # job previously used a hand-maintained `pip install <subset>` that
+      # diverged from pyproject.toml and silently dropped base deps (loguru),
+      # which made every collection-time `from agent → core → utils.log_utils`
+      # fail with ModuleNotFoundError. Installing from pyproject.toml via the
+      # single source of truth (uv.lock) eliminates that class of drift.
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
         with:
+          # Pin a Python version for the venv; uv installs it if missing.
           python-version: "3.13"
+          # --frozen: never rewrite uv.lock in CI (AGENTS.md §5). --extra dev
+          # adds pytest + coverage + mypy (the single dev extra). Base deps
+          # include loguru/pymilvus/milvus-lite; torch stays out (it lives only
+          # in the local-models extra), so the gate runs torch-less.
+          enable-cache: true
 
       - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install pytest pyyaml numpy coverage mypy
-          # Core libs needed by the eval judge / E2E TestClient layer.
-          pip install langchain-core langchain-openai fastapi httpx
-          # Milvus Lite is imported by milvus_db at module load in E2E paths.
-          pip install pymilvus milvus-lite
+        run: uv sync --frozen --extra dev
 
       - name: Run unit + perf tests (PR gate, no live backend)
         # Single fail-on-error invocation. Previously two calls existed: the
@@ -48,8 +58,8 @@ jobs:
         # Wrapped in `coverage run` so the unit+e2e data accumulates into a
         # single .coverage file for the gate step below (--append merges).
         run: |
-          coverage erase
-          coverage run --branch -m pytest tests/unit/ tests/perf/ -q \
+          uv run coverage erase
+          uv run coverage run --branch -m pytest tests/unit/ tests/perf/ -q \
             -m "not requires_ollama and not requires_backend"
 
       - name: Run end-to-end tests (in-process, mocked singletons)
@@ -60,7 +70,7 @@ jobs:
           OPENAI_API_KEY: ollama
           PYTEST_RUN: "1"
         run: |
-          coverage run --branch --append -m pytest tests/e2e/ -q -m "not requires_backend"
+          uv run coverage run --branch --append -m pytest tests/e2e/ -q -m "not requires_backend"
 
       # Coverage gate (F-EG-05): a SEPARATE step so a test failure (red on the
       # pytest step above) and a coverage regression (red here) surface as
@@ -69,7 +79,7 @@ jobs:
       # Raising to 80 requires closing KNOWN-GAP-1 (track A in backend-nightly).
       - name: Coverage gate
         run: |
-          coverage report --fail-under=60
+          uv run coverage report --fail-under=60
 
       # Q8: mypy non-blocking baseline (AGENTS.md §5). First-time enablement;
       # existing code is not fully annotated, so this only REPORTS type issues
@@ -78,34 +88,17 @@ jobs:
       - name: Type check (mypy, non-blocking baseline)
         continue-on-error: true
         run: |
-          python -m mypy agent/ core/ api/ documents/ models/ utils/
+          uv run mypy agent/ core/ api/ documents/ models/ utils/
 
-      - name: RAG retrieval benchmark regression gate
-        # Measures retrieval effectiveness (context precision/recall) on the
-        # domain-agnostic public benchmarks and fails if metrics regress beyond
-        # a 2-point tolerance vs the committed baseline. No LLM needed — this
-        # exercises the real Milvus + BM25 retrieval stack only. See
-        # docs/specs/rag-benchmark-generic/design.md.
-        #
-        # Q11 / F-EG-18: each run cold-ingests the corpus into Milvus Lite +
-        # rebuilds BM25 (~11s locally, slower on CI cold start). A hung ingest
-        # would block the whole job, so the step is bounded at 5 min. The gate
-        # is KEPT on the PR (not demoted to nightly) because the unit/e2e suites
-        # mock Milvus and therefore cannot catch retrieval recall regressions —
-        # this is the only step on the PR that exercises the real retrieval
-        # stack (M-NEW-3 in review/critic.md). It is NOT equivalent to the
-        # rule-based eval in eval-regression.yml, which scores the golden
-        # generation-quality suite, not public retrieval benchmarks.
-        timeout-minutes: 5
-        env:
-          DOMAIN_PROFILE: general
-        run: |
-          python scripts/run_benchmark.py \
-            --dataset data/benchmark/benchmark_cmrc2018.yaml --top-k 4 \
-            --fail-on-regression
-          python scripts/run_benchmark.py \
-            --dataset data/benchmark/benchmark_hotpotqa.yaml --top-k 4 \
-            --fail-on-regression
+      # NOTE: the retrieval benchmark regression gate used to run here but has
+      # been moved to its own workflow (benchmark-regression.yml). The benchmark
+      # cold-ingests the corpus into Milvus, which requires an embedding
+      # provider (documents/milvus_db.add_documents calls the embedding function
+      # at ingest time). The PR gate is torch-less (uv sync --extra dev) and has
+      # no DASHSCOPE_API_KEY, so ingest raised RuntimeError and the step could
+      # never pass on CI — it stayed masked behind the loguru collection failure
+      # for weeks. Like eval-regression.yml, the benchmark now runs only on
+      # self-hosted / local-models runners where embeddings are available.
 
   # Nightly / self-hosted: runs the real-LLM tests that the PR gate skips.
   # Two tracks (issue-KNOWN-GAP-1 now CLOSED):
@@ -130,19 +123,26 @@ jobs:
   backend-nightly:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: self-hosted
+    # Bounded execution: env-canary fails in seconds if Ollama/the model is
+    # missing; track A (in-process LLM tests) takes a few minutes; track B
+    # (backend boot + 3 HTTP suites) ~10 min. 30 min leaves headroom while
+    # guaranteeing a stuck run can never queue-block the runner indefinitely.
+    # NOTE: GitHub's job timeout does NOT cover the runner-acquisition wait —
+    # that is why the schedule is disabled until a runner is actually
+    # registered (see the `on:` block above).
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.13"
+          enable-cache: true
 
       - name: Install dependencies (with ocr + dev + local-models extras)
-        run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[ocr,dev,local-models]"
+        run: uv sync --frozen --extra ocr --extra dev --extra local-models
 
       # Env canary: the only external dependency of track A is Ollama (Milvus
       # is Lite/embedded, no server/port). Probe the model list endpoint and
@@ -166,7 +166,7 @@ jobs:
           OPENAI_API_KEY: ollama
           OLLAMA_FULL_TESTS: "1"
         run: |
-          python -m pytest tests/unit/ tests/e2e/ -q -m "requires_ollama or requires_backend"
+          uv run python -m pytest tests/unit/ tests/e2e/ -q -m "requires_ollama or requires_backend"
 
       # Track B (issue-KNOWN-GAP-1 closure): start the real FastAPI backend,
       # wait for /health, then run the script-style HTTP tests that exercise
@@ -178,7 +178,7 @@ jobs:
           OPENAI_BASE_URL: "http://localhost:11434/v1"
           OPENAI_API_KEY: ollama
         run: |
-          python -m uvicorn api.main:app --host 127.0.0.1 --port 8000 > /tmp/backend.log 2>&1 &
+          uv run python -m uvicorn api.main:app --host 127.0.0.1 --port 8000 > /tmp/backend.log 2>&1 &
           echo $! > /tmp/backend.pid
           for i in $(seq 1 60); do
             curl -sf http://127.0.0.1:8000/health >/dev/null && { echo "backend ready"; exit 0; }
@@ -194,7 +194,7 @@ jobs:
           FAIL=0
           for f in tests/api/test_chat.py tests/api/test_retrieval.py tests/api/test_health.py; do
             echo "::group::$f"
-            python "$f" || { echo "::error::$f failed"; FAIL=1; }
+            uv run python "$f" || { echo "::error::$f failed"; FAIL=1; }
             echo "::endgroup::"
           done
           # Stop the backend regardless of test outcome.
