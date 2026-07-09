@@ -5,16 +5,20 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-  # backend-nightly can be triggered on demand via workflow_dispatch, and runs
-  # nightly via the schedule cron below. KNOWN-GAP-1 (issue-KNOWN-GAP-1 in
-  # review/tracking.md) is now CLOSED: track A (6 in-process LLM cases) and
-  # track B (script-style real-backend HTTP tests over localhost:8000) are both
-  # wired up and verified green against a live Ollama + qwen3:14b runner.
+  # backend-nightly runs on demand via workflow_dispatch. KNOWN-GAP-1 (issue-
+  # KNOWN-GAP-1 in review/tracking.md) is CLOSED: track A (6 in-process LLM
+  # cases) and track B (script-style real-backend HTTP tests) are wired up and
+  # verified green against a live Ollama + qwen3:14b runner.
   workflow_dispatch:
-  schedule:
-    # Nightly 02:00 UTC (10:00 CST). Self-hosted runner must have Ollama +
-    # qwen3:14b; the env-canary step fails fast with a distinct label if not.
-    - cron: "0 2 * * *"
+  # NOTE: the nightly `schedule` cron is intentionally disabled. The repo has
+  # NO registered self-hosted runner (gh api .../runners -> total_count:0), so
+  # every scheduled run queued for 24h then timed out — a perpetual red CI
+  # that masked real failures (alert fatigue). To re-enable nightly once a
+  # runner with Ollama + qwen3:14b is registered, uncomment the block below.
+  # The backend-nightly job's runner-ready check (step "Env canary") will then
+  # fail fast with a distinct label if the runner env is not actually ready.
+  # schedule:
+  #   - cron: "0 2 * * *"
 
 jobs:
   test:
