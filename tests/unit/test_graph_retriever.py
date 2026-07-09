@@ -282,3 +282,62 @@ class TestConcurrency:
         assert r.status()["matrix_loaded"] is True
         r.add_documents([Document(page_content="x")])
         assert r.status()["matrix_loaded"] is False
+
+    def test_snapshot_consistency_under_invalidate(self, store, fake_embedding):
+        """Bug 2 regression: _matrix_snapshot must read matrix + ids + sources
+        atomically so a concurrent _invalidate cannot leave them mismatched
+        (matrix non-None but ids empty → IndexError in cosine)."""
+        e1 = Entity(name="泵", type="部件", chunk_text="x")
+        e1.embedding = fake_embedding.embed_query("泵")
+        store.upsert([e1], [], source="m.md", embedding_model="m", embedding_dim=8)
+        r = GraphRetriever(store=store, embedding=fake_embedding)
+        r.reload()
+
+        mismatches: list[str] = []
+
+        def reader():
+            for _ in range(200):
+                matrix, ids, sources = r._matrix_snapshot()
+                if matrix is not None and len(ids) != matrix.shape[0]:
+                    mismatches.append(f"matrix rows={matrix.shape[0]} ids={len(ids)}")
+
+        def writer():
+            for _ in range(200):
+                r._invalidate()
+                r.reload()
+
+        threads = [threading.Thread(target=reader) for _ in range(3)]
+        threads.append(threading.Thread(target=writer))
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert mismatches == [], f"COW snapshot mismatch: {mismatches[:3]}"
+
+
+# ---------------------------------------------------------------------------
+# Bug 4 regression: keyword seed uses the cached name index
+# ---------------------------------------------------------------------------
+
+
+class TestKeywordSeedCache:
+    def test_keyword_seed_matches_via_cached_index(self, store, fake_embedding):
+        """Bug 4: high-level keyword seed resolves via the matrix-time name index
+        (not a per-query store scan)."""
+        e = Entity(name="液压泵", type="部件", chunk_text="x")
+        e.embedding = fake_embedding.embed_query("液压泵")
+        store.upsert([e], [], source="m.md", embedding_model="m", embedding_dim=8)
+        r = GraphRetriever(store=store, embedding=fake_embedding)
+        r.reload()
+        # After reload the name index is populated → keyword match works without
+        # any extra load_all.
+        seeds = r._keyword_seeds("液压泵", r._entity_ids)
+        assert e.id in seeds
+
+    def test_keyword_seed_empty_before_load(self, store, fake_embedding):
+        """Before the matrix is built, the name index is empty."""
+        e = Entity(name="泵", type="部件", chunk_text="x")
+        e.embedding = fake_embedding.embed_query("泵")
+        store.upsert([e], [], source="m.md", embedding_model="m", embedding_dim=8)
+        r = GraphRetriever(store=store, embedding=fake_embedding)
+        assert r._keyword_seeds("泵", []) == set()

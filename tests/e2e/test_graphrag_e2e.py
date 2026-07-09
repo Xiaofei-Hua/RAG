@@ -201,6 +201,23 @@ class TestDeletionFlow:
         # retriever matrix invalidated.
         assert get_graph_retriever().status()["matrix_loaded"] is False
 
+    def test_remove_bumps_cache_version(self, monkeypatch, isolated_graph, fake_embeddings):
+        """Bug 1 regression: _remove_graph_if_enabled self-contains the cache
+        bump so a deletion never leaves stale graph hits in the retrieval cache."""
+        import api.routers.documents as docs_mod
+        from core.retrieval.cache import get_retrieval_cache_version
+
+        store = get_graph_store()
+        e = Entity(name="刹车", type="系统", chunk_text="刹车系统")
+        e.embedding = fake_embeddings.embed_query("刹车")
+        store.upsert([e], [], source="brake.md", embedding_model="fake-bge", embedding_dim=16)
+
+        before = get_retrieval_cache_version()
+        monkeypatch.setattr(docs_mod, "GRAPH_RAG_ENABLED", True)
+        docs_mod._remove_graph_if_enabled("brake.md")
+        after = get_retrieval_cache_version()
+        assert after > before, "graph delete must bump retrieval cache version"
+
 
 # ---------------------------------------------------------------------------
 # Regression: GenerateSkill does not drop graph hits (F-12 / REQ-GR-012)

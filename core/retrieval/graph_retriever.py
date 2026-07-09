@@ -78,6 +78,10 @@ class GraphRetriever:
         self._matrix: np.ndarray | None = None  # shape (n, dim)
         self._entity_ids: list[str] = []
         self._entity_sources: list[str] = []
+        # name→{entity_id} index for the high-level keyword seed (F-08). Built
+        # alongside the matrix so _keyword_seeds does not re-scan the store on
+        # every query (was a per-query load_all under contention).
+        self._name_index: dict[str, set[str]] = {}
         self._loaded = False
         self._degraded = False
         self._fingerprint_ok = True
@@ -180,6 +184,7 @@ class GraphRetriever:
             self._matrix = None
             self._entity_ids = []
             self._entity_sources = []
+            self._name_index = {}
 
     def _build_matrix_locked(self) -> None:
         """Rebuild the COW matrix snapshot from the store (caller holds lock)."""
@@ -188,6 +193,7 @@ class GraphRetriever:
             self._matrix = None
             self._entity_ids = []
             self._entity_sources = []
+            self._name_index = {}
             return
 
         # F-09: guard against an embedding-model swap corrupting cosine scores.
@@ -197,7 +203,13 @@ class GraphRetriever:
         vecs: list[np.ndarray] = []
         ids: list[str] = []
         sources: list[str] = []
+        name_index: dict[str, set[str]] = {}
         for r in rows:
+            # Build the name→id index from every row (not just embedded ones) so
+            # keyword seeds can match entities whose embedding is still pending.
+            key = r.name.strip().casefold()
+            if key:
+                name_index.setdefault(key, set()).add(r.entity_id)
             if not r.embedding:
                 continue
             if dim and len(r.embedding) != dim:
@@ -209,6 +221,7 @@ class GraphRetriever:
                 self._matrix = None
                 self._entity_ids = []
                 self._entity_sources = []
+                self._name_index = {}
                 return
             vecs.append(np.asarray(r.embedding, dtype=np.float32))
             ids.append(r.entity_id)
@@ -218,13 +231,15 @@ class GraphRetriever:
             self._matrix = None
             self._entity_ids = []
             self._entity_sources = []
+            self._name_index = name_index  # still useful for keyword seeds
             return
 
-        # Stack into (n, dim). The atomic assignment of all three fields under
-        # the lock is the COW swap point (F-02).
+        # Stack into (n, dim). The atomic assignment of all fields under the
+        # lock is the COW swap point (F-02).
         self._matrix = np.vstack(vecs)
         self._entity_ids = ids
         self._entity_sources = sources
+        self._name_index = name_index
         self._fingerprint_ok = True
 
     def _expected_dim(self) -> int:
@@ -236,8 +251,18 @@ class GraphRetriever:
             return 0
 
     def _matrix_snapshot(self) -> tuple[np.ndarray, list[str], list[str]]:
-        """Grab the current COW reference for lock-free cosine (F-02)."""
-        return self._matrix, list(self._entity_ids), list(self._entity_sources)
+        """Grab a consistent COW reference for lock-free cosine (F-02).
+
+        The three fields (matrix, ids, sources) are read under the lock so a
+        concurrent ``_invalidate`` cannot swap one field (e.g. clear ids) between
+        the reads — which would yield a matrix whose row count no longer matches
+        the ids length and cause an IndexError in the downstream cosine. The
+        returned matrix is the shared numpy array (immutable during its lifetime
+        — writers build a fresh array and swap the reference), so lock-free
+        compute on it is safe.
+        """
+        with self._lock:
+            return self._matrix, list(self._entity_ids), list(self._entity_sources)
 
     # ------------------------------------------------------------------
     # Dual-level retrieval
@@ -346,7 +371,11 @@ class GraphRetriever:
         return {ids[i] for i in order}
 
     def _keyword_seeds(self, query: str, ids: list[str]) -> set[str]:
-        """Match query tokens against entity names via a name→id lookup."""
+        """Match query tokens against entity names via the cached name index.
+
+        The index is rebuilt alongside the matrix (F-02 COW), so this is an
+        O(tokens) lookup rather than a per-query store scan.
+        """
         if not query.strip():
             return set()
         try:
@@ -355,16 +384,11 @@ class GraphRetriever:
             tokens = {t for t in jieba.lcut(query) if len(t.strip()) > 1}
         except ImportError:
             tokens = {w for w in query.split() if len(w) > 1}
-        # Build a name index lazily from the store (cheap, bounded entity count).
-        name_to_ids: dict[str, set[str]] = {}
         with self._lock:
-            for row in self.store.load_all():
-                key = row.name.strip().casefold()
-                if key:
-                    name_to_ids.setdefault(key, set()).add(row.entity_id)
+            name_index = dict(self._name_index)
         out: set[str] = set()
         for tok in tokens:
-            for eid in name_to_ids.get(tok.casefold(), ()):  # noqa: B007
+            for eid in name_index.get(tok.casefold(), ()):  # noqa: B007
                 out.add(eid)
         return out
 

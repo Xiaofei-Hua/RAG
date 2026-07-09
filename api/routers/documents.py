@@ -437,6 +437,11 @@ def _extract_graph_if_enabled(documents: list[Document], source: str, file_hash:
         vectors = emb.embed_documents(texts) if texts else []
         for e, v in zip(entities, vectors, strict=False):
             e.embedding = v
+        # Use the ACTUAL returned dimension, not the env-configured one: if the
+        # embedding model was swapped (e.g. BGE-small → BGE-large), the env value
+        # is stale but the vectors reflect the live model. Recording the real dim
+        # keeps the graph retriever's fingerprint check accurate (F-09).
+        actual_dim = len(vectors[0]) if vectors else EMBEDDING_DIMENSION
         store = get_graph_store()
         store.upsert(
             entities,
@@ -444,7 +449,7 @@ def _extract_graph_if_enabled(documents: list[Document], source: str, file_hash:
             source=source,
             file_hash=file_hash,
             embedding_model=EMBEDDING_MODEL,
-            embedding_dim=EMBEDDING_DIMENSION,
+            embedding_dim=actual_dim,
         )
         # Invalidate the graph retriever's cached matrix + the retrieval cache.
         try:
@@ -465,12 +470,19 @@ def _remove_graph_if_enabled(source: str) -> None:
     if not GRAPH_RAG_ENABLED:
         return
     try:
+        from core.retrieval.cache import bump_retrieval_cache_version
         from core.retrieval.graph_retriever import get_graph_retriever
         from documents.graph_store import get_graph_store
 
         removed = get_graph_store().remove_by_source(source)
         if removed:
             get_graph_retriever().remove_by_source(source)
+            # Self-contained cache bump: delete_document calls BM25's bump BEFORE
+            # this function, so a retrieval that raced between the two would
+            # rebuild the cache with the now-stale graph hits. Bumping again here
+            # (O(1) version increment) guarantees post-deletion queries never
+            # serve graph results for the removed source.
+            bump_retrieval_cache_version()
             log.info(f"GraphRAG: removed {removed} entities for source={source}")
     except Exception as e:  # noqa: BLE001
         log.warning(f"GraphRAG cleanup failed for {source}: {e}")
