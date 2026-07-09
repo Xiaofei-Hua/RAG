@@ -29,7 +29,9 @@ core/
 
 | 组件 | 失败形态 | 降级 | 位置 |
 |------|----------|------|------|
-| 混合检索 | dense/sparse 腿抛错 | `gather(return_exceptions=True)`，失败腿返回空，继续用存活腿；整体失败 → dense-only；dense 失败 → `[]` | `core/retrieval/hybrid_retriever.py` |
+| 混合检索 | dense/sparse/graph 腿抛错 | `gather(return_exceptions=True)`/`return-exceptions`，失败腿返回空，继续用存活腿；graph 腿空 → RRF 退化为 dense+sparse 两路；整体失败 → dense-only；dense 失败 → `[]` | `core/retrieval/hybrid_retriever.py` |
+| GraphRAG 抽取（摄入期） | LLM 不可用/熔断/JSON 解析失败 | 跳过该 chunk 或整文档的图谱构建、log warning、不阻断主摄入（文档仍进 Milvus/BM25） | `documents/graph_extractor.py`、`api/routers/documents.py` `_extract_graph_if_enabled` |
+| GraphRAG 检索 leg（查询期） | 空图/embedding 失败/SQL 异常/指纹漂移 | 返 `[]`、`degraded=True`；graph 腿空时 RRF 自动退化为 dense+sparse | `core/retrieval/graph_retriever.py` |
 | Cross-encoder reranker | 未启用/抛错 | 保持 RRF 顺序 `documents[:top_k]`，`rerank_applied=false` | 同上 |
 | MMR | 向量不可用 | 原样返回 | 同上 |
 | time-decay | 抛错 | 原样返回 | 同上 |

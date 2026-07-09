@@ -113,6 +113,19 @@ RERANKER_CANDIDATE_TOP_K = _get_int("RERANKER_CANDIDATE_TOP_K", 10)
 RERANKER_TOP_K = _get_int("RERANKER_TOP_K", 5)
 RERANKER_BATCH_SIZE = _get_int("RERANKER_BATCH_SIZE", 8)
 
+# GraphRAG retrieval leg (docs/specs/graphrag). Default OFF — the graph leg is
+# opt-in so existing deployments are byte-for-byte unaffected (REQ-GR-008). When
+# off, no extraction LLM calls fire and no graph_store writes occur. The weight
+# feeds RRF as the third leg's contribution (normalised with dense+sparse);
+# 0.4 is a conservative starting point for eval-flywheel calibration.
+GRAPH_RAG_ENABLED = _get_bool("GRAPH_RAG_ENABLED", False)
+GRAPH_RAG_WEIGHT = _get_float("GRAPH_RAG_WEIGHT", 0.4)
+GRAPH_RAG_TOP_K = _get_int("GRAPH_RAG_TOP_K", 5)
+# Extraction uses temperature 0 for determinism (golden-test contract).
+GRAPH_RAG_EXTRACT_TEMPERATURE = _get_float("GRAPH_RAG_EXTRACT_TEMPERATURE", 0.0)
+# Cap chunks-per-doc sent to the extractor to bound Ollama load (STRIDE DoS).
+GRAPH_RAG_MAX_CHUNKS_PER_DOC = _get_int("GRAPH_RAG_MAX_CHUNKS_PER_DOC", 200)
+
 # Intent-routing confidence gate (Bug2 Layer ②). A rag_query classified below
 # this confidence falls back to general_chat (avoids misrouting ambiguous
 # capability/general questions into retrieval). NOTE: prior placeholder — the

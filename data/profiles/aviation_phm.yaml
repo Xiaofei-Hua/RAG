@@ -358,3 +358,22 @@ pii_operational_patterns:
   - name: msn
     pattern: '\bmsn[\s\-_:]*\d{3,6}\b'
     kind: msn
+
+# GraphRAG 抽取种子（docs/specs/graphrag）。抽取 prompt 从这里派生实体/关系类型，
+# 不在源码硬编码领域字面量。空字段会回落到通用种子；这里给出 PHM 领域种子。
+entity_types:
+  - 部件
+  - 系统
+  - 故障代码
+  - ATA章节
+  - 症状
+  - 排故程序
+  - 参数
+  - 机型
+relation_types:
+  - 导致
+  - 属于
+  - 排故程序
+  - 相关
+  - 引发
+  - 组成

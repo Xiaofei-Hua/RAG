@@ -143,6 +143,12 @@ def _general_defaults() -> dict[str, Any]:
         "empty_context_message": ("当前知识库中暂无相关文档。请先上传资料后再提问。"),
         "retriever_tool_description": "搜索并返回知识库中与查询相关的文档片段。",
         "pii_operational_patterns": [],
+        # GraphRAG entity/relation extraction seeds (docs/specs/graphrag).
+        # Empty → extractor uses domain-neutral generic seeds. A domain profile
+        # (e.g. aviation_phm) lists its entity/relation types here so the
+        # extraction prompt is domain-adaptive without source literals.
+        "entity_types": [],
+        "relation_types": [],
     }
 
 
@@ -192,6 +198,11 @@ class DomainProfile:
     empty_context_message: str = ""
     retriever_tool_description: str = ""
     pii_operational_patterns: list[dict[str, str]] = field(default_factory=list)
+    # GraphRAG extraction seeds (docs/specs/graphrag). Empty lists → extractor
+    # falls back to domain-neutral generic entity/relation types. Prompt 单一来源
+    # (AGENTS.md §6): the extraction prompt derives from these, never hardcoded.
+    entity_types: list[str] = field(default_factory=list)
+    relation_types: list[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> DomainProfile:

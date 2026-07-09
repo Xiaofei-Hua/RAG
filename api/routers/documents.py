@@ -17,6 +17,7 @@ from langchain_core.documents import Document
 from pydantic import BaseModel
 
 from documents.document_registry import DocumentStatus, get_document_registry
+from utils.env_utils import GRAPH_RAG_ENABLED
 from utils.log_utils import log
 
 router = APIRouter()
@@ -409,6 +410,84 @@ async def upload_document(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+def _extract_graph_if_enabled(documents: list[Document], source: str, file_hash: str) -> None:
+    """Run GraphRAG entity/relation extraction at ingestion time.
+
+    Gated by ``GRAPH_RAG_ENABLED`` (REQ-GR-008, default off → no-op). On any
+    failure the main ingestion path is unaffected: the doc is already indexed
+    in Milvus + BM25, so graph extraction is strictly additive (REQ-GR-003).
+    The shared retrieval-cache version is bumped so new graph hits are visible.
+    """
+    if not GRAPH_RAG_ENABLED:
+        return
+    try:
+        from documents.graph_extractor import get_graph_extractor
+        from documents.graph_store import get_graph_store
+        from models.embedding_models import get_embeddings
+        from utils.env_utils import EMBEDDING_DIMENSION, EMBEDDING_MODEL
+
+        extractor = get_graph_extractor()
+        entities, relations = extractor.extract(documents, source=source, file_hash=file_hash)
+        if not entities and not relations:
+            return
+        # Embed entities with the shared BGE singleton so graph cosine matches
+        # the dense leg's vector space.
+        emb = get_embeddings()
+        texts = [e.name for e in entities]
+        vectors = emb.embed_documents(texts) if texts else []
+        for e, v in zip(entities, vectors, strict=False):
+            e.embedding = v
+        # Use the ACTUAL returned dimension, not the env-configured one: if the
+        # embedding model was swapped (e.g. BGE-small → BGE-large), the env value
+        # is stale but the vectors reflect the live model. Recording the real dim
+        # keeps the graph retriever's fingerprint check accurate (F-09).
+        actual_dim = len(vectors[0]) if vectors else EMBEDDING_DIMENSION
+        store = get_graph_store()
+        store.upsert(
+            entities,
+            relations,
+            source=source,
+            file_hash=file_hash,
+            embedding_model=EMBEDDING_MODEL,
+            embedding_dim=actual_dim,
+        )
+        # Invalidate the graph retriever's cached matrix + the retrieval cache.
+        try:
+            from core.retrieval.cache import bump_retrieval_cache_version
+            from core.retrieval.graph_retriever import get_graph_retriever
+
+            get_graph_retriever().add_documents(documents)
+            bump_retrieval_cache_version()
+        except Exception as cache_err:  # noqa: BLE001
+            log.warning(f"graph cache bump skipped: {cache_err}")
+        log.info(f"GraphRAG: {source} → {len(entities)} entities, {len(relations)} relations")
+    except Exception as e:  # noqa: BLE001 — never block ingestion
+        log.warning(f"GraphRAG extraction skipped for {source}: {e}")
+
+
+def _remove_graph_if_enabled(source: str) -> None:
+    """Delete a source's graph data + invalidate caches (mirror of BM25 remove)."""
+    if not GRAPH_RAG_ENABLED:
+        return
+    try:
+        from core.retrieval.cache import bump_retrieval_cache_version
+        from core.retrieval.graph_retriever import get_graph_retriever
+        from documents.graph_store import get_graph_store
+
+        removed = get_graph_store().remove_by_source(source)
+        if removed:
+            get_graph_retriever().remove_by_source(source)
+            # Self-contained cache bump: delete_document calls BM25's bump BEFORE
+            # this function, so a retrieval that raced between the two would
+            # rebuild the cache with the now-stale graph hits. Bumping again here
+            # (O(1) version increment) guarantees post-deletion queries never
+            # serve graph results for the removed source.
+            bump_retrieval_cache_version()
+            log.info(f"GraphRAG: removed {removed} entities for source={source}")
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"GraphRAG cleanup failed for {source}: {e}")
+
+
 def _process_document(doc_id: str, file_path: str, filename: str, file_hash: str):
     """Process and index a document (background task)."""
     registry = get_document_registry()
@@ -471,6 +550,10 @@ def _process_document(doc_id: str, file_path: str, filename: str, file_hash: str
             log.info(f"BM25 index updated: +{len(documents)} docs")
         except Exception as bm25_err:
             log.warning(f"BM25 sync failed (non-critical): {bm25_err}")
+
+        # GraphRAG extraction (docs/specs/graphrag). Opt-in via GRAPH_RAG_ENABLED;
+        # failure never blocks main ingestion — the doc is already in Milvus/BM25.
+        _extract_graph_if_enabled(documents, filename, file_hash)
 
         # Update registry
         registry.update_status(doc_id, "indexed", result.get("inserted", 0))
@@ -544,6 +627,11 @@ async def delete_document(doc_id: str):
         log.info(f"BM25 index updated: removed source={doc['filename']}")
     except Exception as e:
         log.warning(f"BM25 cleanup failed: {e}")
+
+    # GraphRAG cleanup (docs/specs/graphrag). Mirror the BM25 removal so a
+    # deleted doc's entities/relations do not linger in the graph leg. The
+    # cache was already bumped above; this only touches the graph store.
+    _remove_graph_if_enabled(doc["filename"])
 
     registry.delete(doc_id)
     return {"status": "success", "message": f"Document {doc_id} deleted"}

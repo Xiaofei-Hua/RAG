@@ -44,6 +44,7 @@ os.environ.setdefault("PYTEST_RUN", "1")
 # ResourceWarning: unclosed database.
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture(autouse=True)
 def _close_sqlite_singletons_after_test():
     yield
@@ -58,6 +59,9 @@ def _close_sqlite_singletons_after_test():
         "agent.feedback.escalation.reset_escalation_manager",
         "documents.parent_store.reset_parent_store",
         "documents.document_registry.reset_document_registry",
+        "documents.graph_store.reset_graph_store",
+        "documents.graph_extractor.reset_graph_extractor",
+        "core.retrieval.graph_retriever.reset_graph_retriever",
     ):
         try:
             mod_name, fn_name = _reset.rsplit(".", 1)
@@ -71,6 +75,7 @@ def _close_sqlite_singletons_after_test():
 # ---------------------------------------------------------------------------
 # Tmp data dir: redirect ALL on-disk state so tests never touch real data/
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def tmp_data_dir(tmp_path, monkeypatch):
@@ -133,6 +138,10 @@ def tmp_data_dir(tmp_path, monkeypatch):
         os.path.join(root, "parent_store.db"),
     )
     monkeypatch.setattr(
+        "documents.graph_store.DEFAULT_DB_PATH",
+        os.path.join(root, "graph_store.db"),
+    )
+    monkeypatch.setattr(
         "documents.document_registry.DEFAULT_DB_PATH",
         os.path.join(root, "documents.db"),
     )
@@ -153,6 +162,7 @@ def tmp_data_dir(tmp_path, monkeypatch):
     import agent.feedback.escalation as esc_mod
     import agent.memory.store as mem_mod
     import documents.document_registry as dr_mod
+    import documents.graph_store as gs_mod
     import documents.parent_store as ps_mod
 
     if mem_mod._memory_store is not None:
@@ -167,6 +177,9 @@ def tmp_data_dir(tmp_path, monkeypatch):
     if ps_mod._store is not None:
         ps_mod._store.close()
     ps_mod._store = None
+    if gs_mod._store is not None:
+        gs_mod._store.close()
+    gs_mod._store = None
     if dr_mod._registry is not None:
         dr_mod._registry.close()
     dr_mod._registry = None
@@ -190,6 +203,7 @@ def tmp_data_dir(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # Fake LLM
 # ---------------------------------------------------------------------------
+
 
 class FakeAIMessage:
     """Minimal stand-in for langchain AIMessage."""
@@ -253,6 +267,7 @@ def fake_llm():
 # Fake retriever
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def fake_retriever():
     """A hybrid retriever that returns two canned docs with scores."""
@@ -268,7 +283,7 @@ def fake_retriever():
                 Document(
                     page_content="解决冲突后应运行测试确认无回归，再完成合并提交。",
                     metadata={"source": "git_guide", "title": "冲突后验证", "score": 0.80},
-                )
+                ),
             ][: (top_k or 4)]
 
         async def aretrieve(self, query, top_k=None, filter_expr=None):
@@ -280,6 +295,7 @@ def fake_retriever():
 # ---------------------------------------------------------------------------
 # Fake harness
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def fake_harness(fake_llm, fake_retriever):
@@ -371,6 +387,7 @@ def fake_harness(fake_llm, fake_retriever):
 # Fake session memory
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def fake_session_memory():
     """An in-memory session store so chat/sessions endpoints work offline."""
@@ -392,10 +409,12 @@ def fake_session_memory():
             for m in msgs:
                 content = getattr(m, "content", str(m))
                 cls = HumanMessage if type(m).__name__ == "HumanMessage" else AIMessage
-                out.append(cls(
-                    content=content,
-                    additional_kwargs={"_timestamp": time.time()},
-                ))
+                out.append(
+                    cls(
+                        content=content,
+                        additional_kwargs={"_timestamp": time.time()},
+                    )
+                )
             return out[-limit:]
 
         async def get_session_info(self, session_id):
@@ -411,8 +430,7 @@ def fake_session_memory():
 
         async def list_sessions(self, skip=0, limit=20):
             all_sessions = [
-                {"session_id": sid, "message_count": len(msgs)}
-                for sid, msgs in self._store.items()
+                {"session_id": sid, "message_count": len(msgs)} for sid, msgs in self._store.items()
             ]
             return all_sessions[skip : skip + limit], len(all_sessions)
 
@@ -440,6 +458,7 @@ def fake_session_memory():
 # App + TestClient with all singletons patched
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def client(tmp_data_dir, fake_llm, fake_retriever, fake_harness, fake_session_memory, monkeypatch):
     """
@@ -449,44 +468,59 @@ def client(tmp_data_dir, fake_llm, fake_retriever, fake_harness, fake_session_me
     """
     # Patch source-module getters BEFORE importing the app.
     import agent.harness as harness_mod
+
     monkeypatch.setattr(harness_mod, "get_agent_harness", lambda *a, **k: fake_harness)
 
     import core.intent.classifier as intent_mod
+
     # Make the classifier use the keyword fast-path / our fake LLM.
-    monkeypatch.setattr(intent_mod, "get_intent_classifier", lambda *a, **k: _FakeIntentClassifier(fake_llm))
+    monkeypatch.setattr(
+        intent_mod, "get_intent_classifier", lambda *a, **k: _FakeIntentClassifier(fake_llm)
+    )
 
     import core.retrieval.hybrid_retriever as hr_mod
+
     monkeypatch.setattr(hr_mod, "get_hybrid_retriever", lambda *a, **k: fake_retriever)
 
     import models.llm_models as llm_mod
+
     monkeypatch.setattr(llm_mod, "get_llm", lambda *a, **k: fake_llm)
     monkeypatch.setattr(llm_mod, "create_custom_llm", lambda *a, **k: fake_llm)
 
     # Patch fast_mode to use the fake llm/retriever instead of real ones.
     import core.fast_mode as fast_mod
+
     async def _fake_fast_generate_async(query, **kwargs):
         from types import SimpleNamespace
+
         docs = fake_retriever.retrieve(query)
         return SimpleNamespace(
             answer="快速模式检索结果。Git 合并冲突需手动编辑冲突标记。仅供参考。",
             sources=[
-                {"source": d.metadata["source"], "title": d.metadata["title"],
-                 "content": d.page_content, "score": d.metadata["score"]}
+                {
+                    "source": d.metadata["source"],
+                    "title": d.metadata["title"],
+                    "content": d.page_content,
+                    "score": d.metadata["score"],
+                }
                 for d in docs
             ],
             retrieval_count=len(docs),
             retrieval_time_ms=10.0,
             generation_time_ms=20.0,
         )
+
     monkeypatch.setattr(fast_mod, "fast_generate_async", _fake_fast_generate_async)
 
     # Force the inference sampler to capture EVERY request in E2E tests.
     # (DEFAULT_SAMPLE_RATE is read at module load so env override is too late;
     # patching should_sample directly is reliable.)
     import agent.eval.sampler as sampler_mod
+
     monkeypatch.setattr(sampler_mod, "should_sample", lambda *a, **k: True)
     # capture.py imports should_sample by name, so patch it there too.
     import agent.eval.capture as capture_mod
+
     monkeypatch.setattr(capture_mod, "should_sample", lambda *a, **k: True)
 
     # Import app and override the session_memory dependency.
@@ -528,14 +562,30 @@ def client(tmp_data_dir, fake_llm, fake_retriever, fake_harness, fake_session_me
 class _FakeIntentClassifier:
     """Uses keyword fast-path; falls back to a fake LLM structured output."""
 
-    _RAG_KEYWORDS = frozenset([
-        # Domain-neutral technical keywords so the routing fast-path fires for
-        # generic queries (git, docker, http, deploy, config, ...). The previous
-        # list carried domain-specific terms which coupled the default test
-        # path to a single domain.
-        "git", "docker", "http", "https", "部署", "配置", "合并", "冲突",
-        "分支", "接口", "服务", "命令", "异常", "排查", "查询", "缓存",
-    ])
+    _RAG_KEYWORDS = frozenset(
+        [
+            # Domain-neutral technical keywords so the routing fast-path fires for
+            # generic queries (git, docker, http, deploy, config, ...). The previous
+            # list carried domain-specific terms which coupled the default test
+            # path to a single domain.
+            "git",
+            "docker",
+            "http",
+            "https",
+            "部署",
+            "配置",
+            "合并",
+            "冲突",
+            "分支",
+            "接口",
+            "服务",
+            "命令",
+            "异常",
+            "排查",
+            "查询",
+            "缓存",
+        ]
+    )
     _CHAT_KEYWORDS = frozenset(["你好", "谢谢", "再见", "你是谁", "你能做什么", "hello", "hi"])
 
     def __init__(self, fake_llm):
@@ -545,18 +595,17 @@ class _FakeIntentClassifier:
         text = query.lower()
         if any(kw in text for kw in self._RAG_KEYWORDS):
             from core.intent.classifier import IntentResult, IntentType
-            return IntentResult(
-                intent=IntentType.RAG_QUERY, confidence=0.9, reasoning="keyword"
-            )
+
+            return IntentResult(intent=IntentType.RAG_QUERY, confidence=0.9, reasoning="keyword")
         if any(kw in text for kw in self._CHAT_KEYWORDS):
             from core.intent.classifier import IntentResult, IntentType
-            return IntentResult(
-                intent=IntentType.GENERAL_CHAT, confidence=0.9, reasoning="keyword"
-            )
+
+            return IntentResult(intent=IntentType.GENERAL_CHAT, confidence=0.9, reasoning="keyword")
         return None
 
     async def aclassify(self, query):
         from core.intent.classifier import IntentResult, IntentType
+
         res = self._keyword(query)
         if res:
             return res
@@ -569,6 +618,7 @@ class _FakeIntentClassifier:
         if res:
             return res
         from core.intent.classifier import IntentResult, IntentType
+
         return IntentResult(
             intent=IntentType.GENERAL_CHAT, confidence=0.7, reasoning="fake default"
         )
