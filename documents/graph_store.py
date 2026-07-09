@@ -479,7 +479,10 @@ def get_graph_store() -> GraphStore:
     if _store is None:
         with _store_lock:
             if _store is None:
-                _store = GraphStore()
+                # Read the module-level path at call time so tests/conftest.py's
+                # monkeypatch of DEFAULT_DB_PATH takes effect (the __init__
+                # default binds once at def-time and would bypass the redirect).
+                _store = GraphStore(DEFAULT_DB_PATH)
     return _store
 
 

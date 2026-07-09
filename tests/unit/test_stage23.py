@@ -120,7 +120,7 @@ class TestRetrievalCache:
         # actually issues dense+sparse calls.
         def counting_parallel(q, f=None):
             call_count["n"] += 1
-            return ([], [])
+            return ([], [], [])
 
         monkeypatch.setattr(retriever, "_parallel_retrieve", counting_parallel)
         monkeypatch.setattr(retriever, "_rerank", lambda q, d, k: d)
@@ -175,7 +175,7 @@ class TestRetrievalCache:
         retriever = hr.HybridRetriever()
         doc = Document(page_content="chunk", metadata={"score": 0.9})
         retriever._parallel_retrieve = lambda q, f=None: (
-            [hr.RetrievalResult(document=doc, score=0.9, source="dense", rank=1)], [],
+            [hr.RetrievalResult(document=doc, score=0.9, source="dense", rank=1)], [], [],
         )
         retriever._rerank = lambda q, d, k: d
         retriever._time_decay = lambda d: d
