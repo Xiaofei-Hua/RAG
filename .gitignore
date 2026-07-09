@@ -32,6 +32,12 @@ data/eval/runs/*
 !data/eval/runs/.gitkeep
 data/eval/candidates/*
 !data/eval/candidates/.gitkeep
+# data/profiles and data/benchmark are SOURCE assets (domain config yaml +
+# benchmark datasets), not runtime artifacts. Without them CI cannot load
+# profiles (tests fall back to general) or run the retrieval benchmark gate
+# (FileNotFoundError). They must be tracked despite the blanket data/* ignore.
+!data/profiles/
+!data/benchmark/
 data/inferences.db
 
 # Logs
