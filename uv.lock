@@ -4922,6 +4922,7 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "coverage" },
+    { name = "mypy" },
     { name = "pytest" },
 ]
 doc = [
@@ -4977,6 +4978,7 @@ requires-dist = [
     { name = "langgraph-prebuilt", specifier = ">=1.0.0,<2.0.0" },
     { name = "loguru", specifier = ">=0.7.0" },
     { name = "milvus-lite", specifier = ">=2.5.0" },
+    { name = "mypy", marker = "extra == 'dev'", specifier = ">=2.1.0" },
     { name = "nltk", specifier = ">=3.8.0" },
     { name = "openpyxl", marker = "extra == 'doc'", specifier = ">=3.1.0" },
     { name = "opentelemetry-api", specifier = ">=1.42.1" },

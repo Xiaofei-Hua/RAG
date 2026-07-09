@@ -22,35 +22,62 @@ import sys
 import pytest
 
 
-def _gpu_kernel_supported() -> bool:
+def _dense_retrieval_runnable() -> tuple[bool, str]:
     """
-    True when the installed PyTorch was compiled for the present GPU's compute
-    capability. test_dense_retrieval runs the REAL local embedding model on the
-    configured device (EMBEDDING_DEVICE, default cuda via .env); on a GPU newer
-    than the PyTorch wheel's compiled arch list (e.g. RTX 50-series sm_120 vs a
-    cu126 build capped at sm_90) it fails with cudaErrorNoKernelImageForDevice.
-    That is an environment/toolchain mismatch, not a code defect — skip rather
-    than report a false failure. Pass ``EMBEDDING_DEVICE=cpu`` to exercise the
-    dense path on CPU instead.
+    Decide whether ``test_dense_retrieval`` can actually execute. It hits the
+    REAL dense retrieval endpoint (NOT the conftest ``_FakeRetriever``), which
+    needs a working embedding provider. Three environment shapes can run it:
+
+      1. local-models installed (torch importable) + GPU kernel matches the
+         device (or CPU-only build / EMBEDDING_DEVICE=cpu);
+      2. local-models installed but the PyTorch wheel lacks the GPU's sm_xx —
+         a toolchain mismatch, NOT a code defect → skip;
+      3. no local-models (torch-less) BUT ``DASHSCOPE_API_KEY`` is set so the
+         embedding provider resolves to the DashScope API.
+
+    The case that must SKIP: torch-less AND no API key. There the provider
+    resolves to 'api' with no credential and the endpoint 500s, which would be
+    a false failure (environment gap, not a code regression). This is exactly
+    the PR-gate CI shape (``uv sync --extra dev`` is torch-less, no secret), so
+    skipping here is what keeps that job green without masking real bugs — the
+    dense path still runs on self-hosted/local-models runners and in the
+    retrieval-benchmark gate.
     """
+    import os
+
+    torch_available = True
     try:
         import torch
-
-        if not torch.cuda.is_available():
-            return True  # CPU-only build / no GPU — dense path uses CPU fine.
-        cap = torch.cuda.get_device_capability(0)
-        target = f"sm_{cap[0]}{cap[1]}"
-        return target in torch.cuda.get_arch_list()
     except Exception:
-        return True  # Can't determine; let the test run and surface the truth.
+        torch_available = False
+
+    # Case 3: torch-less but an API key lets DashScope serve embeddings.
+    if not torch_available:
+        if os.getenv("DASHSCOPE_API_KEY"):
+            return True, ""
+        return False, (
+            "Dense retrieval needs embeddings but neither local-models "
+            "(torch) nor DASHSCOPE_API_KEY is available. Install "
+            "`uv sync --extra local-models` or set DASHSCOPE_API_KEY to "
+            "exercise this path."
+        )
+
+    # torch importable — verify the GPU kernel matches (case 1 vs case 2).
+    if not torch.cuda.is_available():
+        return True, ""  # CPU-only build / no GPU — dense path uses CPU fine.
+    cap = torch.cuda.get_device_capability(0)
+    target = f"sm_{cap[0]}{cap[1]}"
+    if target in torch.cuda.get_arch_list():
+        return True, ""
+    return False, (
+        "Installed PyTorch lacks a kernel for this GPU's compute capability "
+        "(cudaErrorNoKernelImageForDevice). Upgrade to a PyTorch build that "
+        "includes the GPU's sm_xx (e.g. cu132 for RTX 50-series sm_120), or "
+        "set EMBEDDING_DEVICE=cpu to run the dense path on CPU."
+    )
 
 
-_REASON = (
-    "Installed PyTorch lacks a kernel for this GPU's compute capability "
-    "(cudaErrorNoKernelImageForDevice). Upgrade to a PyTorch build that "
-    "includes the GPU's sm_xx (e.g. cu132 for RTX 50-series sm_120), or set "
-    "EMBEDDING_DEVICE=cpu to run the dense path on CPU."
-)
+_DENSE_RUNNABLE, _DENSE_SKIP_REASON = _dense_retrieval_runnable()
 
 sys.path.insert(0, ".")
 
@@ -93,7 +120,7 @@ class TestRetrievalEndpoints:
         body = resp.json()
         assert "results" in body and isinstance(body["results"], list)
 
-    @pytest.mark.skipif(not _gpu_kernel_supported(), reason=_REASON)
+    @pytest.mark.skipif(not _DENSE_RUNNABLE, reason=_DENSE_SKIP_REASON)
     def test_dense_retrieval(self, client):
         resp = client.post("/api/retrieval/dense", json={"query": "git 合并", "top_k": 3})
         assert resp.status_code == 200
