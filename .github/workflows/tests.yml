@@ -90,32 +90,15 @@ jobs:
         run: |
           uv run mypy agent/ core/ api/ documents/ models/ utils/
 
-      - name: RAG retrieval benchmark regression gate
-        # Measures retrieval effectiveness (context precision/recall) on the
-        # domain-agnostic public benchmarks and fails if metrics regress beyond
-        # a 2-point tolerance vs the committed baseline. No LLM needed — this
-        # exercises the real Milvus + BM25 retrieval stack only. See
-        # docs/specs/rag-benchmark-generic/design.md.
-        #
-        # Q11 / F-EG-18: each run cold-ingests the corpus into Milvus Lite +
-        # rebuilds BM25 (~11s locally, slower on CI cold start). A hung ingest
-        # would block the whole job, so the step is bounded at 5 min. The gate
-        # is KEPT on the PR (not demoted to nightly) because the unit/e2e suites
-        # mock Milvus and therefore cannot catch retrieval recall regressions —
-        # this is the only step on the PR that exercises the real retrieval
-        # stack (M-NEW-3 in review/critic.md). It is NOT equivalent to the
-        # rule-based eval in eval-regression.yml, which scores the golden
-        # generation-quality suite, not public retrieval benchmarks.
-        timeout-minutes: 5
-        env:
-          DOMAIN_PROFILE: general
-        run: |
-          uv run python scripts/run_benchmark.py \
-            --dataset data/benchmark/benchmark_cmrc2018.yaml --top-k 4 \
-            --fail-on-regression
-          uv run python scripts/run_benchmark.py \
-            --dataset data/benchmark/benchmark_hotpotqa.yaml --top-k 4 \
-            --fail-on-regression
+      # NOTE: the retrieval benchmark regression gate used to run here but has
+      # been moved to its own workflow (benchmark-regression.yml). The benchmark
+      # cold-ingests the corpus into Milvus, which requires an embedding
+      # provider (documents/milvus_db.add_documents calls the embedding function
+      # at ingest time). The PR gate is torch-less (uv sync --extra dev) and has
+      # no DASHSCOPE_API_KEY, so ingest raised RuntimeError and the step could
+      # never pass on CI — it stayed masked behind the loguru collection failure
+      # for weeks. Like eval-regression.yml, the benchmark now runs only on
+      # self-hosted / local-models runners where embeddings are available.
 
   # Nightly / self-hosted: runs the real-LLM tests that the PR gate skips.
   # Two tracks (issue-KNOWN-GAP-1 now CLOSED):
