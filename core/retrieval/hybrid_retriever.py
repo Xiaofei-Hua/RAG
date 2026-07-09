@@ -16,6 +16,9 @@ from langchain_core.documents import Document
 from core.retrieval.bm25_retriever import BM25Retriever
 from documents.milvus_db import MilvusManager
 from utils.env_utils import (
+    GRAPH_RAG_ENABLED,
+    GRAPH_RAG_TOP_K,
+    GRAPH_RAG_WEIGHT,
     RERANKER_CANDIDATE_TOP_K,
     RERANKER_ENABLED,
     RERANKER_TOP_K,
@@ -64,6 +67,13 @@ class HybridRetrieverConfig:
 
     # Performance
     enable_parallel: bool = True
+
+    # GraphRAG leg (docs/specs/graphrag). Default OFF (REQ-GR-008): when False
+    # the graph leg is never invoked and RRF normalisation excludes graph_weight,
+    # so behaviour is byte-for-byte identical to the pre-graph implementation.
+    enable_graph: bool = GRAPH_RAG_ENABLED
+    graph_weight: float = GRAPH_RAG_WEIGHT
+    graph_top_k: int = GRAPH_RAG_TOP_K
 
 
 @dataclass
@@ -286,13 +296,16 @@ class HybridRetriever:
         try:
             # Perform retrievals
             if self.config.enable_parallel:
-                dense_results, sparse_results = self._parallel_retrieve(query, filter_expr)
+                dense_results, sparse_results, graph_results = self._parallel_retrieve(
+                    query, filter_expr
+                )
             else:
                 dense_results = self._dense_retrieve(query, filter_expr)
                 sparse_results = self._sparse_retrieve(query)
+                graph_results = self._graph_retrieve(query, filter_expr)
 
             # Fuse results
-            fused_results = self._rrf_fusion(dense_results, sparse_results)
+            fused_results = self._rrf_fusion(dense_results, sparse_results, graph_results)
 
             documents = [r.document for r in fused_results]
             documents = self._rerank(query, documents, top_k)
@@ -300,10 +313,12 @@ class HybridRetriever:
             documents = self._mmr(query, documents, top_k)
 
             elapsed = (time.perf_counter() - start_time) * 1000
+            graph_count = len(graph_results) if isinstance(graph_results, list) else 0
             log.info(
                 f"Hybrid retrieval completed: "
                 f"dense={len(dense_results)}, sparse={len(sparse_results)}, "
-                f"final={len(documents)}, elapsed={elapsed:.1f}ms"
+                f"graph={graph_count}, final={len(documents)}, "
+                f"elapsed={elapsed:.1f}ms"
             )
 
             # Persist into the result cache (deep-copy + version folded in the
@@ -352,10 +367,15 @@ class HybridRetriever:
             # Parallel async retrieval
             dense_task = asyncio.create_task(self._adense_retrieve(query, filter_expr))
             sparse_task = asyncio.create_task(self._asparse_retrieve(query))
+            tasks = [dense_task, sparse_task]
+            if self.config.enable_graph:
+                graph_task = asyncio.create_task(self._agraph_retrieve(query, filter_expr))
+                tasks.append(graph_task)
 
-            dense_results, sparse_results = await asyncio.gather(
-                dense_task, sparse_task, return_exceptions=True
-            )
+            gathered = await asyncio.gather(*tasks, return_exceptions=True)
+            dense_results = gathered[0]
+            sparse_results = gathered[1]
+            graph_results = gathered[2] if len(gathered) > 2 else []
 
             # Handle exceptions
             if isinstance(dense_results, Exception):
@@ -364,9 +384,12 @@ class HybridRetriever:
             if isinstance(sparse_results, Exception):
                 log.warning(f"Sparse retrieval failed: {sparse_results}")
                 sparse_results = []
+            if isinstance(graph_results, Exception):
+                log.warning(f"Graph retrieval failed: {graph_results}")
+                graph_results = []
 
             # Fuse results
-            fused_results = self._rrf_fusion(dense_results, sparse_results)
+            fused_results = self._rrf_fusion(dense_results, sparse_results, graph_results)
 
             documents = [r.document for r in fused_results]
             documents = await self._arerank(query, documents, top_k)
@@ -374,7 +397,11 @@ class HybridRetriever:
             documents = await self._ammr(query, documents, top_k)
 
             elapsed = (time.perf_counter() - start_time) * 1000
-            log.info(f"Async hybrid retrieval: final={len(documents)}, elapsed={elapsed:.1f}ms")
+            graph_count = len(graph_results) if isinstance(graph_results, list) else 0
+            log.info(
+                f"Async hybrid retrieval: final={len(documents)}, "
+                f"graph={graph_count}, elapsed={elapsed:.1f}ms"
+            )
 
             # Persist into the result cache via the shared helper (deep-copy +
             # version folded in one place).
@@ -427,6 +454,34 @@ class HybridRetriever:
     async def _asparse_retrieve(self, query: str) -> list[RetrievalResult]:
         """Async sparse retrieval."""
         return await asyncio.get_running_loop().run_in_executor(None, self._sparse_retrieve, query)
+
+    def _graph_retrieve(self, query: str, filter_expr: str | None = None) -> list[RetrievalResult]:
+        """GraphRAG leg (third RRF leg). Gated by ``enable_graph``.
+
+        Degrades to ``[]`` on any failure (REQ-GR-003) — never raises, so the
+        surrounding RRF path falls back to dense+sparse transparently.
+        """
+        if not self.config.enable_graph:
+            return []
+        try:
+            from core.retrieval.graph_retriever import get_graph_retriever
+
+            return get_graph_retriever().retrieve(
+                query,
+                top_k=self.config.graph_top_k,
+                filter_expr=filter_expr,
+            )
+        except Exception as e:  # noqa: BLE001 — degrade to empty
+            log.warning(f"Graph retrieval failed, degraded to empty: {e}")
+            return []
+
+    async def _agraph_retrieve(
+        self, query: str, filter_expr: str | None = None
+    ) -> list[RetrievalResult]:
+        """Async graph leg."""
+        return await asyncio.get_running_loop().run_in_executor(
+            None, self._graph_retrieve, query, filter_expr
+        )
 
     def _rerank(
         self,
@@ -507,52 +562,81 @@ class HybridRetriever:
     def _parallel_retrieve(
         self, query: str, filter_expr: str | None = None
     ) -> tuple[list[RetrievalResult], list[RetrievalResult]]:
-        """Perform parallel retrieval using threads."""
+        """Perform parallel retrieval using threads.
+
+        Returns ``(dense, sparse, graph)``; the graph leg runs only when
+        ``enable_graph`` is on and degrades to ``[]`` on any failure.
+        """
         dense_future = self._executor.submit(self._dense_retrieve, query, filter_expr)
         sparse_future = self._executor.submit(self._sparse_retrieve, query)
-        return dense_future.result(), sparse_future.result()
+        dense_results = dense_future.result()
+        sparse_results = sparse_future.result()
+        graph_results: list[RetrievalResult] = []
+        if self.config.enable_graph:
+            graph_future = self._executor.submit(self._graph_retrieve, query, filter_expr)
+            try:
+                graph_results = graph_future.result()
+            except Exception as e:  # noqa: BLE001 — graph leg degrades to empty
+                log.warning(f"Graph retrieval leg failed, degraded to empty: {e}")
+                graph_results = []
+        return dense_results, sparse_results, graph_results
 
     def _rrf_fusion(
         self,
         dense_results: list[RetrievalResult],
         sparse_results: list[RetrievalResult],
+        graph_results: list[RetrievalResult] | None = None,
     ) -> list[RetrievalResult]:
         """
         Reciprocal Rank Fusion (RRF) to combine retrieval results.
 
         RRF(d) = Σ w_i / (k + rank_i(d))
 
+        The GraphRAG leg (``graph_results``) joins as a third retriever when
+        ``enable_graph`` is on and the leg produced hits. F-04 gate: when graph
+        is off (or empty), ``graph_weight`` is excluded from the normalisation
+        denominator so dense/sparse weights stay byte-for-byte identical to the
+        pre-graph implementation (REQ-GR-008 zero-change default).
+
         Args:
             dense_results: Results from dense retrieval
             sparse_results: Results from sparse retrieval
+            graph_results: Results from the graph leg (optional)
 
         Returns:
             Fused and ranked results
         """
+        # F-04 weight normalisation. The graph weight participates only when
+        # the leg is both enabled AND non-empty; otherwise the denominator is
+        # dense+sparse so the existing two-leg scores are unchanged.
+        use_graph = bool(graph_results) and self.config.enable_graph
+        if use_graph:
+            total = self.config.dense_weight + self.config.sparse_weight + self.config.graph_weight
+        else:
+            total = self.config.dense_weight + self.config.sparse_weight
+        dense_w = self.config.dense_weight / total
+        sparse_w = self.config.sparse_weight / total
+        graph_w = self.config.graph_weight / total if use_graph else 0.0
+
         # Build document ID to result mapping
         doc_scores: dict[str, tuple[float, RetrievalResult]] = {}
 
-        # Process dense results
-        for result in dense_results:
-            doc_id = self._get_doc_id(result.document)
-            rrf_score = self.config.dense_weight / (self.config.rrf_k + result.rank)
+        def _fold(results: list[RetrievalResult], weight: float) -> None:
+            if not weight:
+                return
+            for result in results:
+                doc_id = self._get_doc_id(result.document)
+                rrf_score = weight / (self.config.rrf_k + max(result.rank, 1))
+                if doc_id in doc_scores:
+                    existing_score, existing_result = doc_scores[doc_id]
+                    doc_scores[doc_id] = (existing_score + rrf_score, existing_result)
+                else:
+                    doc_scores[doc_id] = (rrf_score, result)
 
-            if doc_id in doc_scores:
-                existing_score, existing_result = doc_scores[doc_id]
-                doc_scores[doc_id] = (existing_score + rrf_score, existing_result)
-            else:
-                doc_scores[doc_id] = (rrf_score, result)
-
-        # Process sparse results
-        for result in sparse_results:
-            doc_id = self._get_doc_id(result.document)
-            rrf_score = self.config.sparse_weight / (self.config.rrf_k + result.rank)
-
-            if doc_id in doc_scores:
-                existing_score, existing_result = doc_scores[doc_id]
-                doc_scores[doc_id] = (existing_score + rrf_score, existing_result)
-            else:
-                doc_scores[doc_id] = (rrf_score, result)
+        _fold(dense_results, dense_w)
+        _fold(sparse_results, sparse_w)
+        if use_graph:
+            _fold(graph_results or [], graph_w)
 
         # Sort by combined score
         sorted_results = sorted(doc_scores.values(), key=lambda x: x[0], reverse=True)
