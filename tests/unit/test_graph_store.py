@@ -145,6 +145,29 @@ class TestIdempotency:
         rows = store.load_all()
         assert rows[0].name == "C"
 
+    def test_duplicate_entity_within_batch_merges(self, store):
+        """Same entity surfaced by multiple chunks in ONE document merges,
+        not UNIQUE-violates (real bug found in live Qwen3 ingest).
+
+        Two chunks of the same doc both extract '轴承/部件' → same entity_id,
+        same source. Without ON CONFLICT merge the second INSERT aborted the
+        batch with 'UNIQUE constraint failed: entities.id, entities.source'.
+        """
+        e1 = _ent("轴承", desc="发动机轴承", chunk="chunk1 轴承内容")
+        e2 = _ent("轴承", desc="磨损轴承", chunk="chunk2 轴承内容")  # same name+type → same id
+        assert e1.id == e2.id
+        store.upsert([e1, e2], [], source="engine.md")
+        # Only one entity row (merged), mention_count=2, two distinct chunks.
+        assert store.count() == 1
+        with store._lock:
+            row = store._conn.execute(
+                "SELECT mention_count FROM entities WHERE name = ?", ("轴承",)
+            ).fetchone()
+        assert row["mention_count"] == 2
+        # Both chunk texts preserved (distinct chunk_text → 2 rows).
+        chunks = store.chunks_for_entity(e1.id)
+        assert len(chunks) == 2
+
     def test_file_hash_none_degrades_to_source(self, store):
         """F-07: file_hash=None still keyed by source (replace semantics)."""
         store.upsert([_ent("A")], [], source="s.md", file_hash="")

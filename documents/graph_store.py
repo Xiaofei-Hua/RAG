@@ -194,6 +194,11 @@ class GraphStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_ec_entity ON entity_chunks(entity_id);
                 CREATE INDEX IF NOT EXISTS idx_ec_source ON entity_chunks(source);
+                -- UNIQUE so INSERT OR IGNORE dedups identical (entity, source,
+                -- chunk_text) rows when the same entity is surfaced by the same
+                -- chunk text twice (e.g. re-extract).
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_ec_dedup
+                    ON entity_chunks(entity_id, source, chunk_text);
 
                 CREATE TABLE IF NOT EXISTS graph_meta (
                     key   TEXT PRIMARY KEY,
@@ -248,23 +253,39 @@ class GraphStore:
                         # reinterpretation on little-endian hosts (x86/ARM LE).
                         blob = struct.pack(f"<{len(ent.embedding)}f", *ent.embedding)
                     desc = _sanitize_description(ent.description)
+                    ent_source = source or ent.source
+                    # ON CONFLICT merge: the same entity (id, source) can be
+                    # surfaced by multiple chunks in one document — accumulate
+                    # mention_count and keep the latest non-empty description.
+                    # Without this the second occurrence raised UNIQUE violation
+                    # and aborted the whole batch (real bug found in live ingest).
                     self._conn.execute(
                         """
                         INSERT INTO entities
                             (id, name, type, description, embedding, source,
                              file_hash, created_at, mention_count)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 1)
+                        ON CONFLICT(id, source) DO UPDATE SET
+                            mention_count = entities.mention_count + 1,
+                            description = CASE WHEN excluded.description != ''
+                                              THEN excluded.description
+                                              ELSE entities.description END,
+                            embedding = COALESCE(excluded.embedding, entities.embedding)
                         """,
-                        (eid, ent.name, ent.type, desc, blob, source or ent.source, fh, now, 1),
+                        (eid, ent.name, ent.type, desc, blob, ent_source, fh, now),
                     )
                     rows_written += 1
                     if ent.chunk_text:
+                        # entity_chunks: one row per (entity, chunk) so multiple
+                        # chunks backing the same entity coexist. Dedup on
+                        # (entity_id, source, chunk_text) via OR IGNORE.
                         self._conn.execute(
                             """
-                            INSERT INTO entity_chunks (entity_id, chunk_text, parent_id, source)
+                            INSERT OR IGNORE INTO entity_chunks
+                                (entity_id, chunk_text, parent_id, source)
                             VALUES (?, ?, ?, ?)
                             """,
-                            (eid, ent.chunk_text, ent.parent_id or "", source or ent.source),
+                            (eid, ent.chunk_text, ent.parent_id or "", ent_source),
                         )
 
                 for rel in relations:
