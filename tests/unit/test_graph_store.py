@@ -274,11 +274,22 @@ class TestChunkLookup:
     def test_chunk_text_for(self, store):
         e = _ent("泵", parent_id="parent-42", chunk="原文片段")
         store.upsert([e], [], source="s.md")
-        result = store.chunk_text_for([e.id])
-        assert result[e.id] == ("原文片段", "parent-42")
+        result = store.chunk_text_for([(e.id, "s.md")])
+        assert result[(e.id, "s.md")] == ("原文片段", "parent-42")
 
     def test_chunk_text_missing_entity(self, store):
-        assert store.chunk_text_for(["nope"]) == {}
+        assert store.chunk_text_for([("nope", "s.md")]) == {}
+
+    def test_chunks_for_entity_multi_source(self, store):
+        """F-01: same concept in two sources → two chunk rows."""
+        e1 = _ent("泵", chunk="A版")
+        e2 = _ent("泵", chunk="B版")
+        store.upsert([e1], [], source="a.md")
+        store.upsert([e2], [], source="b.md")
+        eid = e1.id  # same id (same name+type)
+        rows = store.chunks_for_entity(eid)
+        sources = {r[0] for r in rows}
+        assert sources == {"a.md", "b.md"}
 
 
 # ---------------------------------------------------------------------------

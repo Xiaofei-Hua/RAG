@@ -344,7 +344,8 @@ class GraphStore:
                 SELECT e.id AS eid, e.name, e.type, e.source, e.embedding,
                        ec.chunk_text, ec.parent_id
                 FROM entities e
-                LEFT JOIN entity_chunks ec ON ec.entity_id = e.id
+                LEFT JOIN entity_chunks ec
+                  ON ec.entity_id = e.id AND ec.source = e.source
                 ORDER BY e.id
                 """
             )
@@ -374,7 +375,9 @@ class GraphStore:
         """1-hop adjacency: ``(neighbor_id, relation_type, weight)`` per seed.
 
         Used by the high-level retrieval leg (F-08). Returns de-duplicated
-        neighbours across both edge directions.
+        neighbours across both edge directions. Neighbour ids are entity_ids
+        (cross-source by design — graph traversal connects concepts across
+        manuals); the caller resolves each to its source-scoped chunks.
         """
         if not entity_ids:
             return []
@@ -398,22 +401,44 @@ class GraphStore:
                     out[nb] = (r["relation_type"], w)
         return [(nb, rt, w) for nb, (rt, w) in out.items()]
 
-    def chunk_text_for(self, entity_ids: list[str]) -> dict[str, tuple[str, str]]:
-        """Fetch ``(chunk_text, parent_id)`` per entity id (F-06 expand support)."""
-        if not entity_ids:
-            return {}
-        placeholders = ",".join("?" for _ in entity_ids)
-        out: dict[str, tuple[str, str]] = {}
+    def chunks_for_entity(self, entity_id: str) -> list[tuple[str, str, str]]:
+        """All ``(source, chunk_text, parent_id)`` rows for an entity id.
+
+        A concept surfaced across manuals yields one row per source so the
+        high-level leg can fan out and let F-01 filtering pick the allowed
+        source(s) at the Document level.
+        """
+        out: list[tuple[str, str, str]] = []
         with self._lock:
             cur = self._conn.execute(
-                f"""
-                SELECT entity_id, chunk_text, parent_id
-                FROM entity_chunks WHERE entity_id IN ({placeholders})
-                """,
-                entity_ids,
+                "SELECT source, chunk_text, parent_id FROM entity_chunks WHERE entity_id = ?",
+                (entity_id,),
             )
             for r in cur.fetchall():
-                out[r["entity_id"]] = (r["chunk_text"] or "", r["parent_id"] or "")
+                out.append((r["source"], r["chunk_text"] or "", r["parent_id"] or ""))
+        return out
+
+    def chunk_text_for(self, keys: list[tuple[str, str]]) -> dict[tuple[str, str], tuple[str, str]]:
+        """Fetch ``(chunk_text, parent_id)`` per (entity_id, source) pair.
+
+        Keyed by the (entity_id, source) tuple because the same concept surfaced
+        in two manuals is two entity rows (PK is id+source) with two distinct
+        backing chunks — a source-scoped lookup keeps F-01 filtering precise.
+        """
+        if not keys:
+            return {}
+        out: dict[tuple[str, str], tuple[str, str]] = {}
+        with self._lock:
+            for eid, source in keys:
+                row = self._conn.execute(
+                    """
+                    SELECT chunk_text, parent_id FROM entity_chunks
+                    WHERE entity_id = ? AND source = ?
+                    """,
+                    (eid, source),
+                ).fetchone()
+                if row:
+                    out[(eid, source)] = (row["chunk_text"] or "", row["parent_id"] or "")
         return out
 
     def meta(self, key: str, default: str = "") -> str:
