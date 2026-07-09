@@ -1,9 +1,16 @@
 name: Sync to Mirror Repo
 
+# DISABLED. This workflow failed on every push because the SYNC_DEPLOY_KEY
+# secret was never configured (Install SSH key -> "Input required and not
+# supplied: key"), producing a perpetual red Actions badge unrelated to build
+# health. The target org is also misspelled (PHMgogooo below vs the actual
+# remote PHMgogogo), so it could not push even with a key.
+#
+# To re-enable: (1) generate a deploy key for the mirror repo, (2) add it as
+# the SYNC_DEPLOY_KEY secret, (3) fix the org spelling below, (4) restore the
+# `on: push` block. The job body is kept intact below for that purpose.
 on:
-  push:
-    branches:
-      - '*'
+  workflow_dispatch:
 
 jobs:
   sync:
