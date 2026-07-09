@@ -14,21 +14,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up Python (backend)
-        uses: actions/setup-python@v5
+      # uv for the backend (AGENTS.md §5). The previous hand-maintained pip
+      # subset could drift from pyproject.toml the same way tests.yml's did
+      # (dropping loguru); installing from uv.lock removes that risk.
+      - name: Set up uv (backend)
+        uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.13"
+          enable-cache: true
 
       - name: Set up Node (frontend + Playwright)
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Install backend deps (minimal; e2e fakes replace LLM/Milvus)
-        run: |
-          python -m pip install --upgrade pip
-          pip install pytest pyyaml numpy langchain-core langchain-openai \
-            fastapi httpx pymilvus milvus-lite
+      - name: Install backend deps (e2e fakes replace LLM/Milvus)
+        run: uv sync --frozen --extra dev
 
       - name: Build frontend
         run: |
