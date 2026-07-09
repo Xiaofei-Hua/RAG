@@ -7,6 +7,34 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Added — GraphRAG retrieval leg (`graphrag`)
+
+A knowledge-graph retrieval leg (LightRAG-inspired) joins dense + sparse as the
+hybrid retriever's third RRF leg. At ingestion time the local Qwen3:14b extracts
+entities/relations into a SQLite graph store; at query time a dual-level
+retriever (low-level entity ANN + high-level 1-hop relation traversal) feeds
+graph hits into RRF. Targets multi-hop reasoning gaps (症状→故障件→排故程序)
+that flat chunk retrieval cannot bridge. See `docs/specs/graphrag/`.
+
+- **Default off** (`GRAPH_RAG_ENABLED=false`): when disabled the graph leg is
+  never invoked and RRF normalisation excludes `graph_weight`, so behaviour is
+  byte-for-byte identical to the pre-graph implementation (REQ-GR-008).
+- **Air-gapped**: extraction uses the shared Qwen3 singleton + BGE embeddings,
+  zero external API (REQ-GR-006).
+- **Graceful degradation**: extraction/retrieval failures return empty and never
+  block the main path (REQ-GR-003); filter_expr propagates to the graph leg
+  (F-01); COW matrix concurrency (F-02); cold-start matrix rebuild (F-05);
+  injection-defended extraction prompt (F-03).
+- **Domain-adaptive**: entity/relation type seeds come from `DomainProfile`
+  (aviation_phm profile seeds PHM types), no domain literals in source
+  (REQ-GR-009).
+
+New env: `GRAPH_RAG_ENABLED`, `GRAPH_RAG_WEIGHT`, `GRAPH_RAG_TOP_K`,
+`GRAPH_RAG_EXTRACT_TEMPERATURE`, `GRAPH_RAG_MAX_CHUNKS_PER_DOC`. New modules:
+`documents/graph_store.py`, `documents/graph_extractor.py`,
+`core/retrieval/graph_retriever.py`. `DomainProfile` gains optional
+`entity_types` / `relation_types` fields (backward compatible).
+
 ### Changed — Milvus collection default renamed `[breaking]` (`collection-rename`)
 
 `[breaking]` The default `COLLECTION_NAME` changed from `t_collection01` to
