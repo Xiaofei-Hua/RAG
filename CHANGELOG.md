@@ -85,6 +85,27 @@ Three Medium bugs from the 2026-07 audit. See `docs/specs/bugfix-2026-07-stage2/
   but had no lock — concurrent writes raised `database is locked`. Added an
   `RLock` + `_locked()` mirroring `FeedbackCollector`.
 
+### Fixed — DoS hardening & Low sweep (Stage 3) (`audit-stage3`)
+
+DoS hardening (B9/B10) and Low-severity cleanup (B11/B12). See
+`docs/specs/bugfix-2026-07-stage3/`.
+
+- **Unbounded `limit`** (B9): list/history endpoints (`/chat/history`,
+  `/sessions`, `/admin/eval/runs`, `/admin/retrieval-misses`, `/documents`)
+  accepted `?limit=1e8` and materialized it into memory. Added `Query(le=...)`
+  caps (200/500); over-large values now return 422.
+- **Upload size cap** (B10): uploads were read fully into memory with no bound.
+  Added `MAX_UPLOAD_BYTES` (env, default 50 MB); oversize uploads return 413
+  before the body is read (Content-Length pre-check + post-read backstop).
+- **Bare-filename db crash** (B11): `InferenceStore` / `EmbeddingRegistry`
+  crashed on a bare-filename `db_path` (`os.makedirs("")` → FileNotFoundError).
+  Added the `or "."` guard the sibling stores already use.
+- **Low sweep** (B12): `hallucination_score` rationale now uses the `judged`
+  denominator (matching the score, with an "无法判定" suffix); graph
+  fingerprint-drift now sets `degraded=True` so admin health surfaces model
+  drift; `get_feedback_collector` uses double-checked locking to prevent a
+  duplicate-instance connection leak on concurrent first requests.
+
 ### Changed — Milvus collection default renamed `[breaking]` (`collection-rename`)
 
 `[breaking]` The default `COLLECTION_NAME` changed from `t_collection01` to

@@ -65,7 +65,7 @@ class InferenceStore:
     def __init__(self, db_path: str = DEFAULT_DB_PATH):
         self._db_path = db_path
         self._lock = threading.RLock()
-        os.makedirs(os.path.dirname(db_path), exist_ok=True)
+        os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._init_schema()

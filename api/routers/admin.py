@@ -16,7 +16,7 @@ import ipaddress
 import os
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 
 router = APIRouter()
 
@@ -347,7 +347,7 @@ async def get_config(_: None = Depends(require_admin)):
 
 
 @router.get("/eval/runs")
-async def eval_runs(limit: int = 20, _: None = Depends(require_admin)):
+async def eval_runs(limit: int = Query(20, ge=1, le=200), _: None = Depends(require_admin)):
     """List recent evaluation run summaries (history.jsonl)."""
     from agent.eval import load_history
 
@@ -457,7 +457,7 @@ async def inference_detail(trace_id: str, _: None = Depends(require_admin)):
 
 
 @router.get("/retrieval-misses")
-async def retrieval_misses(limit: int = 50, _: None = Depends(require_admin)):
+async def retrieval_misses(limit: int = Query(50, ge=1, le=500), _: None = Depends(require_admin)):
     """Retrieval-miss signals for offline tuning (low-faithfulness feedback)."""
     from agent.eval import get_retrieval_misses
 

@@ -6,7 +6,7 @@ Handles session management endpoints.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from utils.log_utils import log
@@ -76,7 +76,7 @@ async def create_session():
 @router.get("", response_model=SessionListResponse)
 async def list_sessions(
     skip: int = 0,
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=200),
     session_memory=Depends(get_session_memory),
 ):
     """List all active sessions."""

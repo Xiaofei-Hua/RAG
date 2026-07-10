@@ -117,12 +117,18 @@ class FeedbackCollector:
 
 
 _feedback_collector: FeedbackCollector | None = None
+# Guards singleton init so concurrent first requests don't create two
+# FeedbackCollector instances (each opening a sqlite connection to the shared
+# agent_memory.db — one becomes orphaned). Mirrors get_inference_store (B12).
+_collector_lock = threading.Lock()
 
 
 def get_feedback_collector() -> FeedbackCollector:
     global _feedback_collector
     if _feedback_collector is None:
-        _feedback_collector = FeedbackCollector()
+        with _collector_lock:
+            if _feedback_collector is None:
+                _feedback_collector = FeedbackCollector()
     return _feedback_collector
 
 

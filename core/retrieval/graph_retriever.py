@@ -217,7 +217,11 @@ class GraphRetriever:
                     f"graph matrix: entity {r.entity_id} dim {len(r.embedding)} "
                     f"!= embedding dim {dim}; skipping rebuild (model drift)"
                 )
+                # Mark both the fingerprint flag and degraded so admin health
+                # surfaces the model-drift condition (previously only
+                # fingerprint_ok was set, hiding it from degraded monitoring).
                 self._fingerprint_ok = False
+                self._degraded = True
                 self._matrix = None
                 self._entity_ids = []
                 self._entity_sources = []

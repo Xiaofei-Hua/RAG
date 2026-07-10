@@ -574,7 +574,12 @@ class LLMJudge:
         if judged == 0:
             return None, "judge unavailable — no hard claim could be evaluated"
         score = unsupported / judged
-        return score, f"{unsupported}/{len(hard_claims)} 条硬声明缺乏检索支持"
+        # Rationale denominator must match the score's (judged, not
+        # len(hard_claims)) so the reported fraction is consistent when the
+        # judge could not evaluate every claim (B12).
+        unjudged = len(hard_claims) - judged
+        suffix = f"（{unjudged} 条无法判定）" if unjudged else ""
+        return score, f"{unsupported}/{judged} 条硬声明缺乏检索支持{suffix}"
 
     def answer_relevancy(self, question: str, answer: str) -> float | None:
         """

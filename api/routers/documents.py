@@ -12,7 +12,7 @@ import os
 import time
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, File, HTTPException, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, HTTPException, Query, UploadFile
 from langchain_core.documents import Document
 from pydantic import BaseModel
 
@@ -27,6 +27,10 @@ router = APIRouter()
 # (previously hardcoded "/tmp" leaked temp files when the background cleanup
 # was mocked out). Conforms to AGENTS.md §6/§10 persistence-path contract.
 UPLOAD_TMP_DIR = "/tmp"
+
+# Max accepted upload size (bytes). Env-configurable; default 50 MB. Checked
+# before reading the body so an oversized upload can't exhaust RAM (B10).
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(50 * 1024 * 1024)))
 
 
 # =============================================================================
@@ -352,12 +356,21 @@ async def upload_document(
             status_code=400, detail=f"Unsupported file type: {ext}. Allowed: {allowed_extensions}"
         )
 
+    # Reject oversized uploads BEFORE reading the body into memory (B10).
+    # file.size comes from Content-Length when available; the post-read len()
+    # check below is a backstop for requests that omit/spoof Content-Length.
+    declared_size = getattr(file, "size", None)
+    if declared_size is not None and declared_size > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "文件过大")
+
     doc_id = str(uuid.uuid4())[:8]
     log.info(f"Uploading document: {filename} (id={doc_id})")
 
     try:
         content = await file.read()
         size = len(content)
+        if size > MAX_UPLOAD_BYTES:
+            raise HTTPException(413, "文件过大")
         file_hash = _compute_file_hash(content)
 
         # Check for duplicates
@@ -570,7 +583,7 @@ def _process_document(doc_id: str, file_path: str, filename: str, file_hash: str
 @router.get("", response_model=DocumentListResponse)
 async def list_documents(
     skip: int = 0,
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=200),
 ):
     """List all documents."""
     registry = get_document_registry()

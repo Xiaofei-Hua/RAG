@@ -13,7 +13,7 @@ import time
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from pydantic import BaseModel, Field
@@ -859,7 +859,7 @@ async def chat(
 @router.get("/history/{session_id}", response_model=ChatHistoryResponse)
 async def get_chat_history(
     session_id: str,
-    limit: int = 20,
+    limit: int = Query(20, ge=1, le=200),
     session_memory=Depends(get_session_memory),
 ):
     """Get chat history for a session."""
