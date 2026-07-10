@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import math
 import re
+import threading
 from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -69,6 +70,12 @@ class BM25Retriever:
         self._idf: dict[str, float] = {}
         self._doc_freq: dict[str, int] = {}
         self._index_built = False
+        # The singleton is mutated by BackgroundTasks indexing while queries
+        # run in an executor (run_in_executor) — the three parallel lists are
+        # appended/deleted across statements and a reader can observe a
+        # half-updated index. The lock guards all mutations and lets `retrieve`
+        # snapshot a consistent view before iterating (B7).
+        self._lock = threading.RLock()
 
         log.debug("BM25Retriever initialized")
 
@@ -79,13 +86,14 @@ class BM25Retriever:
         Args:
             documents: Documents to index
         """
-        for doc in documents:
-            self._documents.append(doc)
-            tokens = self._tokenize(doc.page_content)
-            self._doc_tokens.append(tokens)
-            self._doc_lengths.append(len(tokens))
+        with self._lock:
+            for doc in documents:
+                self._documents.append(doc)
+                tokens = self._tokenize(doc.page_content)
+                self._doc_tokens.append(tokens)
+                self._doc_lengths.append(len(tokens))
 
-        self._build_index()
+            self._build_index()
         log.info(f"Added {len(documents)} documents to BM25 index")
 
     def _tokenize(self, text: str) -> list[str]:
@@ -189,20 +197,31 @@ class BM25Retriever:
         """
         from core.retrieval.hybrid_retriever import RetrievalResult
 
-        if not self._index_built or not self._documents:
-            log.warning("BM25 index not built or empty")
-            return []
-
         top_k = top_k or self.config.top_k
         query_tokens = self._tokenize(query)
 
         if not query_tokens:
             return []
 
+        # Snapshot the index under the lock so a concurrent add_documents /
+        # remove_by_source cannot mutate the parallel lists mid-iteration
+        # (which previously surfaced as IndexError, swallowed to [] by the
+        # caller). Iteration then runs on the stable copies without holding
+        # the lock, so a long query never blocks indexing (B7).
+        with self._lock:
+            if not self._index_built or not self._documents:
+                log.warning("BM25 index not built or empty")
+                return []
+            documents = list(self._documents)
+            doc_tokens = list(self._doc_tokens)
+            doc_lengths = list(self._doc_lengths)
+            idf = dict(self._idf)
+            avgdl = self._avgdl
+
         # Calculate BM25 scores for each document
         scores = []
-        for doc_idx, doc_tokens in enumerate(self._doc_tokens):
-            score = self._bm25_score(query_tokens, doc_tokens, doc_idx)
+        for doc_idx, tokens in enumerate(doc_tokens):
+            score = self._bm25_score(query_tokens, tokens, doc_idx, doc_lengths, idf, avgdl)
             if score > 0:
                 scores.append((doc_idx, score))
 
@@ -215,7 +234,7 @@ class BM25Retriever:
         for rank, (doc_idx, score) in enumerate(top_results, 1):
             results.append(
                 RetrievalResult(
-                    document=self._documents[doc_idx],
+                    document=documents[doc_idx],
                     score=score,
                     source="sparse",
                     rank=rank,
@@ -230,57 +249,61 @@ class BM25Retriever:
         query_tokens: list[str],
         doc_tokens: list[str],
         doc_idx: int,
+        doc_lengths: list[int],
+        idf: dict[str, float],
+        avgdl: float,
     ) -> float:
-        """Calculate BM25 score for a document."""
+        """Calculate BM25 score for a document against a snapshotted index."""
         score = 0.0
-        doc_len = self._doc_lengths[doc_idx]
+        doc_len = doc_lengths[doc_idx]
         doc_counter = Counter(doc_tokens)
 
         k1 = self.config.k1
         b = self.config.b
-        avgdl = self._avgdl
 
         for term in query_tokens:
-            if term not in self._idf:
+            if term not in idf:
                 continue
 
             tf = doc_counter.get(term, 0)
-            idf = self._idf[term]
+            term_idf = idf[term]
 
             # BM25 formula
             numerator = tf * (k1 + 1)
             denominator = tf + k1 * (1 - b + b * doc_len / avgdl)
 
             if denominator > 0:
-                score += idf * (numerator / denominator)
+                score += term_idf * (numerator / denominator)
 
         return score
 
     def clear(self):
         """Clear the index."""
-        self._documents.clear()
-        self._doc_tokens.clear()
-        self._doc_lengths.clear()
-        self._idf.clear()
-        self._doc_freq.clear()
-        self._avgdl = 0.0
-        self._index_built = False
+        with self._lock:
+            self._documents.clear()
+            self._doc_tokens.clear()
+            self._doc_lengths.clear()
+            self._idf.clear()
+            self._doc_freq.clear()
+            self._avgdl = 0.0
+            self._index_built = False
         log.debug("BM25 index cleared")
 
     def remove_by_source(self, source: str):
         """Remove documents matching a source filename and rebuild index."""
-        if not self._documents or not source:
-            return
-        indices_to_remove = [
-            i for i, doc in enumerate(self._documents) if doc.metadata.get("source") == source
-        ]
-        if not indices_to_remove:
-            return
-        for idx in sorted(indices_to_remove, reverse=True):
-            del self._documents[idx]
-            del self._doc_tokens[idx]
-            del self._doc_lengths[idx]
-        self._build_index()
+        with self._lock:
+            if not self._documents or not source:
+                return
+            indices_to_remove = [
+                i for i, doc in enumerate(self._documents) if doc.metadata.get("source") == source
+            ]
+            if not indices_to_remove:
+                return
+            for idx in sorted(indices_to_remove, reverse=True):
+                del self._documents[idx]
+                del self._doc_tokens[idx]
+                del self._doc_lengths[idx]
+            self._build_index()
         log.info(f"BM25 removed {len(indices_to_remove)} docs for source={source}")
 
     @property

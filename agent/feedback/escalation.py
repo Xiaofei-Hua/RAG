@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 
 from agent.feedback.types import EscalationLevel, EscalationRecord
 from utils.log_utils import log
@@ -17,7 +20,23 @@ class EscalationManager:
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        self._init_table()
+        # WAL + locking: this manager shares agent_memory.db with MemoryStore
+        # and FeedbackCollector, which both lock for exactly this reason.
+        # Without synchronisation, concurrent escalation writes interleave with
+        # memory/feedback commits on the same file and intermittently raise
+        # "database is locked" (B8).
+        try:
+            self._conn.execute("PRAGMA journal_mode=WAL")
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"EscalationManager: WAL mode unavailable: {e}")
+        self._lock = threading.RLock()
+        with self._lock:
+            self._init_table()
+
+    @contextmanager
+    def _locked(self) -> Iterator[None]:
+        with self._lock:
+            yield
 
     def _init_table(self):
         self._conn.execute("""
@@ -64,32 +83,37 @@ class EscalationManager:
             answer=answer,
             context_snapshot=context or {},
         )
-        self._conn.execute(
-            "INSERT INTO escalations (id, session_id, level, reason, answer, resolved, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (
-                record.id,
-                record.session_id,
-                record.level.value,
-                record.reason,
-                record.answer,
-                0,
-                record.timestamp,
-            ),
-        )
-        self._conn.commit()
+        with self._locked():
+            self._conn.execute(
+                "INSERT INTO escalations (id, session_id, level, reason, answer, resolved, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (
+                    record.id,
+                    record.session_id,
+                    record.level.value,
+                    record.reason,
+                    record.answer,
+                    0,
+                    record.timestamp,
+                ),
+            )
+            self._conn.commit()
         log.warning(f"EscalationManager: created {level.value} escalation {record.id}")
         return record
 
     def get_pending(self) -> list[EscalationRecord]:
-        rows = self._conn.execute(
-            "SELECT * FROM escalations WHERE resolved = 0 ORDER BY timestamp DESC"
-        ).fetchall()
+        with self._locked():
+            rows = self._conn.execute(
+                "SELECT * FROM escalations WHERE resolved = 0 ORDER BY timestamp DESC"
+            ).fetchall()
         return [self._row_to_record(row) for row in rows]
 
     def resolve(self, id: str, resolution: str) -> bool:
-        cursor = self._conn.execute("UPDATE escalations SET resolved = 1 WHERE id = ?", (id,))
-        self._conn.commit()
-        return cursor.rowcount > 0
+        with self._locked():
+            cursor = self._conn.execute(
+                "UPDATE escalations SET resolved = 1 WHERE id = ?", (id,)
+            )
+            self._conn.commit()
+            return cursor.rowcount > 0
 
     def _row_to_record(self, row) -> EscalationRecord:
         return EscalationRecord(

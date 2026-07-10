@@ -307,9 +307,14 @@ class HybridRetriever:
             # Fuse results
             fused_results = self._rrf_fusion(dense_results, sparse_results, graph_results)
 
+            # Pipeline order: RRF → time_decay → rerank → MMR. time_decay MUST
+            # run before rerank so the decayed `score` feeds the reranker's
+            # blend signal; running it after rerank left decay with no ranking
+            # effect whenever the reranker was on (its `rerank_score` then
+            # dominated MMR). See time_decay.py docstring (B6).
             documents = [r.document for r in fused_results]
-            documents = self._rerank(query, documents, top_k)
             documents = self._time_decay(documents)
+            documents = self._rerank(query, documents, top_k)
             documents = self._mmr(query, documents, top_k)
 
             elapsed = (time.perf_counter() - start_time) * 1000
@@ -391,9 +396,11 @@ class HybridRetriever:
             # Fuse results
             fused_results = self._rrf_fusion(dense_results, sparse_results, graph_results)
 
+            # Pipeline order mirrors the sync path: RRF → time_decay → rerank →
+            # MMR (B6 — decay before rerank so the decayed score feeds rerank).
             documents = [r.document for r in fused_results]
-            documents = await self._arerank(query, documents, top_k)
             documents = self._time_decay(documents)
+            documents = await self._arerank(query, documents, top_k)
             documents = await self._ammr(query, documents, top_k)
 
             elapsed = (time.perf_counter() - start_time) * 1000

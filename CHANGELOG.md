@@ -65,6 +65,26 @@ Five Critical/High bugs from the 2026-07 full-repo adversarial audit. See
   duplicate key, so previously-promoted golden cases were silently lost. Now
   rewrites the file with a single `cases:` key, preserving all cases.
 
+### Fixed — Concurrency & correctness audit (Stage 2) (`audit-stage2`)
+
+Three Medium bugs from the 2026-07 audit. See `docs/specs/bugfix-2026-07-stage2/`.
+
+- **time-decay pipeline order** (B6): the hybrid retriever ran
+  `RRF → rerank → time_decay → MMR`, contradicting the `time_decay.py`
+  docstring ("AFTER RRF fusion but BEFORE reranking/MMR"). Because MMR blends
+  on `rerank_score`, the decayed `score` never reached the ranking signal when
+  the reranker was on — time-decay had no ranking effect in the premium config.
+  Reordered to `RRF → time_decay → rerank → MMR` (sync + async paths).
+- **BM25 singleton concurrency** (B7): the BM25 retriever mutated three parallel
+  lists in place (`add_documents`/`remove_by_source`) while `retrieve` iterated
+  them with no lock; under concurrent indexing + query (BackgroundTasks vs
+  executor) a reader could observe a half-updated index. Added an `RLock`;
+  mutations are guarded and `retrieve` snapshots the index before iterating.
+- **EscalationManager shared-DB lock** (B8): `EscalationManager` shares
+  `agent_memory.db` with `MemoryStore`/`FeedbackCollector` (which lock for this)
+  but had no lock — concurrent writes raised `database is locked`. Added an
+  `RLock` + `_locked()` mirroring `FeedbackCollector`.
+
 ### Changed — Milvus collection default renamed `[breaking]` (`collection-rename`)
 
 `[breaking]` The default `COLLECTION_NAME` changed from `t_collection01` to
