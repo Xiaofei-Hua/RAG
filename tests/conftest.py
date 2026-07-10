@@ -22,7 +22,6 @@ import asyncio
 import os
 import sys
 import types
-from typing import List, Optional
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest

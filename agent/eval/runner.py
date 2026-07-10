@@ -111,9 +111,7 @@ class EvalRunner:
                 from agent.harness import get_agent_harness
                 from agent.harness.orchestrator import HarnessConfig
 
-                self._no_checkpoint_harness = get_agent_harness(
-                    HarnessConfig(use_memory=False)
-                )
+                self._no_checkpoint_harness = get_agent_harness(HarnessConfig(use_memory=False))
             return self._no_checkpoint_harness
 
         from agent.harness import get_agent_harness
@@ -191,7 +189,9 @@ class EvalRunner:
         try:
             harness = self._get_harness(case)
             result = harness.invoke(case.query, thread_id=f"eval_{case.id}")
-            answer, intent, sources, contexts, context_ids = self._extract_result(result, case.query)
+            answer, intent, sources, contexts, context_ids = self._extract_result(
+                result, case.query
+            )
 
             score = self._scorer.score(
                 case=case,
@@ -240,7 +240,9 @@ class EvalRunner:
         try:
             harness = self._get_harness(case)
             result = await harness.ainvoke(case.query, thread_id=f"eval_{case.id}")
-            answer, intent, sources, contexts, context_ids = self._extract_result(result, case.query)
+            answer, intent, sources, contexts, context_ids = self._extract_result(
+                result, case.query
+            )
 
             score = self._scorer.score(
                 case=case,

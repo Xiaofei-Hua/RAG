@@ -6,12 +6,12 @@
   python tests/api/test_chat.py
 """
 
+import http.client
 import json
 import sys
 import time
-import urllib.request
 import urllib.error
-import http.client
+import urllib.request
 
 BASE = "http://localhost:8000"
 
@@ -22,8 +22,9 @@ FAILED = 0
 def _req(method, path, data=None, timeout=60):
     url = f"{BASE}{path}"
     body = json.dumps(data).encode() if data else None
-    req = urllib.request.Request(url, data=body, method=method,
-                                headers={"Content-Type": "application/json"} if body else {})
+    req = urllib.request.Request(
+        url, data=body, method=method, headers={"Content-Type": "application/json"} if body else {}
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, json.loads(resp.read())
@@ -57,15 +58,19 @@ def test_general_chat():
     """通用闲聊 — 不走 RAG"""
     print("\n  [非流式] 通用闲聊")
 
-    status, body = _req("POST", "/api/chat", {
-        "message": "你好，请介绍一下你自己",
-        "stream": False,
-    }, timeout=30)
+    status, body = _req(
+        "POST",
+        "/api/chat",
+        {
+            "message": "你好，请介绍一下你自己",
+            "stream": False,
+        },
+        timeout=30,
+    )
     assert_ok("通用闲聊返回 200", status, body)
     if status == 200:
         assert_true("回答非空", len(body.get("response", "")) > 0)
         assert_true("包含 session_id", body.get("session_id") is not None)
-        session_id = body["session_id"]
 
     return body.get("session_id")
 
@@ -74,12 +79,17 @@ def test_rag_chat(session_id):
     """RAG 知识库检索问答"""
     print("\n  [非流式] RAG 问答")
 
-    status, body = _req("POST", "/api/chat", {
-        "message": "git 合并冲突如何解决？",
-        "session_id": session_id,
-        "stream": False,
-        "mode": "thinking",
-    }, timeout=120)
+    status, body = _req(
+        "POST",
+        "/api/chat",
+        {
+            "message": "git 合并冲突如何解决？",
+            "session_id": session_id,
+            "stream": False,
+            "mode": "thinking",
+        },
+        timeout=120,
+    )
     assert_ok("RAG 问答返回 200", status, body)
     if status == 200:
         answer = body.get("response", "")
@@ -91,15 +101,23 @@ def test_fast_mode_chat(session_id):
     """快速模式对话"""
     print("\n  [非流式] 快速模式")
 
-    status, body = _req("POST", "/api/chat", {
-        "message": "docker 部署的常用命令？",
-        "session_id": session_id,
-        "mode": "fast",
-    }, timeout=60)
+    status, body = _req(
+        "POST",
+        "/api/chat",
+        {
+            "message": "docker 部署的常用命令？",
+            "session_id": session_id,
+            "mode": "fast",
+        },
+        timeout=60,
+    )
     assert_ok("快速模式返回 200", status, body)
     if status == 200:
-        assert_true("route == fast", body.get("metadata", {}).get("route") == "fast",
-                    f"got: {body.get('metadata', {}).get('route')}")
+        assert_true(
+            "route == fast",
+            body.get("metadata", {}).get("route") == "fast",
+            f"got: {body.get('metadata', {}).get('route')}",
+        )
 
 
 def test_sse_stream(session_id):
@@ -107,13 +125,16 @@ def test_sse_stream(session_id):
     print("\n  [流式] SSE 对话")
 
     conn = http.client.HTTPConnection("localhost", 8000, timeout=60)
-    body = json.dumps({
-        "message": "git 合并冲突如何解决？",
-        "session_id": session_id,
-        "stream": True,
-    }).encode()
-    conn.request("POST", "/api/chat/stream", body=body,
-                 headers={"Content-Type": "application/json"})
+    body = json.dumps(
+        {
+            "message": "git 合并冲突如何解决？",
+            "session_id": session_id,
+            "stream": True,
+        }
+    ).encode()
+    conn.request(
+        "POST", "/api/chat/stream", body=body, headers={"Content-Type": "application/json"}
+    )
 
     resp = conn.getresponse()
     assert_true("SSE 响应状态 200", resp.status == 200, f"got: {resp.status}")

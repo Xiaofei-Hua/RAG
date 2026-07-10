@@ -38,8 +38,9 @@ TEST_DOC = """# Docker 部署排查指南
 def _req(method, path, data=None, timeout=60):
     url = f"{BASE}{path}"
     body = json.dumps(data).encode() if data else None
-    req = urllib.request.Request(url, data=body, method=method,
-                                headers={"Content-Type": "application/json"} if body else {})
+    req = urllib.request.Request(
+        url, data=body, method=method, headers={"Content-Type": "application/json"} if body else {}
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, json.loads(resp.read())
@@ -59,8 +60,12 @@ def _upload(filename, content):
         f"--{boundary}--\r\n"
     ).encode()
     conn = http.client.HTTPConnection("localhost", 8000, timeout=60)
-    conn.request("POST", "/api/documents/upload", body=body,
-                 headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    conn.request(
+        "POST",
+        "/api/documents/upload",
+        body=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
     resp = conn.getresponse()
     result = json.loads(resp.read())
     conn.close()

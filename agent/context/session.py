@@ -20,9 +20,7 @@ class SessionContext:
     user_id: str | None = None
     # Derived from the active domain profile (was a hardcoded "phm_diagnosis_v1").
     # Lazy import keeps the dataclass dependency-free at module import time.
-    prompt_profile: str = field(
-        default_factory=lambda: _active_prompt_profile_generate()
-    )
+    prompt_profile: str = field(default_factory=lambda: _active_prompt_profile_generate())
 
 
 def _active_prompt_profile_generate() -> str:

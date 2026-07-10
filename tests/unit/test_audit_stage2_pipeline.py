@@ -109,9 +109,15 @@ def test_b6_pipeline_calls_decay_before_rerank(monkeypatch):
     )
     monkeypatch.setattr(retriever, "_sparse_retrieve", lambda _q: [])
     monkeypatch.setattr(retriever, "_graph_retrieve", lambda _q, _f=None: [])
-    monkeypatch.setattr(retriever, "_parallel_retrieve", lambda _q, _f: (
-        [RetrievalResult(document=doc, score=1.0, source="dense", rank=1)], [], [],
-    ))
+    monkeypatch.setattr(
+        retriever,
+        "_parallel_retrieve",
+        lambda _q, _f: (
+            [RetrievalResult(document=doc, score=1.0, source="dense", rank=1)],
+            [],
+            [],
+        ),
+    )
 
     order: list[str] = []
 

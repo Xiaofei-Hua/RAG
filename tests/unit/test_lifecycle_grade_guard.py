@@ -78,6 +78,7 @@ def _minimal_state():
 # Channel 1 — before-hook returning shared_state for grade
 # ===========================================================================
 
+
 class TestGradeBeforeHookChannel:
     def test_before_hook_shared_state_is_logged_not_persisted(self, captured_logs):
         cond_fn, harness = _build_grade_conditional()
@@ -102,6 +103,7 @@ class TestGradeBeforeHookChannel:
 # ===========================================================================
 # Channel 2 — GradeSkill returning state_updates/shared_state on its result
 # ===========================================================================
+
 
 class TestGradeSkillStateUpdatesChannel:
     def test_skill_state_updates_is_logged_not_persisted(self, captured_logs):
@@ -134,15 +136,15 @@ class TestGradeSkillStateUpdatesChannel:
         routing = cond_fn(_minimal_state())
 
         assert routing == "generate"
-        assert any(
-            "conditional-edge-guard" in r and "state_updates" in r
-            for r in captured_logs
-        ), "skill state_updates leak must be logged"
+        assert any("conditional-edge-guard" in r and "state_updates" in r for r in captured_logs), (
+            "skill state_updates leak must be logged"
+        )
 
 
 # ===========================================================================
 # Negative — a clean grade skill (no state on either channel) logs nothing
 # ===========================================================================
+
 
 class TestGradeGuardNoFalsePositive:
     def test_clean_grade_skill_logs_nothing(self, captured_logs):
@@ -154,4 +156,3 @@ class TestGradeGuardNoFalsePositive:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
-

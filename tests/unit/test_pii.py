@@ -76,8 +76,7 @@ class TestOperationalIDsNoBuiltInFallback:
         monkeypatch.setenv("DOMAIN_PROFILE", "undeclared_domain")
         # Human PII (id_card) detected regardless of operational-id opt-in.
         assert any(
-            m.kind == "id_card"
-            for m in pii_mod.detect_pii("身份证号 110101199003073814 请登记")
+            m.kind == "id_card" for m in pii_mod.detect_pii("身份证号 110101199003073814 请登记")
         )
         reset_active_profile()
 
@@ -135,9 +134,7 @@ class TestOperationalIDsDefaultOff:
         reset_active_profile()
         monkeypatch.setenv("DOMAIN_PROFILE", "general")
         pii_mod._operational_patterns_from_profile  # warm import
-        assert not any(
-            m.kind == "tail_number" for m in pii_mod.detect_pii(text)
-        )
+        assert not any(m.kind == "tail_number" for m in pii_mod.detect_pii(text))
 
 
 class TestLLMPassDegradesGracefully:
@@ -161,6 +158,7 @@ class TestLLMPassDegradesGracefully:
                 raise AssertionError("judge must not be called when unavailable")
 
         import agent.eval.judge as judge_mod
+
         monkeypatch.setattr(judge_mod, "get_judge", lambda: _DeadJudge())
 
         # No regex hit, LLM unavailable -> empty (NOT "PII found").
@@ -172,7 +170,10 @@ class TestLLMPassDegradesGracefully:
         monkeypatch.setenv("PII_LLM_PASS", "true")
 
         import agent.eval.judge as judge_mod
-        monkeypatch.setattr(judge_mod, "get_judge", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+
+        monkeypatch.setattr(
+            judge_mod, "get_judge", lambda: (_ for _ in ()).throw(RuntimeError("boom"))
+        )
 
         # Must not propagate.
         result = pii_mod.detect_pii_with_llm("普通文本")

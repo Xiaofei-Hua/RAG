@@ -109,9 +109,7 @@ class EscalationManager:
 
     def resolve(self, id: str, resolution: str) -> bool:
         with self._locked():
-            cursor = self._conn.execute(
-                "UPDATE escalations SET resolved = 1 WHERE id = ?", (id,)
-            )
+            cursor = self._conn.execute("UPDATE escalations SET resolved = 1 WHERE id = ?", (id,))
             self._conn.commit()
             return cursor.rowcount > 0
 

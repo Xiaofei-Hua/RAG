@@ -32,6 +32,7 @@ sys.path.insert(0, ".")
 # P2.1 / P2.3 — MCP tool registry + utility tools
 # ===========================================================================
 
+
 class TestMCPToolRegistry:
     def test_utility_server_registers_calculator(self):
         from agent.mcp.tools_registry import UtilityToolsServer
@@ -92,6 +93,7 @@ class TestMCPToolRegistry:
 # P2.2 — memory semantic retrieval + injection
 # ===========================================================================
 
+
 class TestMemoryInjection:
     def test_inject_memories_prepends(self):
         from agent.skills.retrieve.skill import RetrieveSkill
@@ -102,6 +104,7 @@ class TestMemoryInjection:
                     {"content": "git 默认分支名应为 main", "type": "correction"},
                 ]
             }
+
         docs = [Document(page_content="检索到的文档内容", metadata={"score": 0.8})]
         out = RetrieveSkill._inject_memories(_Ctx(), docs)
         assert len(out) == 2
@@ -113,9 +116,7 @@ class TestMemoryInjection:
         from agent.skills.retrieve.skill import RetrieveSkill
 
         docs = [Document(page_content="x")]
-        assert RetrieveSkill._inject_memories(
-            type("C", (), {"shared_state": None})(), docs
-        ) == docs
+        assert RetrieveSkill._inject_memories(type("C", (), {"shared_state": None})(), docs) == docs
 
     def test_memory_store_semantic_fallback_to_like(self, tmp_path, monkeypatch):
         """Semantic retrieve falls back to LIKE when embeddings unavailable."""
@@ -141,6 +142,7 @@ class TestMemoryInjection:
 # ===========================================================================
 # P2.6 — self-reflection
 # ===========================================================================
+
 
 class TestSelfReflection:
     def test_confident_when_reasoning_consistent(self):
@@ -192,6 +194,7 @@ class TestSelfReflection:
 # ===========================================================================
 # P3.1 — PII detection + redaction
 # ===========================================================================
+
 
 class TestPII:
     def test_detect_phone(self):
@@ -251,6 +254,7 @@ class TestOutputGuardrailPII:
 # P3.6 — retrieval cache
 # ===========================================================================
 
+
 class TestRetrievalCache:
     def test_lru_eviction(self):
         from core.retrieval.cache import LRUCache
@@ -281,9 +285,11 @@ class TestRetrievalCache:
         class _Base:
             def __init__(self):
                 self.calls = 0
+
             def embed_query(self, text):
                 self.calls += 1
                 return [1.0, 2.0]
+
             def embed_documents(self, texts):
                 return [[1.0] for _ in texts]
 
@@ -297,6 +303,7 @@ class TestRetrievalCache:
 # ===========================================================================
 # P3.7 — time decay
 # ===========================================================================
+
 
 class TestTimeDecay:
     def test_fresh_doc_unchanged(self):

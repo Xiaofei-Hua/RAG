@@ -30,12 +30,13 @@ sys.path.insert(0, ".")
 # F01a — hybrid retriever reads the SAME BM25 instance the write path uses
 # ===========================================================================
 
+
 class TestBM25SingletonUnification:
     def test_hybrid_sparse_retriever_is_the_module_singleton(self):
         """The hybrid retriever must consume the shared BM25 singleton, not a
         private copy, so document mutations are visible on the read path."""
-        from core.retrieval.hybrid_retriever import HybridRetriever
         from core.retrieval.bm25_retriever import get_bm25_retriever
+        from core.retrieval.hybrid_retriever import HybridRetriever
 
         # Build a retriever WITHOUT touching Milvus: inject a fake dense manager
         # whose query() returns nothing so _ensure_sparse_indexed is a no-op.
@@ -53,6 +54,7 @@ class TestBM25SingletonUnification:
         read via the hybrid retriever's sparse leg, and confirm the new doc is
         reachable. This is the AC-F01 contract."""
         from langchain_core.documents import Document
+
         from core.retrieval.bm25_retriever import get_bm25_retriever
         from core.retrieval.cache import bump_retrieval_cache_version
         from core.retrieval.hybrid_retriever import HybridRetriever
@@ -67,6 +69,8 @@ class TestBM25SingletonUnification:
         singleton = get_bm25_retriever()
         marker = "UNIQUE_BM25_CONSISTENCY_MARKER_ZZZ"
         before = [d for d in singleton._documents if marker in d.page_content]
+        # Sanity: the marker should not already be present (hermetic start).
+        assert not before, "marker already present before test — singleton leaked state"
         try:
             doc = Document(
                 page_content=f"{marker} 服务启动失败的排查方法",
@@ -94,15 +98,16 @@ class TestBM25SingletonUnification:
 # F01b — cache invalidation: version bump evicts stale results
 # ===========================================================================
 
+
 class TestRetrievalCacheVersionInvalidation:
     def test_bump_version_clears_cached_results(self):
         """A cached retrieval for a query must not be re-served after the
         index version is bumped (documents router calls this on add/remove)."""
         from core.retrieval.cache import (
             LRUCache,
+            bump_retrieval_cache_version,
             get_retrieval_cache,
             get_retrieval_cache_version,
-            bump_retrieval_cache_version,
         )
 
         cache: LRUCache = get_retrieval_cache()
@@ -119,8 +124,8 @@ class TestRetrievalCacheVersionInvalidation:
 
     def test_version_advances_monotonically(self):
         from core.retrieval.cache import (
-            get_retrieval_cache_version,
             bump_retrieval_cache_version,
+            get_retrieval_cache_version,
         )
 
         start = get_retrieval_cache_version()

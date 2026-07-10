@@ -22,6 +22,7 @@ sys.path.insert(0, ".")
 # P2.1 — MCP tools wired into the agent
 # ===========================================================================
 
+
 class TestMCPToolsWired:
     def test_harness_has_mcp_client(self):
         """The default harness builds an MCPClient (not None) wiring retrieval."""
@@ -70,6 +71,7 @@ class TestMCPToolsWired:
 # P3.1 — PII redaction in chat output
 # ===========================================================================
 
+
 class TestPIIInChat:
     def test_chat_output_redacts_phone(self, client):
         """If the (fake) LLM emits a phone number, the output guardrail redacts it."""
@@ -97,6 +99,7 @@ class TestPIIInChat:
 # P2.2 — memory injection in retrieval
 # ===========================================================================
 
+
 class TestMemoryInjection:
     def test_memories_prepend_to_retrieved_docs(self):
         """RetrieveSkill._inject_memories adds memory entries as context."""
@@ -110,6 +113,7 @@ class TestMemoryInjection:
                     {"content": "git 默认分支名应为 main", "type": "correction"},
                 ]
             }
+
         docs = [Document(page_content="检索到的文档片段", metadata={"score": 0.9})]
         out = RetrieveSkill._inject_memories(_Ctx(), docs)
         # Memory doc first.
@@ -136,6 +140,7 @@ class TestMemoryInjection:
 # P3.6 — retrieval cache stats
 # ===========================================================================
 
+
 class TestRetrievalCacheE2E:
     def test_cache_hit_after_second_put(self):
         from core.retrieval.cache import LRUCache
@@ -152,6 +157,7 @@ class TestRetrievalCacheE2E:
 # ===========================================================================
 # P3.7 — time decay in retrieval
 # ===========================================================================
+
 
 class TestTimeDecayE2E:
     def test_hybrid_retriever_applies_time_decay(self):

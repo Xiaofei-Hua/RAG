@@ -67,9 +67,7 @@ def test_reset_judge_closes_singleton_connection(tmp_path, monkeypatch):
     import agent.eval.judge as judge_mod
 
     # Redirect the cache path to tmp (mirrors tests/conftest.py tmp_data_dir).
-    monkeypatch.setattr(
-        judge_mod, "DEFAULT_JUDGE_CACHE_PATH", str(tmp_path / "judge_cache.db")
-    )
+    monkeypatch.setattr(judge_mod, "DEFAULT_JUDGE_CACHE_PATH", str(tmp_path / "judge_cache.db"))
     # Start clean — no leftover singleton from other tests.
     if judge_mod._judge is not None:
         judge_mod._judge.close()

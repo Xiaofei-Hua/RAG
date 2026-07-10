@@ -27,6 +27,7 @@ sys.path.insert(0, ".")
 # P1.1 token budget
 # ===========================================================================
 
+
 class TestTokenBudget:
     def test_estimate_tokens_cjk(self):
         from core.context.token_budget import estimate_tokens
@@ -70,6 +71,7 @@ class TestTokenBudget:
 # P1.2 MMR
 # ===========================================================================
 
+
 class TestMMR:
     def test_mmr_returns_subset(self, monkeypatch):
         from core.retrieval import mmr as mmr_mod
@@ -78,17 +80,21 @@ class TestMMR:
         class _FakeEmb:
             def embed_documents(self, texts):
                 import numpy as np
+
                 # Each text maps to a distinct-ish vector.
-                return [np.array([float(hash(t) % 100) / 100, 0.1, 0.2], dtype="float32") for t in texts]
+                return [
+                    np.array([float(hash(t) % 100) / 100, 0.1, 0.2], dtype="float32") for t in texts
+                ]
+
             def embed_query(self, text):
                 import numpy as np
+
                 return np.array([0.9, 0.1, 0.2], dtype="float32")
 
         monkeypatch.setattr(mmr_mod, "_embeddings", lambda: _FakeEmb())
 
         docs = [
-            Document(page_content=f"chunk {i}", metadata={"score": 0.9 - i * 0.1})
-            for i in range(6)
+            Document(page_content=f"chunk {i}", metadata={"score": 0.9 - i * 0.1}) for i in range(6)
         ]
         out = mmr_mod.mmr_rerank("query", docs, top_k=3)
         assert len(out) <= 3
@@ -99,6 +105,7 @@ class TestMMR:
 
         def boom():
             raise RuntimeError("no embeddings")
+
         monkeypatch.setattr(mmr_mod, "_embeddings", boom)
 
         docs = [Document(page_content=f"c{i}", metadata={"score": 0.5}) for i in range(4)]
@@ -118,12 +125,14 @@ class TestMMR:
 # P1.3 metadata filter plumbing
 # ===========================================================================
 
+
 class TestMetadataFilter:
     def test_extract_filter_from_shared_state(self):
         from agent.skills.retrieve.skill import RetrieveSkill
 
         class _Ctx:
             shared_state = {"filter_expr": 'source == "engine"'}
+
         assert RetrieveSkill._extract_filter(_Ctx()) == 'source == "engine"'
 
     def test_extract_filter_none(self):
@@ -131,6 +140,7 @@ class TestMetadataFilter:
 
         class _Ctx:
             shared_state = {}
+
         assert RetrieveSkill._extract_filter(_Ctx()) is None
         assert RetrieveSkill._extract_filter(type("X", (), {"shared_state": None})()) is None
 
@@ -144,6 +154,7 @@ class TestMetadataFilter:
             def retrieve(self, query, top_k=None, filter_expr=None):
                 captured["filter"] = filter_expr
                 return []
+
         skill._retriever = _FakeRetriever()
         skill._retrieve("q", filter_expr='title == "X"')
         assert captured["filter"] == 'title == "X"'
@@ -152,6 +163,7 @@ class TestMetadataFilter:
 # ===========================================================================
 # P1.4 embedding fingerprint
 # ===========================================================================
+
 
 class TestEmbeddingFingerprint:
     def test_fingerprint_stable(self):
@@ -195,6 +207,7 @@ class TestEmbeddingFingerprint:
 # P1.5 query transform parsing
 # ===========================================================================
 
+
 class TestQueryTransform:
     def test_parse_queries_strips_numbering(self):
         from core.retrieval.query_transform import _parse_queries
@@ -215,6 +228,7 @@ class TestQueryTransform:
 
         def boom(prompt):
             return None
+
         monkeypatch.setattr(qt, "_llm_invoke", boom)
         out = qt.multi_query_expand("query", n=3)
         assert out == ["query"]  # falls back to original only
@@ -223,6 +237,7 @@ class TestQueryTransform:
 # ===========================================================================
 # P1.6 parent-child expansion
 # ===========================================================================
+
 
 class TestParentChild:
     def test_make_parent_id_stable(self):
@@ -276,6 +291,7 @@ class TestParentChild:
 # P1.7 multi-format dispatch
 # ===========================================================================
 
+
 class TestFormatParsers:
     def test_parse_html_real(self, tmp_path):
         from documents.format_parsers import parse_html
@@ -313,12 +329,14 @@ class TestFormatParsers:
 # P1.8 index config env parsing
 # ===========================================================================
 
+
 class TestIndexConfig:
     def test_parse_index_env_valid(self):
         from documents.milvus_db import _parse_index_env
 
         assert _parse_index_env('{"M": 16, "efConstruction": 200}') == {
-            "M": 16, "efConstruction": 200
+            "M": 16,
+            "efConstruction": 200,
         }
 
     def test_parse_index_env_empty(self):
@@ -360,6 +378,7 @@ class TestIndexConfig:
 # HybridRetriever config wiring
 # ===========================================================================
 
+
 class TestHybridRetrieverConfig:
     def test_mmr_config_defaults(self):
         from core.retrieval.hybrid_retriever import HybridRetrieverConfig
@@ -371,6 +390,7 @@ class TestHybridRetrieverConfig:
     def test_retrieve_accepts_filter_expr(self):
         # Signature must accept filter_expr (P1.3 plumbing).
         import inspect
+
         from core.retrieval.hybrid_retriever import HybridRetriever
 
         sig = inspect.signature(HybridRetriever.retrieve)

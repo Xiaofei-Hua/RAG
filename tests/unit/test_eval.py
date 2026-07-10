@@ -23,6 +23,7 @@ sys.path.insert(0, ".")
 # Judge: JSON / boolean parsing (no LLM involved)
 # ---------------------------------------------------------------------------
 
+
 class TestJudgeParsing:
     def test_extract_json_strict(self):
         from agent.eval.judge import _extract_json
@@ -88,6 +89,7 @@ class TestJudgeParsing:
 # Judge: claim splitting + hard-claim detection
 # ---------------------------------------------------------------------------
 
+
 class TestClaimExtraction:
     def test_split_claims_basic(self):
         from agent.eval.judge import split_claims
@@ -130,6 +132,7 @@ class TestClaimExtraction:
 # ---------------------------------------------------------------------------
 # Scorer: rule-based path (no judge)
 # ---------------------------------------------------------------------------
+
 
 class TestScorer:
     def test_rule_based_scoring(self):
@@ -222,11 +225,12 @@ class TestScorer:
 # Runner: result extraction (no LLM)
 # ---------------------------------------------------------------------------
 
+
 class TestRunnerExtraction:
     def test_extract_result_full_graph(self):
-        from agent.eval.runner import EvalRunner
-
         from langchain_core.messages import AIMessage, ToolMessage
+
+        from agent.eval.runner import EvalRunner
 
         result = {
             "messages": [
@@ -277,6 +281,7 @@ class TestRunnerExtraction:
 # ---------------------------------------------------------------------------
 # Judge: faithfulness / hallucination with a stubbed LLM
 # ---------------------------------------------------------------------------
+
 
 class TestStubbedJudge:
     """Stub the judge's _ask to return canned verdicts."""
@@ -336,9 +341,7 @@ class TestStubbedJudge:
     def test_circuit_breaker_trips(self, monkeypatch, tmp_path):
         from agent.eval.judge import LLMJudge
 
-        judge = LLMJudge(
-            cache_path=str(tmp_path / "test_judge_cache.db"), failure_threshold=2
-        )
+        judge = LLMJudge(cache_path=str(tmp_path / "test_judge_cache.db"), failure_threshold=2)
 
         def always_fail(prompt):
             raise RuntimeError("LLM down")
@@ -362,6 +365,7 @@ class TestStubbedJudge:
 # ---------------------------------------------------------------------------
 # History: regression comparison
 # ---------------------------------------------------------------------------
+
 
 class TestRegression:
     def test_no_regression_when_improving(self):
@@ -437,6 +441,7 @@ class TestRegression:
 # ---------------------------------------------------------------------------
 # Dataset: load + append
 # ---------------------------------------------------------------------------
+
 
 class TestDataset:
     def test_load_default_dataset(self):

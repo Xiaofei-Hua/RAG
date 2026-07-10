@@ -69,7 +69,9 @@ class MilvusConfig:
     """
 
     uri: str = field(default_factory=lambda: _env("MILVUS_URI", "./milvus_data.db"))
-    collection_name: str = field(default_factory=lambda: _env("COLLECTION_NAME", "rag_knowledge_base"))
+    collection_name: str = field(
+        default_factory=lambda: _env("COLLECTION_NAME", "rag_knowledge_base")
+    )
     dense_dim: int = field(default_factory=lambda: _env_int("EMBEDDING_DIMENSION", 512))
     max_text_length: int = 4000  # Reduced from 6000
     max_metadata_length: int = 500  # Reduced from 1000

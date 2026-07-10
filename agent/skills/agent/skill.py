@@ -116,7 +116,8 @@ class AgentSkill(BaseSkill):
                     no_tool_call_retries += 1
                     log.warning(
                         "AgentSkill: LLM returned no tool_calls (direct answer); "
-                        "nudging to retrieve (attempt %d)", no_tool_call_retries
+                        "nudging to retrieve (attempt %d)",
+                        no_tool_call_retries,
                     )
                     messages = list(messages) + [
                         response,

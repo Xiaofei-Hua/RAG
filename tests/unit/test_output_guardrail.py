@@ -24,8 +24,8 @@ sys.path.insert(0, ".")
 class TestPIIComposesWithEscalate:
     def test_producer_keeps_escalate_and_attaches_redacted_content(self):
         from agent.guardrails.output_guardrails import OutputGuardrail
-        from agent.guardrails.types import GuardrailAction, GuardrailConfig
         from agent.guardrails.prompts import INJECTION_PATTERNS  # noqa: F401
+        from agent.guardrails.types import GuardrailAction, GuardrailConfig
 
         # Force a hallucination ESCALATE via a very low escalate threshold +
         # supply contexts that contradict the answer. We construct the scenario
@@ -49,10 +49,11 @@ class TestPIIComposesWithEscalate:
     def test_consumer_applies_sanitization_on_escalate_path(self):
         """The manager's after-hook must redact the served message even when the
         verdict action is ESCALATE (the F10 consumer-side fix)."""
-        from agent.guardrails.manager import GuardrailManager
-        from agent.guardrails.types import GuardrailResult, GuardrailAction
-        from agent.skills.base import SkillResult, SkillStatus
         from langchain_core.messages import AIMessage
+
+        from agent.guardrails.manager import GuardrailManager
+        from agent.guardrails.types import GuardrailAction, GuardrailResult
+        from agent.skills.base import SkillResult, SkillStatus
 
         mgr = GuardrailManager()
         after = mgr.create_after_hook()

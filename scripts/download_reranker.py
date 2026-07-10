@@ -23,7 +23,9 @@ def main() -> int:
     parser.add_argument(
         "--output",
         default=RERANKER_MODEL_PATH
-        or str(PROJECT_ROOT / "models" / "local_models" / "reranker" / _safe_model_name(RERANKER_MODEL)),
+        or str(
+            PROJECT_ROOT / "models" / "local_models" / "reranker" / _safe_model_name(RERANKER_MODEL)
+        ),
         help="Directory to save the reranker model for offline loading.",
     )
     args = parser.parse_args()

@@ -46,8 +46,9 @@ TEST_DOC = """# Git 合并冲突排查指南
 def _req(method, path, data=None, timeout=30):
     url = f"{BASE}{path}"
     body = json.dumps(data).encode() if data else None
-    req = urllib.request.Request(url, data=body, method=method,
-                                headers={"Content-Type": "application/json"} if body else {})
+    req = urllib.request.Request(
+        url, data=body, method=method, headers={"Content-Type": "application/json"} if body else {}
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, json.loads(resp.read())
@@ -67,8 +68,12 @@ def _upload(filename, content):
         f"--{boundary}--\r\n"
     ).encode()
     conn = http.client.HTTPConnection("localhost", 8000, timeout=60)
-    conn.request("POST", "/api/documents/upload", body=body,
-                 headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    conn.request(
+        "POST",
+        "/api/documents/upload",
+        body=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
     resp = conn.getresponse()
     result = json.loads(resp.read())
     conn.close()
@@ -130,10 +135,14 @@ def test_hybrid():
     """混合检索 (dense + BM25 + RRF)"""
     print("\n  [混合检索] POST /api/retrieval")
 
-    status, body = _req("POST", "/api/retrieval", {
-        "query": "git 合并冲突如何解决",
-        "top_k": 5,
-    })
+    status, body = _req(
+        "POST",
+        "/api/retrieval",
+        {
+            "query": "git 合并冲突如何解决",
+            "top_k": 5,
+        },
+    )
     assert_ok("返回 200", status, body)
     if status == 200:
         assert_true("results 是列表", isinstance(body.get("results"), list))
@@ -152,10 +161,14 @@ def test_dense():
     """纯向量检索"""
     print("\n  [纯向量检索] POST /api/retrieval/dense")
 
-    status, body = _req("POST", "/api/retrieval/dense", {
-        "query": "git 合并冲突如何解决",
-        "top_k": 5,
-    })
+    status, body = _req(
+        "POST",
+        "/api/retrieval/dense",
+        {
+            "query": "git 合并冲突如何解决",
+            "top_k": 5,
+        },
+    )
     assert_ok("返回 200", status, body)
     if status == 200:
         assert_true("results 是列表", isinstance(body.get("results"), list))
@@ -167,10 +180,14 @@ def test_sparse():
     """纯 BM25 关键词检索"""
     print("\n  [纯关键词检索] POST /api/retrieval/sparse")
 
-    status, body = _req("POST", "/api/retrieval/sparse", {
-        "query": "MERGE-CONFLICT-01 冲突",
-        "top_k": 5,
-    })
+    status, body = _req(
+        "POST",
+        "/api/retrieval/sparse",
+        {
+            "query": "MERGE-CONFLICT-01 冲突",
+            "top_k": 5,
+        },
+    )
     assert_ok("返回 200", status, body)
     if status == 200:
         assert_true("results 是列表", isinstance(body.get("results"), list))

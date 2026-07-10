@@ -73,8 +73,7 @@ class TestCacheDeepcopyBudget:
 
         def _shallow_with_fresh_meta(doc_list):
             return [
-                Document(page_content=d.page_content, metadata=dict(d.metadata))
-                for d in doc_list
+                Document(page_content=d.page_content, metadata=dict(d.metadata)) for d in doc_list
             ]
 
         deep_samples = []

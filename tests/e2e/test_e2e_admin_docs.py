@@ -19,6 +19,7 @@ sys.path.insert(0, ".")
 # Health
 # ===========================================================================
 
+
 class TestHealth:
     def test_health_endpoint(self, client):
         resp = client.get("/health")
@@ -41,6 +42,7 @@ class TestHealth:
 # Admin eval endpoints
 # ===========================================================================
 
+
 class TestAdminEval:
     def test_eval_runs_empty_initially(self, client):
         resp = client.get("/api/admin/eval/runs?limit=5")
@@ -57,11 +59,14 @@ class TestAdminEval:
 
     def test_inferences_endpoint(self, client):
         # Produce an inference first.
-        client.post("/api/chat", json={
-            "message": "git 合并冲突如何解决？",
-            "session_id": "e2e-admin-inf",
-            "mode": "fast",
-        })
+        client.post(
+            "/api/chat",
+            json={
+                "message": "git 合并冲突如何解决？",
+                "session_id": "e2e-admin-inf",
+                "mode": "fast",
+            },
+        )
         resp = client.get("/api/admin/inferences?limit=5")
         assert resp.status_code == 200
         body = resp.json()
@@ -82,37 +87,54 @@ class TestAdminEval:
 # Feedback
 # ===========================================================================
 
+
 class TestFeedbackFlow:
     def test_thumbs_up(self, client):
         # Need a session first.
-        chat = client.post("/api/chat", json={
-            "message": "你好",
-            "session_id": "e2e-fb-up",
-        }).json()
-        resp = client.post("/api/feedback", json={
-            "session_id": "e2e-fb-up",
-            "message_id": chat["metadata"]["message_id"],
-            "feedback_type": "THUMBS_UP",
-        })
+        chat = client.post(
+            "/api/chat",
+            json={
+                "message": "你好",
+                "session_id": "e2e-fb-up",
+            },
+        ).json()
+        resp = client.post(
+            "/api/feedback",
+            json={
+                "session_id": "e2e-fb-up",
+                "message_id": chat["metadata"]["message_id"],
+                "feedback_type": "THUMBS_UP",
+            },
+        )
         assert resp.status_code == 200
 
     def test_correction_requires_corrected_answer(self, client):
-        resp = client.post("/api/feedback", json={
-            "session_id": "e2e-fb-correction",
-            "feedback_type": "CORRECTION",
-            "original_answer": "原答案",
-        })
+        resp = client.post(
+            "/api/feedback",
+            json={
+                "session_id": "e2e-fb-correction",
+                "feedback_type": "CORRECTION",
+                "original_answer": "原答案",
+            },
+        )
         # Missing corrected_answer => 400.
         assert resp.status_code == 400
 
     def test_feedback_stats(self, client):
-        client.post("/api/chat", json={
-            "message": "你好", "session_id": "e2e-fb-stats",
-        })
-        client.post("/api/feedback", json={
-            "session_id": "e2e-fb-stats",
-            "feedback_type": "THUMBS_UP",
-        })
+        client.post(
+            "/api/chat",
+            json={
+                "message": "你好",
+                "session_id": "e2e-fb-stats",
+            },
+        )
+        client.post(
+            "/api/feedback",
+            json={
+                "session_id": "e2e-fb-stats",
+                "feedback_type": "THUMBS_UP",
+            },
+        )
         resp = client.get("/api/feedback/stats/summary")
         assert resp.status_code == 200
         body = resp.json()
@@ -121,11 +143,14 @@ class TestFeedbackFlow:
     def test_feedback_by_session(self, client):
         sid = "e2e-fb-bysession"
         client.post("/api/chat", json={"message": "你好", "session_id": sid})
-        client.post("/api/feedback", json={
-            "session_id": sid,
-            "feedback_type": "FLAG",
-            "content": "test flag",
-        })
+        client.post(
+            "/api/feedback",
+            json={
+                "session_id": sid,
+                "feedback_type": "FLAG",
+                "content": "test flag",
+            },
+        )
         resp = client.get(f"/api/feedback/{sid}")
         assert resp.status_code == 200
 
@@ -133,6 +158,7 @@ class TestFeedbackFlow:
 # ===========================================================================
 # Documents
 # ===========================================================================
+
 
 class TestDocuments:
     def test_upload_markdown(self, client, monkeypatch):
@@ -144,6 +170,7 @@ class TestDocuments:
         def _fake_process(doc_id, file_path, filename, file_hash):
             registry = docs_mod.get_document_registry()
             registry.update_status(doc_id, "indexed", 3)
+
         monkeypatch.setattr(docs_mod, "_process_document", _fake_process)
 
         # Unique filename AND content to avoid dedup (registry persists across tests).
@@ -167,10 +194,12 @@ class TestDocuments:
 
     def test_document_list_and_detail(self, client, monkeypatch):
         import uuid as _uuid
+
         import api.routers.documents as docs_mod
 
         def _fake_process(doc_id, file_path, filename, file_hash):
             docs_mod.get_document_registry().update_status(doc_id, "indexed", 2)
+
         monkeypatch.setattr(docs_mod, "_process_document", _fake_process)
 
         token = _uuid.uuid4().hex[:8]
@@ -193,6 +222,7 @@ class TestDocuments:
 # ===========================================================================
 # Sessions
 # ===========================================================================
+
 
 class TestSessions:
     def test_list_sessions(self, client):
@@ -217,12 +247,16 @@ class TestSessions:
 # Retrieval endpoint
 # ===========================================================================
 
+
 class TestRetrievalAPI:
     def test_hybrid_retrieval(self, client):
-        resp = client.post("/api/retrieval", json={
-            "query": "合并",
-            "top_k": 3,
-        })
+        resp = client.post(
+            "/api/retrieval",
+            json={
+                "query": "合并",
+                "top_k": 3,
+            },
+        )
         # May return results or empty depending on mock; just assert it responds.
         assert resp.status_code in (200, 404, 422)
 

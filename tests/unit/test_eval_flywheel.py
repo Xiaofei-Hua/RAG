@@ -20,6 +20,7 @@ sys.path.insert(0, ".")
 # Sampler
 # ---------------------------------------------------------------------------
 
+
 class TestSampler:
     def test_always_samples_degraded(self):
         from agent.eval.sampler import should_sample
@@ -51,6 +52,7 @@ class TestSampler:
 # ---------------------------------------------------------------------------
 # InferenceStore
 # ---------------------------------------------------------------------------
+
 
 class TestInferenceStore:
     def test_record_and_get(self, tmp_path):
@@ -103,6 +105,7 @@ class TestInferenceStore:
 # Candidates
 # ---------------------------------------------------------------------------
 
+
 class TestCandidates:
     def test_promote_and_list_and_golden(self, tmp_path, monkeypatch):
         from agent.eval import candidates as cand_mod
@@ -124,7 +127,8 @@ class TestCandidates:
 
         # Correction: corrected_answer becomes the golden reference.
         cand = cand_mod.promote_to_candidate(
-            inference, feedback_type="correction",
+            inference,
+            feedback_type="correction",
             corrected_answer="需查看容器日志定位失败原因。",
         )
         assert cand is not None
@@ -146,6 +150,7 @@ class TestCandidates:
 
         # Dataset now has the case.
         from agent.eval.dataset import load_dataset
+
         loaded = load_dataset(dataset_path)
         assert any(c.reference_answer.startswith("需查看") for c in loaded)
 
@@ -162,10 +167,11 @@ class TestCandidates:
 # Flywheel trigger (judge stubbed)
 # ---------------------------------------------------------------------------
 
+
 class TestFlywheel:
     def test_on_negative_feedback_promotes_and_records_miss(self, tmp_path, monkeypatch):
-        from agent.eval import flywheel as fw_mod
         from agent.eval import candidates as cand_mod
+        from agent.eval import flywheel as fw_mod
         from agent.eval.inference_store import InferenceRecord, InferenceStore
         from agent.eval.judge import TrustworthyMetrics
 
@@ -174,13 +180,17 @@ class TestFlywheel:
         monkeypatch.setattr(fw_mod, "RETRIEVAL_MISSES_DB", str(tmp_path / "misses.db"))
 
         store = InferenceStore(str(tmp_path / "inf.db"))
-        store.record(InferenceRecord(
-            trace_id="t1", message_id="m1", session_id="s1",
-            query="git 分支冲突如何处理？",
-            answer="必须立即回滚提交。",
-            retrieved_docs=[{"source": "doc", "content": "建议进一步检查"}],
-            route="rag",
-        ))
+        store.record(
+            InferenceRecord(
+                trace_id="t1",
+                message_id="m1",
+                session_id="s1",
+                query="git 分支冲突如何处理？",
+                answer="必须立即回滚提交。",
+                retrieved_docs=[{"source": "doc", "content": "建议进一步检查"}],
+                route="rag",
+            )
+        )
         monkeypatch.setattr(fw_mod, "get_inference_store", lambda: store)
 
         # Stub the judge: faithfulness low => triggers retrieval-miss recording.
@@ -191,16 +201,21 @@ class TestFlywheel:
             context_precision=0.3,
             judge_used=True,
         )
+
         class _StubJudge:
             available = True
+
             def evaluate(self, **kw):
                 return metrics
+
         import agent.eval.flywheel as fly
+
         monkeypatch.setattr(fly, "get_judge", lambda: _StubJudge())
 
         try:
             result = fly.on_negative_feedback(
-                trace_id="t1", message_id="m1",
+                trace_id="t1",
+                message_id="m1",
                 feedback_type="thumbs_down",
             )
             assert result["promoted"] is True
@@ -234,6 +249,7 @@ class TestFlywheel:
 # ---------------------------------------------------------------------------
 # Capture helper (sampler + store integration)
 # ---------------------------------------------------------------------------
+
 
 class TestCapture:
     def test_maybe_capture_writes_ids_into_metadata(self, tmp_path, monkeypatch):
@@ -278,9 +294,17 @@ class TestCapture:
         meta: dict = {}
         try:
             tid = cap_mod.maybe_capture_inference(
-                request_message="q", answer="a", sources=[], reasoning="",
-                route="rag", prompt_profile="p", intent="rag_query",
-                metadata=meta, latency_ms=1.0, trace_id="t", session_id="s",
+                request_message="q",
+                answer="a",
+                sources=[],
+                reasoning="",
+                route="rag",
+                prompt_profile="p",
+                intent="rag_query",
+                metadata=meta,
+                latency_ms=1.0,
+                trace_id="t",
+                session_id="s",
             )
             assert tid is None
         finally:

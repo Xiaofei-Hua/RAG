@@ -26,6 +26,7 @@ class TestConstantTimeCompare:
         """The require_admin path must compare via hmac.compare_digest on raw
         bytes, not ``!=`` on stripped strings."""
         import hmac
+
         from api.routers.admin import require_admin
 
         monkeypatch.setenv("ADMIN_API_KEY", "s3cret-key-0123456789abcdef")
@@ -42,6 +43,7 @@ class TestConstantTimeCompare:
 
         class _C:
             host = "203.0.113.5"
+
         class _Req:
             client = _C()
 
@@ -50,13 +52,15 @@ class TestConstantTimeCompare:
         assert seen.get("called") is True
 
     def test_missing_header_rejected(self, monkeypatch):
-        from api.routers.admin import require_admin
         from fastapi import HTTPException
+
+        from api.routers.admin import require_admin
 
         monkeypatch.setenv("ADMIN_API_KEY", "s3cret-key-0123456789abcdef")
 
         class _C:
             host = "203.0.113.5"
+
         class _Req:
             client = _C()
 
@@ -73,12 +77,12 @@ class TestStartupGuard:
 
         monkeypatch.delenv("PYTEST_RUN", raising=False)
         monkeypatch.delenv("ADMIN_API_KEY", raising=False)
-        monkeypatch.setenv("ALLOWED_ORIGINS",
-                           "http://localhost:5173,http://127.0.0.1:5173")
+        monkeypatch.setenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173")
 
         # The guard logic is inline in lifespan; replicate the exact condition
         # to assert intent (spinning uvicorn in-process is out of scope here).
         import os
+
         _DEFAULT_CORS = "http://localhost:5173,http://127.0.0.1:5173"
         _is_test = os.getenv("PYTEST_RUN", "") == "1"
         _admin_key_set = bool(os.getenv("ADMIN_API_KEY", "").strip())

@@ -40,7 +40,7 @@ def _read_stream(client, body: dict):
         line = line.strip()
         if line.startswith("data:"):
             try:
-                frames.append(json.loads(line[len("data:"):].strip()))
+                frames.append(json.loads(line[len("data:") :].strip()))
             except Exception:  # noqa: BLE001
                 pass
     return frames
@@ -60,7 +60,7 @@ def test_b3_stream_error_does_not_leak_internal_text(client, monkeypatch):
 
         async def astream(self, *a, **k):
             raise RuntimeError(f"internal detail: {INTERNAL_LEAK}")
-            yield  # noqa: make it an async generator
+            yield ""  # noqa: B901 — make this a legal async generator body
 
     monkeypatch.setattr(harness_mod, "get_agent_harness", lambda *a, **k: _ExplodingHarness())
 
@@ -74,9 +74,7 @@ def test_b3_stream_error_does_not_leak_internal_text(client, monkeypatch):
     error_frames = [f for f in frames if f.get("type") == "error"]
     assert error_frames, f"no error frame emitted; frames={frames}"
     msg = error_frames[0].get("message", "")
-    assert INTERNAL_LEAK not in msg, (
-        f"SSE error frame leaked internal exception text:\n{msg!r}"
-    )
+    assert INTERNAL_LEAK not in msg, f"SSE error frame leaked internal exception text:\n{msg!r}"
     # And the generic message should be present (non-empty, not the raw str(e)).
     assert msg and "internal detail" not in msg, (
         f"error message is still the raw exception: {msg!r}"

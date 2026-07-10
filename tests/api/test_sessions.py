@@ -9,8 +9,8 @@
 import json
 import sys
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 
 BASE = "http://localhost:8000"
 
@@ -21,8 +21,9 @@ FAILED = 0
 def _req(method, path, data=None, timeout=30):
     url = f"{BASE}{path}"
     body = json.dumps(data).encode() if data else None
-    req = urllib.request.Request(url, data=body, method=method,
-                                headers={"Content-Type": "application/json"} if body else {})
+    req = urllib.request.Request(
+        url, data=body, method=method, headers={"Content-Type": "application/json"} if body else {}
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, json.loads(resp.read())
@@ -64,10 +65,15 @@ def main():
 
     # 2. Send a message to create history
     print("\n  [发送消息建立历史]")
-    status, body = _req("POST", "/api/chat", {
-        "message": "测试会话消息",
-        "session_id": session_id,
-    }, timeout=60)
+    status, body = _req(
+        "POST",
+        "/api/chat",
+        {
+            "message": "测试会话消息",
+            "session_id": session_id,
+        },
+        timeout=60,
+    )
     assert_ok("发送消息返回 200", status, body)
 
     # 3. List sessions
@@ -80,15 +86,19 @@ def main():
     print("\n  [会话详情]")
     status, body = _req("GET", f"/api/sessions/{session_id}")
     assert_ok("GET /api/sessions/{id} 返回 200", status, body)
-    assert_true("session_id 匹配", body.get("session_id") == session_id,
-                f"got: {body.get('session_id')}")
+    assert_true(
+        "session_id 匹配", body.get("session_id") == session_id, f"got: {body.get('session_id')}"
+    )
 
     # 5. Get chat history
     print("\n  [对话历史]")
     status, body = _req("GET", f"/api/chat/history/{session_id}?limit=10")
     assert_ok("GET /api/chat/history 返回 200", status, body)
-    assert_true("total_messages >= 2", body.get("total_messages", 0) >= 2,
-                f"got: {body.get('total_messages')}")
+    assert_true(
+        "total_messages >= 2",
+        body.get("total_messages", 0) >= 2,
+        f"got: {body.get('total_messages')}",
+    )
 
     # 6. Extend session
     print("\n  [延长会话有效期]")

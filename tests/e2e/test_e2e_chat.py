@@ -21,13 +21,17 @@ sys.path.insert(0, ".")
 # Identity shortcut branch
 # ===========================================================================
 
+
 class TestIdentityBranch:
     def test_identity_query_skips_llm(self, client):
         """'你是谁' / capability queries return a canned identity response."""
-        resp = client.post("/api/chat", json={
-            "message": "你好，请介绍一下你能做什么？",
-            "session_id": "e2e-identity",
-        })
+        resp = client.post(
+            "/api/chat",
+            json={
+                "message": "你好，请介绍一下你能做什么？",
+                "session_id": "e2e-identity",
+            },
+        )
         assert resp.status_code == 200
         body = resp.json()
         assert body["session_id"] == "e2e-identity"
@@ -45,13 +49,17 @@ class TestIdentityBranch:
 # Fast mode branch
 # ===========================================================================
 
+
 class TestFastModeBranch:
     def test_fast_mode_returns_sources_and_route(self, client):
-        resp = client.post("/api/chat", json={
-            "message": "git 合并冲突如何解决？",
-            "session_id": "e2e-fast",
-            "mode": "fast",
-        })
+        resp = client.post(
+            "/api/chat",
+            json={
+                "message": "git 合并冲突如何解决？",
+                "session_id": "e2e-fast",
+                "mode": "fast",
+            },
+        )
         assert resp.status_code == 200
         body = resp.json()
         assert body["metadata"]["route"] == "fast"
@@ -69,12 +77,16 @@ class TestFastModeBranch:
 # RAG pipeline branch (uses fake harness)
 # ===========================================================================
 
+
 class TestRagBranch:
     def test_rag_query_returns_answer_with_sources(self, client):
-        resp = client.post("/api/chat", json={
-            "message": "git 合并冲突如何解决？",
-            "session_id": "e2e-rag",
-        })
+        resp = client.post(
+            "/api/chat",
+            json={
+                "message": "git 合并冲突如何解决？",
+                "session_id": "e2e-rag",
+            },
+        )
         assert resp.status_code == 200
         body = resp.json()
         assert body["metadata"]["route"] == "rag"
@@ -83,10 +95,13 @@ class TestRagBranch:
 
     def test_rag_response_has_confidence_metadata(self, client):
         """P0: confidence is computed and surfaced in metadata."""
-        resp = client.post("/api/chat", json={
-            "message": "docker 容器无法启动如何排查？",
-            "session_id": "e2e-rag-conf",
-        })
+        resp = client.post(
+            "/api/chat",
+            json={
+                "message": "docker 容器无法启动如何排查？",
+                "session_id": "e2e-rag-conf",
+            },
+        )
         body = resp.json()
         assert body["metadata"]["route"] == "rag"
         # confidence may be None (general) or a float; confidence_level always present.
@@ -102,6 +117,7 @@ class TestRagBranch:
 # Refuse-to-answer (P0): weak retrieval evidence
 # ===========================================================================
 
+
 class TestRefuseToAnswer:
     def test_low_relevance_triggers_refusal(self, client, monkeypatch):
         """
@@ -110,9 +126,8 @@ class TestRefuseToAnswer:
         retriever to return low-score docs.
         """
         from langchain_core.documents import Document
-        from core.retrieval import hybrid_retriever as hr_mod
 
-        original = hr_mod.get_hybrid_retriever()
+        from core.retrieval import hybrid_retriever as hr_mod
 
         class _LowScoreRetriever:
             def retrieve(self, query, top_k=None, filter_expr=None):
@@ -120,15 +135,19 @@ class TestRefuseToAnswer:
                     Document(page_content="完全无关的内容A", metadata={"score": 0.05}),
                     Document(page_content="完全无关的内容B", metadata={"score": 0.08}),
                 ]
+
             async def aretrieve(self, query, top_k=None, filter_expr=None):
                 return self.retrieve(query, top_k=top_k)
 
         monkeypatch.setattr(hr_mod, "get_hybrid_retriever", lambda *a, **k: _LowScoreRetriever())
 
-        resp = client.post("/api/chat", json={
-            "message": "某个知识库外的问题xyz",
-            "session_id": "e2e-refuse",
-        })
+        resp = client.post(
+            "/api/chat",
+            json={
+                "message": "某个知识库外的问题xyz",
+                "session_id": "e2e-refuse",
+            },
+        )
         assert resp.status_code == 200
         body = resp.json()
         # Either refused (confidence 0) or a low-confidence answer.
@@ -138,6 +157,7 @@ class TestRefuseToAnswer:
 # ===========================================================================
 # Session persistence across turns
 # ===========================================================================
+
 
 class TestSessionContinuity:
     def test_reuses_provided_session_id(self, client):
@@ -154,6 +174,7 @@ class TestSessionContinuity:
 # ===========================================================================
 # Streaming (SSE) — RAG branch
 # ===========================================================================
+
 
 class TestStreaming:
     def test_stream_emits_events(self, client):
@@ -198,6 +219,7 @@ class TestStreaming:
 # Chat history
 # ===========================================================================
 
+
 class TestChatHistory:
     def test_get_history(self, client):
         sid = "e2e-history"
@@ -210,4 +232,5 @@ class TestChatHistory:
 
 if __name__ == "__main__":
     import pytest
+
     pytest.main([__file__, "-v"])

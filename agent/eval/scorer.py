@@ -42,7 +42,10 @@ def _strip_guardrail_boilerplate(answer: str) -> str:
         from core.prompts.domain_profile import get_active_profile
 
         profile = get_active_profile()
-        for boilerplate in (getattr(profile, "safety_disclaimer", ""), getattr(profile, "structure_hint", "")):
+        for boilerplate in (
+            getattr(profile, "safety_disclaimer", ""),
+            getattr(profile, "structure_hint", ""),
+        ):
             if boilerplate and boilerplate.strip():
                 cleaned = cleaned.replace(boilerplate.strip(), "")
     except Exception:  # noqa: BLE001

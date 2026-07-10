@@ -21,8 +21,9 @@ sys.path.insert(0, ".")
 
 
 def test_create_app_returns_wired_fastapi():
-    from api.main import create_app
     from fastapi import FastAPI
+
+    from api.main import create_app
 
     app = create_app()
     assert isinstance(app, FastAPI)

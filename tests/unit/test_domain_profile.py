@@ -252,6 +252,7 @@ class TestProfileDrivenBehaviour:
 # Residual consumers are domain-agnostic under the general profile (D-residual)
 # ===========================================================================
 
+
 class TestResidualConsumersGeneral:
     """The lower-priority consumers (judge / memory / query-transform /
     retrieval-server tool desc / bm25 normalize / pii operational) must not
@@ -277,7 +278,8 @@ class TestResidualConsumersGeneral:
         monkeypatch.setenv("DOMAIN_PROFILE", "general")
         # No section template -> free-form answers yield no section-keyed facts.
         entries = MemoryExtractor().extract_facts(
-            "q", "【诊断结论】振动偏高"  # aviation markers ignored under general
+            "q",
+            "【诊断结论】振动偏高",  # aviation markers ignored under general
         )
         assert entries == []
 
@@ -287,9 +289,7 @@ class TestResidualConsumersGeneral:
 
         reset_active_profile()
         monkeypatch.setenv("DOMAIN_PROFILE", "aviation_phm")
-        entries = MemoryExtractor().extract_facts(
-            "q", "【诊断结论】振动偏高\n【可能原因】不平衡"
-        )
+        entries = MemoryExtractor().extract_facts("q", "【诊断结论】振动偏高\n【可能原因】不平衡")
         assert any("诊断结论" in e.content for e in entries)
 
     def test_hyde_prompt_neutral_under_general(self, monkeypatch):
@@ -421,6 +421,7 @@ class TestFastModeFallbackProfileDriven:
 
         reset_active_profile()
         monkeypatch.setenv("DOMAIN_PROFILE", "aviation_phm")
+
         # Stub the retriever to return no documents. fast_generate imports
         # get_hybrid_retriever locally from core.retrieval.hybrid_retriever.
         class _Empty:

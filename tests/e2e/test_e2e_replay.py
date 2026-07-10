@@ -64,12 +64,18 @@ class TestReplayOffline:
     """Replay evaluation with rule-based scoring only (--no-judge)."""
 
     def test_replay_runs_offline(self, replay_dataset, tmp_data_dir):
-        from scripts.replay_eval import ReplayEvaluator
         from agent.eval.scorer import EvalScorer
+        from scripts.replay_eval import ReplayEvaluator
 
-        records = asyncio.run(
-            __import__("scripts.replay_eval", fromlist=["load_replay_records"]).load_replay_records(replay_dataset)
-        ) if False else None
+        records = (
+            asyncio.run(
+                __import__(
+                    "scripts.replay_eval", fromlist=["load_replay_records"]
+                ).load_replay_records(replay_dataset)
+            )
+            if False
+            else None
+        )
         # Load directly.
         from scripts.replay_eval import load_replay_records
 
@@ -89,8 +95,7 @@ class TestReplayOffline:
 
         path = tmp_path / "ds.jsonl"
         path.write_text(
-            "# comment line\n\n"
-            '{"id":"r1","query":"q1","answer":"a1"}\n',
+            '# comment line\n\n{"id":"r1","query":"q1","answer":"a1"}\n',
             encoding="utf-8",
         )
         recs = load_replay_records(str(path))
@@ -102,10 +107,12 @@ class TestReplayHistory:
 
     def test_run_persisted_to_history(self, replay_dataset, tmp_data_dir):
         from agent.eval.history import load_history, save_run
-        from scripts.replay_eval import ReplayEvaluator
         from agent.eval.scorer import EvalScorer
+        from scripts.replay_eval import ReplayEvaluator
 
-        records = __import__("scripts.replay_eval", fromlist=["load_replay_records"]).load_replay_records(replay_dataset)
+        records = __import__(
+            "scripts.replay_eval", fromlist=["load_replay_records"]
+        ).load_replay_records(replay_dataset)
         ev = ReplayEvaluator(scorer=EvalScorer(use_judge=False))
         report = asyncio.run(ev.score_all_async(records))
 

@@ -67,6 +67,7 @@ class TestNoLegacySkillShims:
 # F17
 # ===========================================================================
 
+
 class TestJudgePublicEntailmentContract:
     def test_public_entail_and_aentail_exist(self):
         from agent.eval.judge import LLMJudge

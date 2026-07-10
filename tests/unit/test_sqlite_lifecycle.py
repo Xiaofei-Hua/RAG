@@ -34,8 +34,18 @@ sys.path.insert(0, ".")
 _STORES = [
     ("agent.eval.judge", "DEFAULT_JUDGE_CACHE_PATH", "_judge", "reset_judge"),
     ("agent.memory.store", "DEFAULT_DB_PATH", "_memory_store", "reset_memory_store"),
-    ("agent.feedback.collector", "DEFAULT_DB_PATH", "_feedback_collector", "reset_feedback_collector"),
-    ("agent.feedback.escalation", "DEFAULT_DB_PATH", "_escalation_manager", "reset_escalation_manager"),
+    (
+        "agent.feedback.collector",
+        "DEFAULT_DB_PATH",
+        "_feedback_collector",
+        "reset_feedback_collector",
+    ),
+    (
+        "agent.feedback.escalation",
+        "DEFAULT_DB_PATH",
+        "_escalation_manager",
+        "reset_escalation_manager",
+    ),
     ("documents.parent_store", "DEFAULT_DB_PATH", "_store", "reset_parent_store"),
     ("documents.document_registry", "DEFAULT_DB_PATH", "_registry", "reset_document_registry"),
 ]

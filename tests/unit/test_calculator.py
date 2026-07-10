@@ -22,16 +22,19 @@ sys.path.insert(0, ".")
 
 
 class TestCalculatorLegitimate:
-    @pytest.mark.parametrize("expr,expected", [
-        ("2*(3+4)", "14"),
-        ("abs(-5)", "5"),
-        ("pow(2,10)", "1024"),
-        ("min(1,2)", "1"),
-        ("max(3,4)", "4"),
-        ("round(3.14159,2)", "3.14"),
-        ("sqrt(16)", "4.0"),
-        ("sin(0)", "0.0"),
-    ])
+    @pytest.mark.parametrize(
+        "expr,expected",
+        [
+            ("2*(3+4)", "14"),
+            ("abs(-5)", "5"),
+            ("pow(2,10)", "1024"),
+            ("min(1,2)", "1"),
+            ("max(3,4)", "4"),
+            ("round(3.14159,2)", "3.14"),
+            ("sqrt(16)", "4.0"),
+            ("sin(0)", "0.0"),
+        ],
+    )
     def test_legitimate_expressions(self, expr, expected):
         from agent.mcp.tools_registry import UtilityToolsServer
 
@@ -45,13 +48,16 @@ class TestCalculatorLegitimate:
 
 
 class TestCalculatorInjectionRejected:
-    @pytest.mark.parametrize("expr", [
-        '__import__("os")',          # dunder import
-        '(1).__class__',             # attribute access to class
-        'os.system("ls")',           # dotted call (non-whitelisted name)
-        '().__class__.__bases__',    # attribute chain
-        'open("/etc/passwd")',       # non-whitelisted builtin
-    ])
+    @pytest.mark.parametrize(
+        "expr",
+        [
+            '__import__("os")',  # dunder import
+            "(1).__class__",  # attribute access to class
+            'os.system("ls")',  # dotted call (non-whitelisted name)
+            "().__class__.__bases__",  # attribute chain
+            'open("/etc/passwd")',  # non-whitelisted builtin
+        ],
+    )
     def test_injection_rejected_without_execution(self, expr):
         from agent.mcp.tools_registry import UtilityToolsServer
 

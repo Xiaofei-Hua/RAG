@@ -34,14 +34,15 @@ sys.path.insert(0, ".")
 # Stage 2.2 — MMR min-max normalisation
 # ===========================================================================
 
+
 class TestMMRNormalisation:
     def test_norm_scores_minmax_preserves_negatives(self):
         from core.retrieval.mmr import _norm_scores
 
         # Reranker logits can be negative; a clamp-to-[0,1] would zero them.
         out = _norm_scores([-3.0, -1.0, 2.0])
-        assert out[0] == pytest.approx(0.0)       # min (-3) -> 0
-        assert out[2] == pytest.approx(1.0)       # max (2) -> 1
+        assert out[0] == pytest.approx(0.0)  # min (-3) -> 0
+        assert out[2] == pytest.approx(1.0)  # max (2) -> 1
         # midpoint (-1): (-1 - (-3)) / (2 - (-3)) = 2/5 = 0.4
         assert out[1] == pytest.approx(0.4)
 
@@ -80,6 +81,7 @@ class TestMMRNormalisation:
 # Stage 2.3 — reranker preserves upstream score
 # ===========================================================================
 
+
 class TestRerankerScoreSeparation:
     def test_rerank_preserves_score_under_rerank_score(self):
         from core.retrieval.reranker import Reranker
@@ -106,6 +108,7 @@ class TestRerankerScoreSeparation:
 # Stage 2.1 — retrieval + embedding cache
 # ===========================================================================
 
+
 class TestRetrievalCache:
     def test_retrieval_cache_hit_on_repeat_query(self, monkeypatch):
         from core.retrieval import hybrid_retriever as hr
@@ -115,6 +118,7 @@ class TestRetrievalCache:
         retriever = hr.HybridRetriever()
 
         call_count = {"n": 0}
+
         # Count the fused-retrieval step (the real underlying work the cache
         # should skip on a hit). _parallel_retrieve is the sync entry that
         # actually issues dense+sparse calls.
@@ -154,6 +158,7 @@ class TestRetrievalCache:
             def embed_query(self, text):
                 calls["n"] += 1
                 return [0.1, 0.2]
+
             def embed_documents(self, texts):
                 return [[0.1, 0.2] for _ in texts]
 
@@ -167,15 +172,18 @@ class TestRetrievalCache:
         """Cached Document objects must be deep-copied so downstream
         metadata mutations (memory injection, score rewrites) don't corrupt
         the cached entry returned to later identical queries."""
+        from langchain_core.documents import Document
+
         from core.retrieval import hybrid_retriever as hr
         from core.retrieval.cache import get_retrieval_cache
-        from langchain_core.documents import Document
 
         get_retrieval_cache().clear()
         retriever = hr.HybridRetriever()
         doc = Document(page_content="chunk", metadata={"score": 0.9})
         retriever._parallel_retrieve = lambda q, f=None: (
-            [hr.RetrievalResult(document=doc, score=0.9, source="dense", rank=1)], [], [],
+            [hr.RetrievalResult(document=doc, score=0.9, source="dense", rank=1)],
+            [],
+            [],
         )
         retriever._rerank = lambda q, d, k: d
         retriever._time_decay = lambda d: d
@@ -195,6 +203,7 @@ class TestRetrievalCache:
 # Stage 3.1 — async grounding concurrency
 # ===========================================================================
 
+
 class TestAsyncGrounding:
     def test_acheck_fans_out_claims_concurrently(self):
         from agent.guardrails.grounding_guardrail import GroundingGuardrail
@@ -209,22 +218,26 @@ class TestAsyncGrounding:
 
         class _StubJudge:
             available = True
+
             async def aentail(self, claim, context_blob):
                 started.append(claim)
                 # Yield once so other tasks can start (proves concurrency).
                 await asyncio.sleep(0.01)
                 completed_order.append(claim)
                 return _StubVerdict(True)
+
             # Back-compat alias for any caller still on the private name.
             async def _aentail(self, claim, context_blob):
                 return await self.aentail(claim, context_blob)
 
         g = GroundingGuardrail(judge=_StubJudge())
         # An answer with 3 hard claims (values).
-        result = asyncio.run(g.acheck(
-            "温度应为 100°C。压力应为 2.0 MPa。转速应为 5000 RPM。",
-            ["手册内容"],
-        ))
+        result = asyncio.run(
+            g.acheck(
+                "温度应为 100°C。压力应为 2.0 MPa。转速应为 5000 RPM。",
+                ["手册内容"],
+            )
+        )
         assert result.available
         assert result.faithfulness == 1.0
         assert result.total == 3
@@ -247,8 +260,10 @@ class TestAsyncGrounding:
 
         class _ExplodingJudge:
             available = True
+
             async def aentail(self, claim, context_blob):
                 raise RuntimeError("boom")
+
             async def _aentail(self, claim, context_blob):
                 return await self.aentail(claim, context_blob)
 
@@ -261,6 +276,7 @@ class TestAsyncGrounding:
 # ===========================================================================
 # Stage 3.2 — per-run trace isolation
 # ===========================================================================
+
 
 class TestTraceIsolation:
     def test_concurrent_runs_have_separate_traces(self):
@@ -290,6 +306,7 @@ class TestTraceIsolation:
 # Stage 3.3 — astart double-checked locking
 # ===========================================================================
 
+
 class TestAstartLock:
     def test_astart_has_lock(self):
         from agent.harness.orchestrator import AgentHarness
@@ -301,6 +318,7 @@ class TestAstartLock:
 
     def test_concurrent_astart_does_not_double_init(self, monkeypatch):
         import asyncio
+
         from agent.harness.orchestrator import AgentHarness, HarnessConfig
 
         # use_memory=False => astart returns immediately without touching DB.
@@ -318,6 +336,7 @@ class TestAstartLock:
 # ===========================================================================
 # Stage 3.4 — shared formatting layer
 # ===========================================================================
+
 
 class TestFormatting:
     def test_format_documents_evidence_line(self):
@@ -368,6 +387,7 @@ class TestFormatting:
 # Stage 3.5 — chunk-boundary truncation
 # ===========================================================================
 
+
 class TestContextBudget:
     def test_truncates_at_chunk_boundary(self):
         from agent.skills.generate.skill import GenerateSkill
@@ -399,6 +419,7 @@ class TestContextBudget:
 # Stage 3.6 — SQLite locking
 # ===========================================================================
 
+
 class TestSQLiteLocking:
     def test_memory_store_has_lock(self, tmp_path):
         from agent.memory.store import MemoryStore
@@ -427,9 +448,10 @@ class TestSQLiteLocking:
 
     def test_memory_store_concurrent_writes_safe(self, tmp_path):
         import threading
+        import time
+
         from agent.memory.store import MemoryStore
         from agent.memory.types import MemoryEntry, MemoryType
-        import time
 
         store = MemoryStore(db_path=str(tmp_path / "mem.db"))
         errors = []
@@ -437,15 +459,17 @@ class TestSQLiteLocking:
         def writer(start):
             for i in range(start, start + 20):
                 try:
-                    store.store(MemoryEntry(
-                        id=f"m{i}",
-                        memory_type=MemoryType.FACT,
-                        content=f"content {i}",
-                        metadata={},
-                        created_at=time.time(),
-                        access_count=0,
-                        relevance_score=1.0,
-                    ))
+                    store.store(
+                        MemoryEntry(
+                            id=f"m{i}",
+                            memory_type=MemoryType.FACT,
+                            content=f"content {i}",
+                            metadata={},
+                            created_at=time.time(),
+                            access_count=0,
+                            relevance_score=1.0,
+                        )
+                    )
                 except Exception as e:  # noqa: BLE001
                     errors.append(e)
 

@@ -29,6 +29,7 @@ sys.path.insert(0, ".")
 # F11
 # ===========================================================================
 
+
 class TestRetrieverExecutorInstanceScoped:
     def test_executor_is_instance_attribute_not_class(self):
         from core.retrieval.hybrid_retriever import HybridRetriever
@@ -85,6 +86,7 @@ class TestRetrieverExecutorInstanceScoped:
 # F12 — sync invoke() serialised across threads
 # ===========================================================================
 
+
 class TestSyncInvokeLock:
     def test_sync_invoke_lock_exists(self):
         from agent.harness.orchestrator import AgentHarness
@@ -117,9 +119,12 @@ class TestSyncInvokeLock:
 
         h._graph = _FakeGraph()
         # Force thinking mode (not fast) so invoke() hits the graph path.
-        h._planner.plan = lambda **kw: type("P", (), {"plan_type": type("PT", (), {"FAST": "fast"})()})()  # not FAST
+        h._planner.plan = lambda **kw: type(
+            "P", (), {"plan_type": type("PT", (), {"FAST": "fast"})()}
+        )()  # not FAST
         # Simpler: monkeypatch planner to return a non-FAST plan.
         from agent.harness.planner import PlanType
+
         h._planner.plan = lambda **kw: type("Plan", (), {"plan_type": PlanType.THINKING})()
 
         def _call():

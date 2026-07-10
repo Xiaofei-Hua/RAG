@@ -102,9 +102,7 @@ def test_hybrid_reranker_is_controlled_by_feature_flag(monkeypatch):
         Document(page_content="second"),
     ]
 
-    disabled = HybridRetriever(
-        config=HybridRetrieverConfig(enable_reranker=False)
-    )
+    disabled = HybridRetriever(config=HybridRetrieverConfig(enable_reranker=False))
     assert disabled._rerank("query", documents, top_k=1)[0].page_content == "first"
 
     class FakeReranker:
@@ -112,9 +110,7 @@ def test_hybrid_reranker_is_controlled_by_feature_flag(monkeypatch):
             return list(reversed(candidates))[:top_k]
 
     monkeypatch.setattr(reranker_module, "get_reranker", lambda: FakeReranker())
-    enabled = HybridRetriever(
-        config=HybridRetrieverConfig(enable_reranker=True)
-    )
+    enabled = HybridRetriever(config=HybridRetrieverConfig(enable_reranker=True))
     assert enabled._rerank("query", documents, top_k=1)[0].page_content == "second"
 
 
@@ -213,9 +209,7 @@ def test_generate_skill_publishes_custom_token_events():
     skill._chain = FakeChain()
 
     async def generate_node(state):
-        result = await skill.aexecute(
-            SkillContext.from_agent_state(state)
-        )
+        result = await skill.aexecute(SkillContext.from_agent_state(state))
         return result.to_state_update()
 
     workflow = StateGraph(AgentState)

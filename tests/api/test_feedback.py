@@ -8,8 +8,8 @@
 
 import json
 import sys
-import urllib.request
 import urllib.error
+import urllib.request
 
 BASE = "http://localhost:8000"
 
@@ -20,8 +20,9 @@ FAILED = 0
 def _req(method, path, data=None, timeout=30):
     url = f"{BASE}{path}"
     body = json.dumps(data).encode() if data else None
-    req = urllib.request.Request(url, data=body, method=method,
-                                headers={"Content-Type": "application/json"} if body else {})
+    req = urllib.request.Request(
+        url, data=body, method=method, headers={"Content-Type": "application/json"} if body else {}
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, json.loads(resp.read())
@@ -65,47 +66,67 @@ def main():
 
     # 2. Submit thumbs up
     print("\n  [点赞反馈]")
-    status, body = _req("POST", "/api/feedback", {
-        "session_id": session_id,
-        "feedback_type": "THUMBS_UP",
-    })
+    status, body = _req(
+        "POST",
+        "/api/feedback",
+        {
+            "session_id": session_id,
+            "feedback_type": "THUMBS_UP",
+        },
+    )
     assert_ok("提交点赞返回 200", status, body)
     assert_true("返回 id", body.get("id") is not None, str(body))
 
     # 3. Submit thumbs down
     print("\n  [点踩反馈]")
-    status, body = _req("POST", "/api/feedback", {
-        "session_id": session_id,
-        "feedback_type": "THUMBS_DOWN",
-        "content": "回答不够详细",
-    })
+    status, body = _req(
+        "POST",
+        "/api/feedback",
+        {
+            "session_id": session_id,
+            "feedback_type": "THUMBS_DOWN",
+            "content": "回答不够详细",
+        },
+    )
     assert_ok("提交点踩返回 200", status, body)
 
     # 4. Submit correction
     print("\n  [纠正反馈]")
-    status, body = _req("POST", "/api/feedback", {
-        "session_id": session_id,
-        "feedback_type": "CORRECTION",
-        "original_answer": "git 默认分支名为 master",
-        "corrected_answer": "git 默认分支名应为 main，参考官方文档",
-    })
+    status, body = _req(
+        "POST",
+        "/api/feedback",
+        {
+            "session_id": session_id,
+            "feedback_type": "CORRECTION",
+            "original_answer": "git 默认分支名为 master",
+            "corrected_answer": "git 默认分支名应为 main，参考官方文档",
+        },
+    )
     assert_ok("提交纠正返回 200", status, body)
 
     # 5. Submit flag
     print("\n  [标记反馈]")
-    status, body = _req("POST", "/api/feedback", {
-        "session_id": session_id,
-        "feedback_type": "FLAG",
-        "content": "回答涉及不确定的安全操作",
-    })
+    status, body = _req(
+        "POST",
+        "/api/feedback",
+        {
+            "session_id": session_id,
+            "feedback_type": "FLAG",
+            "content": "回答涉及不确定的安全操作",
+        },
+    )
     assert_ok("提交标记返回 200", status, body)
 
     # 6. Invalid feedback type
     print("\n  [异常参数]")
-    status, body = _req("POST", "/api/feedback", {
-        "session_id": session_id,
-        "feedback_type": "INVALID_TYPE",
-    })
+    status, body = _req(
+        "POST",
+        "/api/feedback",
+        {
+            "session_id": session_id,
+            "feedback_type": "INVALID_TYPE",
+        },
+    )
     assert_ok("无效 feedback_type 返回 400", status, body, expected_status=400)
 
     # 7. Get session feedback
@@ -114,8 +135,7 @@ def main():
     assert_ok("GET /api/feedback/{session_id} 返回 200", status, body)
     if status == 200:
         feedback_list = body.get("feedback", [])
-        assert_true("反馈数量 >= 4", len(feedback_list) >= 4,
-                    f"got: {len(feedback_list)}")
+        assert_true("反馈数量 >= 4", len(feedback_list) >= 4, f"got: {len(feedback_list)}")
 
     # 8. Feedback stats
     print("\n  [反馈统计]")

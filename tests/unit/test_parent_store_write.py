@@ -226,9 +226,7 @@ class TestMCPParentIdPassthrough:
         dict so _maybe_expand_parents sees it."""
         from agent.skills.retrieve.skill import RetrieveSkill
 
-        raw = [
-            {"content": "x", "source": "s", "title": "t", "score": 1.0, "parent_id": "p_def"}
-        ]
+        raw = [{"content": "x", "source": "s", "title": "t", "score": 1.0, "parent_id": "p_def"}]
         docs = RetrieveSkill._raw_to_documents(raw)
         assert docs[0].metadata.get("parent_id") == "p_def", (
             "MCP client dropped parent_id — expand would no-op"

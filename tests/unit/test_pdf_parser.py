@@ -6,7 +6,9 @@ from documents import pdf_parser
 from documents.pdf_parser import PDFTextExtractionError, parse_pdf_to_documents
 
 
-def _pdf_bytes(page_stream: bytes, *, include_font: bool = True, include_image: bool = False) -> bytes:
+def _pdf_bytes(
+    page_stream: bytes, *, include_font: bool = True, include_image: bool = False
+) -> bytes:
     resource_parts = []
     if include_font:
         resource_parts.append(b"/Font << /F1 4 0 R >>")
@@ -111,8 +113,12 @@ def test_image_only_pdf_can_use_ocr_fallback(monkeypatch, tmp_path):
         confidence = 0.88
 
     monkeypatch.setattr(pdf_parser, "PDF_OCR_ENABLED", True)
-    monkeypatch.setattr(pdf_parser, "_render_page_image", lambda *args, **kwargs: str(tmp_path / "page_1.png"))
-    monkeypatch.setattr("documents.ocr_engine.extract_text_from_image", lambda image_path: FakeOCRResult())
+    monkeypatch.setattr(
+        pdf_parser, "_render_page_image", lambda *args, **kwargs: str(tmp_path / "page_1.png")
+    )
+    monkeypatch.setattr(
+        "documents.ocr_engine.extract_text_from_image", lambda image_path: FakeOCRResult()
+    )
 
     docs = parse_pdf_to_documents(str(path), "scan.pdf")
 

@@ -371,7 +371,7 @@ async def eval_run_detail(run_id: str, _: None = Depends(require_admin)):
     if not re.fullmatch(r"[A-Za-z0-9_-]+", run_id):
         raise HTTPException(400, "Invalid run_id")
     runs_dir = Path("data/eval/runs").resolve()
-    path = (runs_dir / f"{run_id}.json")
+    path = runs_dir / f"{run_id}.json"
     if not path.resolve().is_relative_to(runs_dir):
         raise HTTPException(400, "Invalid run_id")
     if not path.exists():

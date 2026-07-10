@@ -31,6 +31,7 @@ sys.path.insert(0, ".")
 # AgentState + merge reducer
 # ===========================================================================
 
+
 class TestMergeReducer:
     def test_later_write_wins_per_key(self):
         from agent.context.state import merge_shared_state
@@ -80,6 +81,7 @@ class TestMergeReducer:
 # SkillContext round-trip
 # ===========================================================================
 
+
 class TestSkillContextRoundTrip:
     def test_to_from_agent_state_preserves_shared_state(self):
         from agent.skills.base import SkillContext
@@ -104,9 +106,7 @@ class TestSkillContextRoundTrip:
     def test_from_agent_state_handles_none(self):
         from agent.skills.base import SkillContext
 
-        ctx = SkillContext.from_agent_state(
-            {"messages": [], "shared_state": None}
-        )
+        ctx = SkillContext.from_agent_state({"messages": [], "shared_state": None})
         assert ctx.shared_state == {}
 
     def test_from_agent_state_returns_independent_copy(self):
@@ -123,13 +123,12 @@ class TestSkillContextRoundTrip:
 # SkillResult state_updates propagation
 # ===========================================================================
 
+
 class TestSkillResultStateUpdate:
     def test_state_updates_with_shared_state_propagates(self):
         from agent.skills.base import SkillResult
 
-        result = SkillResult(
-            state_updates={"shared_state": {"sources": ["x"]}}
-        )
+        result = SkillResult(state_updates={"shared_state": {"sources": ["x"]}})
         update = result.to_state_update()
         assert update["shared_state"] == {"sources": ["x"]}
 
@@ -145,6 +144,7 @@ class TestSkillResultStateUpdate:
 # ===========================================================================
 # Lifecycle before-hook increment mechanism
 # ===========================================================================
+
 
 class TestBeforeHookIncrements:
     def test_hook_returning_dict_is_collected(self):
@@ -166,12 +166,8 @@ class TestBeforeHookIncrements:
         from agent.skills.base import SkillContext
 
         lm = LifecycleManager()
-        lm.on_before_skill(
-            lambda name, ctx: {"shared_state": {"a": 1}}, name="h1", priority=80
-        )
-        lm.on_before_skill(
-            lambda name, ctx: {"shared_state": {"b": 2}}, name="h2", priority=90
-        )
+        lm.on_before_skill(lambda name, ctx: {"shared_state": {"a": 1}}, name="h1", priority=80)
+        lm.on_before_skill(lambda name, ctx: {"shared_state": {"b": 2}}, name="h2", priority=90)
         ctx = SkillContext(messages=[], shared_state={})
         increments = lm.fire_before_skill("agent", ctx)
         assert increments["shared_state"] == {"a": 1, "b": 2}
@@ -191,9 +187,7 @@ class TestBeforeHookIncrements:
         from agent.skills.base import SkillContext
 
         lm = LifecycleManager()
-        lm.on_before_skill(
-            lambda name, ctx: {"intent_confidence": 0.7}, name="h", priority=80
-        )
+        lm.on_before_skill(lambda name, ctx: {"intent_confidence": 0.7}, name="h", priority=80)
         ctx = SkillContext(messages=[], shared_state={})
         increments = lm.fire_before_skill("agent", ctx)
         assert increments == {"intent_confidence": 0.7}
@@ -222,15 +216,14 @@ class TestBeforeHookIncrements:
 # Orchestrator _merge_state_update
 # ===========================================================================
 
+
 class TestMergeStateUpdate:
     def test_hook_and_skill_shared_state_combine(self):
         from agent.harness.orchestrator import AgentHarness
         from agent.skills.base import SkillResult
 
         harness = AgentHarness()
-        result = SkillResult(
-            state_updates={"shared_state": {"retrieved_contexts": ["c1"]}}
-        )
+        result = SkillResult(state_updates={"shared_state": {"retrieved_contexts": ["c1"]}})
         before_inc = {"shared_state": {"relevant_memories": ["m1"]}}
         update = harness._merge_state_update(result, before_inc)
         assert update["shared_state"] == {
@@ -243,9 +236,7 @@ class TestMergeStateUpdate:
         from agent.skills.base import SkillResult
 
         harness = AgentHarness()
-        result = SkillResult(
-            state_updates={"shared_state": {"k": "skill"}}
-        )
+        result = SkillResult(state_updates={"shared_state": {"k": "skill"}})
         before_inc = {"shared_state": {"k": "hook", "other": 1}}
         update = harness._merge_state_update(result, before_inc)
         assert update["shared_state"]["k"] == "skill"
@@ -265,6 +256,7 @@ class TestMergeStateUpdate:
 # Memory enrichment hook returns increment
 # ===========================================================================
 
+
 class TestMemoryEnrichmentHook:
     def test_hook_returns_shared_state_increment(self, monkeypatch):
         from agent.memory.lifecycle import create_memory_enrichment_hook
@@ -279,16 +271,12 @@ class TestMemoryEnrichmentHook:
             def retrieve(self, query):
                 return [_FakeMem("m1", "git 默认分支 main", "correction")]
 
-        monkeypatch.setattr(
-            "agent.memory.lifecycle.get_memory_store", lambda: _FakeStore()
-        )
+        monkeypatch.setattr("agent.memory.lifecycle.get_memory_store", lambda: _FakeStore())
 
         hook = create_memory_enrichment_hook()
         from agent.skills.base import SkillContext
 
-        ctx = SkillContext(
-            messages=[HumanMessage(content="git 默认分支是什么？")], shared_state={}
-        )
+        ctx = SkillContext(messages=[HumanMessage(content="git 默认分支是什么？")], shared_state={})
         increment = hook("agent", ctx)
         assert increment is not None
         assert "shared_state" in increment
@@ -308,6 +296,7 @@ class TestMemoryEnrichmentHook:
 # ===========================================================================
 # GenerateSkill publishes grounding contexts/sources
 # ===========================================================================
+
 
 class TestGenerateSkillPublishesSharedState:
     def test_extract_sources_list_from_tool_message(self):
@@ -350,10 +339,12 @@ class TestGenerateSkillPublishesSharedState:
 # RetrieveSkill publishes retrieval_relevance
 # ===========================================================================
 
+
 class TestRetrieveSkillPublishesRelevance:
     def test_mean_relevance_from_documents(self):
-        from agent.skills.retrieve.skill import RetrieveSkill
         from langchain_core.documents import Document
+
+        from agent.skills.retrieve.skill import RetrieveSkill
 
         docs = [
             Document(page_content="a", metadata={"score": 0.8}),
@@ -363,8 +354,9 @@ class TestRetrieveSkillPublishesRelevance:
         assert RetrieveSkill._mean_relevance(docs) == pytest.approx(0.7)
 
     def test_mean_relevance_none_when_no_scores(self):
-        from agent.skills.retrieve.skill import RetrieveSkill
         from langchain_core.documents import Document
+
+        from agent.skills.retrieve.skill import RetrieveSkill
 
         docs = [Document(page_content="a", metadata={})]
         assert RetrieveSkill._mean_relevance(docs) is None

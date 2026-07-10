@@ -120,9 +120,7 @@ async def main_async(args: argparse.Namespace) -> int:
             "p99": round(percentile(ttfts, 0.99), 2),
         },
         "token_events": {
-            "avg": round(sum(token_events) / len(token_events), 2)
-            if token_events
-            else 0,
+            "avg": round(sum(token_events) / len(token_events), 2) if token_events else 0,
             "min": min(token_events) if token_events else 0,
             "max": max(token_events) if token_events else 0,
         },

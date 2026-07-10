@@ -23,6 +23,7 @@ sys.path.insert(0, ".")
 # Deterministic context precision / recall (REQ-C-003)
 # ===========================================================================
 
+
 class TestContextMetrics:
     def test_perfect_overlap(self):
         from agent.eval.scorer import EvalScorer
@@ -82,8 +83,11 @@ class TestContextMetrics:
         )
         scorer = EvalScorer(use_judge=False)
         score = scorer.score(
-            case, actual_answer="ans", actual_intent="rag_query",
-            actual_sources=1, retrieved_context_ids=["a", "c"],
+            case,
+            actual_answer="ans",
+            actual_intent="rag_query",
+            actual_sources=1,
+            retrieved_context_ids=["a", "c"],
         )
         assert score.context_precision == pytest.approx(0.5)  # 1 of 2 retrieved
         assert score.context_recall == 0.5  # 1 of 2 expected
@@ -102,6 +106,7 @@ class TestContextMetrics:
 # ===========================================================================
 # Builtin general benchmark dataset (REQ-C-002)
 # ===========================================================================
+
 
 class TestBuiltinGeneralBenchmark:
     def test_dataset_loads(self):
@@ -130,9 +135,7 @@ class TestBuiltinGeneralBenchmark:
         cases = load_dataset("data/benchmark/builtin_general.yaml")
         for c in cases:
             for cid in c.expected_context_ids:
-                assert cid in corpus_ids, (
-                    f"case {c.id} references unknown chunk id {cid}"
-                )
+                assert cid in corpus_ids, f"case {c.id} references unknown chunk id {cid}"
 
     def test_cases_are_domain_agnostic(self):
         """No aviation-specific terms in the general benchmark queries."""

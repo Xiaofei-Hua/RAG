@@ -32,12 +32,14 @@ PASSED = 0
 FAILED = 0
 SKIPPED = 0
 
+
 def _req(method, path, data=None, timeout=60):
     """Send HTTP request and return (status, json_body)."""
     url = f"{BASE}{path}"
     body = json.dumps(data).encode() if data else None
-    req = urllib.request.Request(url, data=body, method=method,
-                                headers={"Content-Type": "application/json"} if body else {})
+    req = urllib.request.Request(
+        url, data=body, method=method, headers={"Content-Type": "application/json"} if body else {}
+    )
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return resp.status, json.loads(resp.read())
@@ -50,6 +52,7 @@ def _req(method, path, data=None, timeout=60):
 def _upload(filename, content):
     """Upload a file via multipart/form-data (no external deps)."""
     import http.client
+
     boundary = "----TestBoundary123456"
     body = (
         f"--{boundary}\r\n"
@@ -59,8 +62,12 @@ def _upload(filename, content):
         f"--{boundary}--\r\n"
     ).encode()
     conn = http.client.HTTPConnection("localhost", 8000, timeout=60)
-    conn.request("POST", "/api/documents/upload", body=body,
-                 headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    conn.request(
+        "POST",
+        "/api/documents/upload",
+        body=body,
+        headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+    )
     resp = conn.getresponse()
     result = json.loads(resp.read())
     conn.close()
@@ -109,9 +116,9 @@ def assert_true(name, condition, detail=""):
 
 
 def section(title):
-    print(f"\n{'─'*60}")
+    print(f"\n{'─' * 60}")
     print(f"  {title}")
-    print(f"{'─'*60}")
+    print(f"{'─' * 60}")
 
 
 # ── Test Content ─────────────────────────────────────────────────────────────
@@ -150,6 +157,7 @@ TEST_DOC = """# Git 合并冲突排查指南
 
 # ── Tests ────────────────────────────────────────────────────────────────────
 
+
 def test_health():
     section("1. 后端健康检查 & Milvus 连通性")
 
@@ -160,8 +168,11 @@ def test_health():
     status, body = _req("GET", "/api/admin/health")
     assert_ok("GET /api/admin/health 返回 200", status, body)
     milvus = body.get("services", {}).get("milvus", {})
-    assert_true("Milvus connected", milvus.get("status") == "healthy",
-                f"got: {milvus.get('status')}, details: {milvus}")
+    assert_true(
+        "Milvus connected",
+        milvus.get("status") == "healthy",
+        f"got: {milvus.get('status')}, details: {milvus}",
+    )
 
 
 def test_document_upload():
@@ -179,15 +190,15 @@ def test_document_upload():
     # Wait for background processing (Q6: poll instead of fixed sleep)
     print("  ⏳ 等待文档处理完成...")
     final_status = _wait_for_indexed(doc_id)
-    assert_true("文档处理完成", final_status == "indexed",
-                f"got: {final_status}")
+    assert_true("文档处理完成", final_status == "indexed", f"got: {final_status}")
 
     # Check document status
     status, body = _req("GET", f"/api/documents/{doc_id}")
     assert_ok("查询文档状态", status, body)
     if status == 200:
-        assert_true("文档状态为 indexed", body.get("status") == "indexed",
-                    f"got: {body.get('status')}")
+        assert_true(
+            "文档状态为 indexed", body.get("status") == "indexed", f"got: {body.get('status')}"
+        )
 
     # Upload the same file again — should be blocked
     status2, body2 = _upload("test_hydraulic_troubleshooting.md", TEST_DOC)
@@ -205,8 +216,7 @@ def test_document_list(doc_id):
 
     status, body = _req("GET", "/api/documents")
     assert_ok("GET /api/documents 返回 200", status, body)
-    assert_true("文档列表 total >= 1", body.get("total", 0) >= 1,
-                f"got: {body.get('total')}")
+    assert_true("文档列表 total >= 1", body.get("total", 0) >= 1, f"got: {body.get('total')}")
 
     if doc_id:
         status, body = _req("GET", f"/api/documents/{doc_id}")
@@ -224,14 +234,22 @@ def test_document_list(doc_id):
 def test_chat_general():
     section("4. 非流式对话 — 通用闲聊 (不走 RAG)")
 
-    status, body = _req("POST", "/api/chat", {
-        "message": "你好，请介绍一下你自己",
-        "stream": False,
-    }, timeout=30)
+    status, body = _req(
+        "POST",
+        "/api/chat",
+        {
+            "message": "你好，请介绍一下你自己",
+            "stream": False,
+        },
+        timeout=30,
+    )
     assert_ok("通用闲聊返回 200", status, body)
     if status == 200:
-        assert_true("返回了非空回答", len(body.get("response", "")) > 0,
-                    f"response length: {len(body.get('response', ''))}")
+        assert_true(
+            "返回了非空回答",
+            len(body.get("response", "")) > 0,
+            f"response length: {len(body.get('response', ''))}",
+        )
         assert_true("包含 session_id", body.get("session_id") is not None)
         print(f"  → 回答片段: {body.get('response', '')[:80]}...")
     return body.get("session_id")
@@ -246,11 +264,16 @@ def test_chat_rag(session_id):
         print("  ⏳ 等待文档索引...")
         _wait_for_indexed(body.get("id"))
 
-    status, body = _req("POST", "/api/chat", {
-        "message": "git 合并冲突如何解决？",
-        "session_id": session_id,
-        "stream": False,
-    }, timeout=60)
+    status, body = _req(
+        "POST",
+        "/api/chat",
+        {
+            "message": "git 合并冲突如何解决？",
+            "session_id": session_id,
+            "stream": False,
+        },
+        timeout=60,
+    )
     assert_ok("RAG 问答返回 200", status, body)
     if status == 200:
         answer = body.get("response", "")
@@ -262,14 +285,18 @@ def test_chat_stream(session_id):
     section("6. 流式对话 (SSE)")
 
     import http.client
+
     conn = http.client.HTTPConnection("localhost", 8000, timeout=60)
-    body = json.dumps({
-        "message": "git 分支管理的常用命令是什么？",
-        "session_id": session_id,
-        "stream": True,
-    }).encode()
-    conn.request("POST", "/api/chat/stream", body=body,
-                 headers={"Content-Type": "application/json"})
+    body = json.dumps(
+        {
+            "message": "git 分支管理的常用命令是什么？",
+            "session_id": session_id,
+            "stream": True,
+        }
+    ).encode()
+    conn.request(
+        "POST", "/api/chat/stream", body=body, headers={"Content-Type": "application/json"}
+    )
 
     resp = conn.getresponse()
     assert_true("SSE 响应状态 200", resp.status == 200, f"got: {resp.status}")
@@ -307,20 +334,30 @@ def test_milvus_direct():
     # Test via admin health (avoids file-lock issue with Milvus Lite)
     status, body = _req("GET", "/api/admin/health")
     milvus = body.get("services", {}).get("milvus", {})
-    assert_true("Milvus connected (via admin)", milvus.get("status") == "healthy",
-                f"got: {milvus.get('status')}")
+    assert_true(
+        "Milvus connected (via admin)",
+        milvus.get("status") == "healthy",
+        f"got: {milvus.get('status')}",
+    )
 
     # Test retrieval via chat endpoint (end-to-end)
-    status, body = _req("POST", "/api/chat", {
-        "message": "git 合并冲突如何解决？",
-        "stream": False,
-    }, timeout=60)
+    status, body = _req(
+        "POST",
+        "/api/chat",
+        {
+            "message": "git 合并冲突如何解决？",
+            "stream": False,
+        },
+        timeout=60,
+    )
     assert_ok("Milvus 检索后对话返回 200", status, body)
     if status == 200:
         answer = body.get("response", "")
-        assert_true("回答包含相关内容 (含 '合并' 或 '冲突')",
-                    "合并" in answer or "冲突" in answer,
-                    f"answer: {answer[:100]}...")
+        assert_true(
+            "回答包含相关内容 (含 '合并' 或 '冲突')",
+            "合并" in answer or "冲突" in answer,
+            f"answer: {answer[:100]}...",
+        )
         print(f"  → 回答片段: {answer[:120]}...")
 
 
@@ -331,10 +368,15 @@ def test_bm25_and_hybrid():
     # (avoids Milvus Lite file-lock issues when testing in a separate process)
 
     # Use a keyword-heavy query that BM25 should match well
-    status, body = _req("POST", "/api/chat", {
-        "message": "标识 MERGE-CONFLICT-01 是什么意思？",
-        "stream": False,
-    }, timeout=60)
+    status, body = _req(
+        "POST",
+        "/api/chat",
+        {
+            "message": "标识 MERGE-CONFLICT-01 是什么意思？",
+            "stream": False,
+        },
+        timeout=60,
+    )
     assert_ok("关键词检索对话返回 200", status, body)
     if status == 200:
         answer = body.get("response", "")
@@ -343,6 +385,7 @@ def test_bm25_and_hybrid():
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
+
 
 def main():
     print()
@@ -368,10 +411,10 @@ def main():
     test_document_list(doc_id)  # Delete at the end
 
     # Summary
-    print(f"\n{'='*60}")
+    print(f"\n{'=' * 60}")
     total = PASSED + FAILED + SKIPPED
     print(f"  测试完成:  {PASSED} passed,  {FAILED} failed,  {SKIPPED} skipped  (total {total})")
-    print(f"{'='*60}\n")
+    print(f"{'=' * 60}\n")
 
     sys.exit(1 if FAILED > 0 else 0)
 

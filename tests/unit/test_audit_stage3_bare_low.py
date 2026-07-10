@@ -106,8 +106,13 @@ def test_b12_graph_fingerprint_drift_sets_degraded(monkeypatch, tmp_path):
     # A fake store whose load_all returns a row with a mismatched embedding dim.
     rows = [
         GraphRow(
-            entity_id="e1", name="pump", type="component", source="s",
-            parent_id="", chunk_text="", embedding=[0.1] * 16,  # wrong dim
+            entity_id="e1",
+            name="pump",
+            type="component",
+            source="s",
+            parent_id="",
+            chunk_text="",
+            embedding=[0.1] * 16,  # wrong dim
         ),
     ]
 

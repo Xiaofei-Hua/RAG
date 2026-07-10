@@ -21,6 +21,7 @@ sys.path.insert(0, ".")
 # JSONL loading + record-to-case conversion
 # ---------------------------------------------------------------------------
 
+
 class TestReplayLoading:
     def test_load_jsonl_skips_comments_and_blanks(self, tmp_path):
         from scripts.replay_eval import load_replay_records
@@ -43,9 +44,7 @@ class TestReplayLoading:
 
         path = tmp_path / "ds.jsonl"
         path.write_text(
-            '{"id":"r1","query":"q1"}\n'
-            "this is not json\n"
-            '{"id":"r2","query":"q2"}\n',
+            '{"id":"r1","query":"q1"}\nthis is not json\n{"id":"r2","query":"q2"}\n',
             encoding="utf-8",
         )
         recs = load_replay_records(str(path))
@@ -61,11 +60,15 @@ class TestReplayLoading:
         from scripts.replay_eval import record_to_case
 
         # contexts as plain strings
-        case, ctxs = record_to_case({
-            "id": "x", "query": "q", "answer": "a",
-            "contexts": ["c1", "c2"],
-            "reference_answer": "ref",
-        })
+        case, ctxs = record_to_case(
+            {
+                "id": "x",
+                "query": "q",
+                "answer": "a",
+                "contexts": ["c1", "c2"],
+                "reference_answer": "ref",
+            }
+        )
         assert case.id == "x"
         assert case.reference_answer == "ref"
         assert ctxs == ["c1", "c2"]
@@ -75,21 +78,26 @@ class TestReplayLoading:
     def test_record_to_case_dict_contexts_normalized(self):
         from scripts.replay_eval import record_to_case
 
-        case, ctxs = record_to_case({
-            "id": "x", "query": "q", "answer": "a",
-            "contexts": [
-                {"content": "dict-ctx", "source": "doc"},
-                {"text": "alt-key"},
-                "plain string",
-                {"content": "   "},  # whitespace-only -> dropped
-            ],
-        })
+        case, ctxs = record_to_case(
+            {
+                "id": "x",
+                "query": "q",
+                "answer": "a",
+                "contexts": [
+                    {"content": "dict-ctx", "source": "doc"},
+                    {"text": "alt-key"},
+                    "plain string",
+                    {"content": "   "},  # whitespace-only -> dropped
+                ],
+            }
+        )
         assert ctxs == ["dict-ctx", "alt-key", "plain string"]
 
 
 # ---------------------------------------------------------------------------
 # Offline evaluation (rule-based, no LLM) — proves pure-data path works
 # ---------------------------------------------------------------------------
+
 
 class TestReplayOffline:
     def test_score_record_no_judge(self):
@@ -122,8 +130,7 @@ class TestReplayOffline:
 
         ev = ReplayEvaluator(scorer=EvalScorer(use_judge=False))
         records = [
-            {"id": f"r{i}", "query": f"q{i}", "answer": f"a{i}", "contexts": []}
-            for i in range(5)
+            {"id": f"r{i}", "query": f"q{i}", "answer": f"a{i}", "contexts": []} for i in range(5)
         ]
         report = asyncio.run(ev.score_all_async(records, concurrency=2))
         assert report.total_cases == 5
@@ -133,6 +140,7 @@ class TestReplayOffline:
 # ---------------------------------------------------------------------------
 # Judge graceful degradation: LLM-down => None (not 0), no crash
 # ---------------------------------------------------------------------------
+
 
 class TestJudgeDegradation:
     def _make_judge_with_dead_llm(self, monkeypatch, tmp_path):
@@ -211,12 +219,13 @@ class TestJudgeDegradation:
 # End-to-end: CLI with --no-judge runs fully offline
 # ---------------------------------------------------------------------------
 
+
 class TestReplayCLI:
     def test_no_judge_runs_offline(self, tmp_path, capsys):
         import asyncio
 
-        from scripts.replay_eval import ReplayEvaluator
         from agent.eval.scorer import EvalScorer
+        from scripts.replay_eval import ReplayEvaluator
 
         # Write a tiny dataset.
         ds = tmp_path / "ds.jsonl"

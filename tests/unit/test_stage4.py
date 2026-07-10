@@ -25,6 +25,7 @@ sys.path.insert(0, ".")
 # 4.5 PII IPv4 validation
 # ===========================================================================
 
+
 class TestPIIIPv4:
     def test_valid_ip_detected(self):
         from agent.guardrails.pii import detect_pii
@@ -69,6 +70,7 @@ class TestPIIIPv4:
 # ===========================================================================
 # 4.4a SSRF guard
 # ===========================================================================
+
 
 class TestSSRFGuard:
     def test_private_ip_literal_blocked(self):
@@ -122,6 +124,7 @@ class TestSSRFGuard:
 # 4.4b upload path-traversal sanitisation
 # ===========================================================================
 
+
 class TestSecureFilename:
     def test_strips_directory_traversal(self):
         from api.routers.documents import _secure_filename
@@ -165,6 +168,7 @@ class TestSecureFilename:
 # ===========================================================================
 # 4.3 judge prompt-injection hardening
 # ===========================================================================
+
 
 class TestJudgeInjectionHardening:
     def test_entail_prompt_has_delimiters(self):
@@ -210,6 +214,7 @@ class TestJudgeInjectionHardening:
 class _NoCache:
     def get(self, *a, **k):
         return None
+
     def put(self, *a, **k):
         pass
 
@@ -218,8 +223,10 @@ class _NoBreaker:
     @property
     def available(self):
         return True
+
     def record_success(self):
         pass
+
     def record_failure(self, *a, **k):
         pass
 
@@ -232,12 +239,15 @@ class LMMStub:
 # 4.2 admin auth (via the dependency directly)
 # ===========================================================================
 
+
 class TestAdminAuth:
     def _make_request(self, host="127.0.0.1"):
         class _C:
             pass
+
         class _Req:
             pass
+
         c = _C()
         c.host = host
         r = _Req()
@@ -259,8 +269,9 @@ class TestAdminAuth:
         require_admin(self._make_request("testclient"), None)
 
     def test_non_loopback_blocked_when_no_key(self, monkeypatch):
-        from api.routers.admin import require_admin
         from fastapi import HTTPException
+
+        from api.routers.admin import require_admin
 
         monkeypatch.delenv("ADMIN_API_KEY", raising=False)
         with pytest.raises(HTTPException) as exc:
@@ -274,8 +285,9 @@ class TestAdminAuth:
         require_admin(self._make_request("203.0.113.5"), "s3cret")
 
     def test_wrong_key_rejected(self, monkeypatch):
-        from api.routers.admin import require_admin
         from fastapi import HTTPException
+
+        from api.routers.admin import require_admin
 
         monkeypatch.setenv("ADMIN_API_KEY", "s3cret")
         with pytest.raises(HTTPException) as exc:
@@ -283,8 +295,9 @@ class TestAdminAuth:
         assert exc.value.status_code == 401
 
     def test_missing_key_rejected_when_configured(self, monkeypatch):
-        from api.routers.admin import require_admin
         from fastapi import HTTPException
+
+        from api.routers.admin import require_admin
 
         monkeypatch.setenv("ADMIN_API_KEY", "s3cret")
         with pytest.raises(HTTPException) as exc:

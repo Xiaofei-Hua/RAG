@@ -25,6 +25,7 @@ sys.path.insert(0, ".")
 # GroundingGuardrail
 # ===========================================================================
 
+
 class TestGroundingGuardrail:
     def _make_guardrail(self, monkeypatch, entail_responses):
         """Build a GroundingGuardrail with a stubbed judge."""
@@ -39,10 +40,12 @@ class TestGroundingGuardrail:
 
         class _StubJudge:
             available = True
+
             def entail(self, claim, context_blob):
                 if responses:
                     return _StubVerdict(responses.pop(0))
                 return _StubVerdict(True)
+
             # Back-compat alias for any caller still on the private name.
             def _entail(self, claim, context_blob):
                 return self.entail(claim, context_blob)
@@ -73,6 +76,7 @@ class TestGroundingGuardrail:
 
         class _DeadJudge:
             available = False
+
         g = GroundingGuardrail(judge=_DeadJudge())
         result = g.check("超时阈值 30。", ["ctx"])
         assert not result.available
@@ -84,10 +88,13 @@ class TestGroundingGuardrail:
 
         class _ExplodingJudge:
             available = True
+
             def entail(self, *a, **k):
                 raise RuntimeError("boom")
+
             def _entail(self, *a, **k):
                 return self.entail(*a, **k)
+
         g = GroundingGuardrail(judge=_ExplodingJudge())
         result = g.check("超时阈值 30。", ["ctx"])
         assert not result.available  # degraded, not raised
@@ -97,11 +104,13 @@ class TestGroundingGuardrail:
 # OutputGuardrail grounding integration
 # ===========================================================================
 
+
 class TestOutputGuardrailGrounding:
     def _patch_check(self, monkeypatch, fake):
         # check_grounding is imported locally inside _check_hallucination, so
         # patch it on its source module (grounding_guardrail).
         from agent.guardrails import grounding_guardrail as gg_mod
+
         monkeypatch.setattr(gg_mod, "check_grounding", fake)
 
     def test_grounding_allows_well_grounded(self, monkeypatch):
@@ -113,12 +122,14 @@ class TestOutputGuardrailGrounding:
             unsupported_claims = []
             degraded = False
             reason = "ok"
+
             def to_dict(self):
                 return {"faithfulness": 0.9}
 
         self._patch_check(monkeypatch, lambda a, c: _FakeResult())
 
         from agent.guardrails.output_guardrails import OutputGuardrail
+
         og = OutputGuardrail()
         # answer with safety disclaimer so only hallucination matters
         result = og.validate(
@@ -137,12 +148,14 @@ class TestOutputGuardrailGrounding:
             unsupported_claims = ["c1"]
             degraded = False
             reason = "low"
+
             def to_dict(self):
                 return {"faithfulness": 0.3}
 
         self._patch_check(monkeypatch, lambda a, c: _FakeResult())
 
         from agent.guardrails.output_guardrails import OutputGuardrail
+
         og = OutputGuardrail()
         result = og.validate(
             "【结论】测试。仅供参考。",
@@ -161,12 +174,14 @@ class TestOutputGuardrailGrounding:
             unsupported_claims = ["c1", "c2"]
             degraded = False
             reason = "none"
+
             def to_dict(self):
                 return {"faithfulness": 0.0}
 
         self._patch_check(monkeypatch, lambda a, c: _FakeResult())
 
         from agent.guardrails.output_guardrails import OutputGuardrail
+
         og = OutputGuardrail()
         result = og.validate(
             "【结论】测试。仅供参考。",
@@ -180,19 +195,19 @@ class TestOutputGuardrailGrounding:
             available = False
             faithfulness = None
             degraded = True
+
             def to_dict(self):
                 return {}
 
         self._patch_check(monkeypatch, lambda a, c: _DegradedResult())
 
         from agent.guardrails.output_guardrails import OutputGuardrail
+
         og = OutputGuardrail()
         # Grounding degraded + no sources => regex allows; the only possible
         # action now is a safety-disclaimer SANITIZE (not an ESCALATE/BLOCK).
         # Include a disclaimer so we isolate the hallucination path.
-        result = og.validate(
-            "测试答案，仅供参考注意安全风险。", sources=None, contexts=["ctx"]
-        )
+        result = og.validate("测试答案，仅供参考注意安全风险。", sources=None, contexts=["ctx"])
         # Must NOT escalate or block on degraded grounding.
         assert result.action.value in ("allow", "sanitize")
 
@@ -204,22 +219,27 @@ class TestCachedFaithReuse:
     def _guardrail(self):
         from agent.guardrails.output_guardrails import OutputGuardrail
         from agent.guardrails.types import GuardrailConfig
+
         # Disable safety/structure so only the grounding path is exercised.
-        return OutputGuardrail(GuardrailConfig(
-            enable_grounding_check=True,
-            enable_hallucination_check=True,
-            enable_safety_check=False,
-            enable_structure_check=False,
-            grounding_escalate_threshold=0.0,
-            grounding_threshold=0.5,
-        ))
+        return OutputGuardrail(
+            GuardrailConfig(
+                enable_grounding_check=True,
+                enable_hallucination_check=True,
+                enable_safety_check=False,
+                enable_structure_check=False,
+                grounding_escalate_threshold=0.0,
+                grounding_threshold=0.5,
+            )
+        )
 
     def test_cached_faith_zero_escalates_without_judge(self, monkeypatch):
         # If the cached path works, the judge is never called. Prove it by
         # making any judge call explode.
         from agent.guardrails import grounding_guardrail as gg_mod
+
         def _explode(*a, **k):
             raise AssertionError("judge should not be called when cached_faith given")
+
         monkeypatch.setattr(gg_mod, "check_grounding", _explode)
 
         og = self._guardrail()
@@ -228,8 +248,12 @@ class TestCachedFaithReuse:
 
     def test_cached_faith_low_sanitizes_without_judge(self, monkeypatch):
         from agent.guardrails import grounding_guardrail as gg_mod
-        monkeypatch.setattr(gg_mod, "check_grounding",
-                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("no judge")))
+
+        monkeypatch.setattr(
+            gg_mod,
+            "check_grounding",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("no judge")),
+        )
         og = self._guardrail()
         result = og.validate("结论。", sources=["s"], contexts=["ctx"], cached_faith=0.3)
         assert result.action.value == "sanitize"
@@ -237,8 +261,12 @@ class TestCachedFaithReuse:
 
     def test_cached_faith_high_allows_without_judge(self, monkeypatch):
         from agent.guardrails import grounding_guardrail as gg_mod
-        monkeypatch.setattr(gg_mod, "check_grounding",
-                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("no judge")))
+
+        monkeypatch.setattr(
+            gg_mod,
+            "check_grounding",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("no judge")),
+        )
         og = self._guardrail()
         result = og.validate("结论。", sources=["s"], contexts=["ctx"], cached_faith=0.9)
         assert result.action.value == "allow"
@@ -246,8 +274,12 @@ class TestCachedFaithReuse:
     def test_cached_faith_works_even_without_contexts(self, monkeypatch):
         # cached_faith alone is enough to enter the NLI branch.
         from agent.guardrails import grounding_guardrail as gg_mod
-        monkeypatch.setattr(gg_mod, "check_grounding",
-                            lambda *a, **k: (_ for _ in ()).throw(AssertionError("no judge")))
+
+        monkeypatch.setattr(
+            gg_mod,
+            "check_grounding",
+            lambda *a, **k: (_ for _ in ()).throw(AssertionError("no judge")),
+        )
         og = self._guardrail()
         result = og.validate("结论。", cached_faith=0.9)
         assert result.action.value == "allow"
@@ -268,12 +300,14 @@ class TestGuardrailManagerCachedFaith:
             unsupported_claims = []
             degraded = False
             reason = "ok"
+
             def to_dict(self):
                 return {"faithfulness": 0.9}
 
         def _spy_check(answer, sources=None, contexts=None, cached_faith=None):
             captured["cached_faith"] = cached_faith
             from agent.guardrails.types import GuardrailAction, GuardrailResult
+
             return GuardrailResult(action=GuardrailAction.ALLOW)
 
         gm = GuardrailManager()
@@ -283,10 +317,10 @@ class TestGuardrailManagerCachedFaith:
         assert captured["cached_faith"] == 0.42
 
 
-
 # ===========================================================================
 # GenerateSkill: refuse-to-answer + confidence
 # ===========================================================================
+
 
 class TestGenerateRefusal:
     def test_does_not_refuse_when_scores_present(self):
@@ -335,7 +369,10 @@ class TestGenerateRefusal:
         # refuse (was a silent pass-through to generate over unchecked evidence).
         from agent.skills.generate.skill import GenerateSkill
 
-        messages = [HumanMessage(content="q"), ToolMessage(content="no scores here", tool_call_id="c1")]
+        messages = [
+            HumanMessage(content="q"),
+            ToolMessage(content="no scores here", tool_call_id="c1"),
+        ]
         skill = GenerateSkill()
         assert skill._should_refuse(messages, has_context=True) is True
 
@@ -400,6 +437,7 @@ class TestGenerateConfidence:
 # GuardrailConfig env wiring
 # ===========================================================================
 
+
 class TestGuardrailConfigEnv:
     def test_grounding_config_defaults(self):
         from agent.guardrails.types import GuardrailConfig
@@ -415,6 +453,7 @@ class TestGuardrailConfigEnv:
         import importlib
 
         import agent.guardrails.types as types_mod
+
         importlib.reload(types_mod)
         cfg = types_mod.GuardrailConfig()
         assert cfg.enable_grounding_check is False

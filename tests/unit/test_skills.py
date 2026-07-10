@@ -13,7 +13,6 @@ from __future__ import annotations
 import os
 import sys
 import time
-from typing import List
 
 # Add project root to path
 sys.path.insert(0, ".")
@@ -21,8 +20,8 @@ sys.path.insert(0, ".")
 
 def test_registry():
     """Test SkillRegistry."""
-    from agent.skills.registry import SkillRegistry
     from agent.skills.base import BaseSkill, SkillContext, SkillResult, SkillStatus
+    from agent.skills.registry import SkillRegistry
 
     registry = SkillRegistry()
     assert registry.list_skills() == []
@@ -30,8 +29,12 @@ def test_registry():
     class DummySkill(BaseSkill):
         name = "dummy"
         description = "test skill"
-        def execute(self, ctx): return SkillResult(status=SkillStatus.SUCCESS)
-        async def aexecute(self, ctx): return SkillResult(status=SkillStatus.SUCCESS)
+
+        def execute(self, ctx):
+            return SkillResult(status=SkillStatus.SUCCESS)
+
+        async def aexecute(self, ctx):
+            return SkillResult(status=SkillStatus.SUCCESS)
 
     registry.register(DummySkill())
     assert "dummy" in registry.list_skills()
@@ -43,8 +46,9 @@ def test_registry():
 
 def test_state():
     """Test AgentState and Grade."""
-    from agent.context.state import AgentState, Grade, get_last_human_message
     from langchain_core.messages import HumanMessage
+
+    from agent.context.state import AgentState, Grade, get_last_human_message
 
     # Grade
     g = Grade(binary_score="yes")
@@ -63,8 +67,9 @@ def test_state():
 
 def test_context():
     """Test SkillContext."""
-    from agent.skills.base import SkillContext
     from langchain_core.messages import HumanMessage
+
+    from agent.skills.base import SkillContext
 
     ctx = SkillContext(
         messages=[HumanMessage(content="test")],
@@ -77,8 +82,11 @@ def test_context():
     assert ctx.is_rewrite_limit_reached is False
 
     ctx2 = SkillContext(
-        messages=[], session_id="s2", thread_id="t2",
-        rewrite_count=3, max_rewrites=3,
+        messages=[],
+        session_id="s2",
+        thread_id="t2",
+        rewrite_count=3,
+        max_rewrites=3,
     )
     assert ctx2.is_rewrite_limit_reached is True
 

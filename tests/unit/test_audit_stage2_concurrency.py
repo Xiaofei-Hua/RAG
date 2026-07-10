@@ -46,7 +46,11 @@ def test_b7_bm25_concurrent_add_and_retrieve_no_errors():
         try:
             for i in range(40):
                 bm25.add_documents(
-                    [Document(page_content=f"git 合并冲突 文档 {i} 排查", metadata={"source": f"s{i}"})]
+                    [
+                        Document(
+                            page_content=f"git 合并冲突 文档 {i} 排查", metadata={"source": f"s{i}"}
+                        )
+                    ]
                 )
         except Exception as e:  # noqa: BLE001
             errors.append(e)
@@ -80,7 +84,10 @@ def test_b7_bm25_remove_during_query_no_errors():
 
     bm25 = BM25Retriever()
     bm25.add_documents(
-        [Document(page_content=f"git 合并冲突 {i}", metadata={"source": f"s{i}"}) for i in range(50)]
+        [
+            Document(page_content=f"git 合并冲突 {i}", metadata={"source": f"s{i}"})
+            for i in range(50)
+        ]
     )
     errors: list[Exception] = []
 

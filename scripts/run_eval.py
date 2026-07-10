@@ -23,16 +23,14 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import sys
-from typing import List, Optional
 
 # Allow running from repo root without install.
 import os
+import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from agent.eval import (  # noqa: E402
-    DEFAULT_THRESHOLDS,
     EvalRunner,
     EvalScorer,
     load_dataset,
@@ -46,7 +44,7 @@ from utils.log_utils import log  # noqa: E402
 DEFAULT_DATASET = "data/eval/golden.yaml"
 
 
-def _fmt_metric(v: Optional[float]) -> str:
+def _fmt_metric(v: float | None) -> str:
     return f"{v:.3f}" if isinstance(v, (int, float)) else "  n/a"
 
 
@@ -54,7 +52,9 @@ def _print_summary(summary: EvalRunSummary) -> None:
     print("\n" + "=" * 60)
     print(f"Run {summary.run_id}  (tag={summary.tag}, commit={summary.git_commit})")
     print("=" * 60)
-    print(f"  total / passed / failed : {summary.total_cases} / {summary.passed} / {summary.failed}")
+    print(
+        f"  total / passed / failed : {summary.total_cases} / {summary.passed} / {summary.failed}"
+    )
     print(f"  average_score           : {_fmt_metric(summary.average_score)}")
     print(f"  avg_faithfulness        : {_fmt_metric(summary.avg_faithfulness)}")
     print(f"  avg_answer_relevancy    : {_fmt_metric(summary.avg_answer_relevancy)}")
@@ -66,7 +66,7 @@ def _print_summary(summary: EvalRunSummary) -> None:
     print("=" * 60)
 
 
-def _find_run(run_id: str) -> Optional[EvalRunSummary]:
+def _find_run(run_id: str) -> EvalRunSummary | None:
     for s in load_history():
         if s.run_id == run_id:
             return s
@@ -137,13 +137,14 @@ async def _run(args: argparse.Namespace) -> int:
             return 0
 
         reg = compare_runs(baseline, summary)
-        print("\n--- Regression vs baseline "
-              f"{baseline.run_id} (commit {baseline.git_commit}) ---")
+        print(f"\n--- Regression vs baseline {baseline.run_id} (commit {baseline.git_commit}) ---")
         for d in reg.deltas:
             mark = "!!" if d.regressed else ("  " if d.delta is not None else "??")
             ds = f"{d.delta:+.3f}" if d.delta is not None else "  n/a"
-            print(f"  {mark} {d.metric:<22} "
-                  f"{_fmt_metric(d.baseline)} -> {_fmt_metric(d.current)}  (Δ {ds})")
+            print(
+                f"  {mark} {d.metric:<22} "
+                f"{_fmt_metric(d.baseline)} -> {_fmt_metric(d.current)}  (Δ {ds})"
+            )
         print(f"\n  => {'PASS' if reg.passed else 'FAIL'}: {reg.summary}")
         return 0 if reg.passed else 1
 
@@ -161,24 +162,36 @@ def _compare_only(args: argparse.Namespace) -> int:
     return 0 if reg.passed else 1
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the RAG evaluation suite.")
-    parser.add_argument("--dataset", default=DEFAULT_DATASET, help="Path to golden dataset (YAML/JSON).")
+    parser.add_argument(
+        "--dataset", default=DEFAULT_DATASET, help="Path to golden dataset (YAML/JSON)."
+    )
     parser.add_argument("--concurrency", type=int, default=4, help="Max concurrent cases.")
-    parser.add_argument("--no-judge", action="store_true", help="Disable LLM-as-judge (rule-based only).")
+    parser.add_argument(
+        "--no-judge", action="store_true", help="Disable LLM-as-judge (rule-based only)."
+    )
     parser.add_argument("--tag", default="manual", help="Run tag (ci / nightly / manual).")
     parser.add_argument("--pass-threshold", type=float, default=0.6, help="Per-case pass score.")
     parser.add_argument("--limit", type=int, default=None, help="Run only the first N cases.")
     parser.add_argument("--difficulty", default=None, help="Filter cases by difficulty.")
     parser.add_argument("--tag-filter", nargs="+", default=None, help="Filter cases by tag.")
-    parser.add_argument("--fail-on-regression", action="store_true",
-                        help="Exit 1 if any metric regresses vs baseline.")
-    parser.add_argument("--baseline", default=None,
-                        help="Baseline run id for regression (default: latest on dataset).")
-    parser.add_argument("--compare-only", action="store_true",
-                        help="Compare two existing runs without re-running.")
-    parser.add_argument("--current", default=None,
-                        help="Current run id (used with --compare-only).")
+    parser.add_argument(
+        "--fail-on-regression",
+        action="store_true",
+        help="Exit 1 if any metric regresses vs baseline.",
+    )
+    parser.add_argument(
+        "--baseline",
+        default=None,
+        help="Baseline run id for regression (default: latest on dataset).",
+    )
+    parser.add_argument(
+        "--compare-only", action="store_true", help="Compare two existing runs without re-running."
+    )
+    parser.add_argument(
+        "--current", default=None, help="Current run id (used with --compare-only)."
+    )
     args = parser.parse_args(argv)
 
     if args.compare_only:

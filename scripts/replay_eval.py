@@ -27,7 +27,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -37,7 +37,6 @@ from agent.eval.history import (  # noqa: E402
     load_history,
     save_run,
 )
-from agent.eval.runner import EvalRunner  # noqa: E402
 from agent.eval.scorer import EvalScorer  # noqa: E402
 from agent.eval.types import EvalCase, EvalReport, EvalResult  # noqa: E402
 from utils.log_utils import log  # noqa: E402
@@ -49,6 +48,7 @@ __all__ = ["load_replay_records", "record_to_case", "ReplayEvaluator"]
 # JSONL loading
 # =============================================================================
 
+
 def _normalize_context(ctx: Any) -> str:
     """Accept str or {'content': ...} dict; return the text."""
     if isinstance(ctx, str):
@@ -58,7 +58,7 @@ def _normalize_context(ctx: Any) -> str:
     return str(ctx)
 
 
-def load_replay_records(path: str) -> List[Dict[str, Any]]:
+def load_replay_records(path: str) -> list[dict[str, Any]]:
     """
     Load replay records from a JSONL file.
 
@@ -68,7 +68,7 @@ def load_replay_records(path: str) -> List[Dict[str, Any]]:
     p = Path(path)
     if not p.exists():
         raise FileNotFoundError(f"Replay dataset not found: {path}")
-    records: List[Dict[str, Any]] = []
+    records: list[dict[str, Any]] = []
     for lineno, raw in enumerate(p.read_text(encoding="utf-8").splitlines(), start=1):
         line = raw.strip()
         if not line or line.startswith("#"):
@@ -83,7 +83,7 @@ def load_replay_records(path: str) -> List[Dict[str, Any]]:
     return records
 
 
-def record_to_case(rec: Dict[str, Any]):
+def record_to_case(rec: dict[str, Any]):
     """
     Convert a replay record into (EvalCase, contexts).
 
@@ -116,6 +116,7 @@ def record_to_case(rec: Dict[str, Any]):
 # Replay evaluator — no harness, no network
 # =============================================================================
 
+
 class ReplayEvaluator:
     """
     Scores replay records purely from data + the local judge.
@@ -126,13 +127,13 @@ class ReplayEvaluator:
 
     def __init__(
         self,
-        scorer: Optional[EvalScorer] = None,
+        scorer: EvalScorer | None = None,
         pass_threshold: float = 0.6,
     ):
         self._scorer = scorer or EvalScorer()
         self.pass_threshold = pass_threshold
 
-    def score_record(self, rec: Dict[str, Any]) -> EvalResult:
+    def score_record(self, rec: dict[str, Any]) -> EvalResult:
         case, contexts = record_to_case(rec)
         answer = rec.get("answer", "") or ""
         intent = rec.get("intent", "") or ""
@@ -158,7 +159,7 @@ class ReplayEvaluator:
 
     async def score_all_async(
         self,
-        records: List[Dict[str, Any]],
+        records: list[dict[str, Any]],
         concurrency: int = 4,
     ) -> EvalReport:
         """Score all records with bounded concurrency (judge calls)."""
@@ -174,23 +175,15 @@ class ReplayEvaluator:
         results = await asyncio.gather(*tasks)
         return self._build_report(list(results))
 
-    def _build_report(self, results: List[EvalResult]) -> EvalReport:
+    def _build_report(self, results: list[EvalResult]) -> EvalReport:
         total = len(results)
         valid = [r for r in results if r.error is None]
-        passed = sum(
-            1 for r in valid if r.score.overall_score >= self.pass_threshold
-        )
+        passed = sum(1 for r in valid if r.score.overall_score >= self.pass_threshold)
         failed = total - passed
-        avg_score = (
-            sum(r.score.overall_score for r in valid) / len(valid) if valid else 0.0
-        )
+        avg_score = sum(r.score.overall_score for r in valid) / len(valid) if valid else 0.0
 
-        def _avg(attr: str) -> Optional[float]:
-            vals = [
-                getattr(r.score, attr)
-                for r in valid
-                if getattr(r.score, attr) is not None
-            ]
+        def _avg(attr: str) -> float | None:
+            vals = [getattr(r.score, attr) for r in valid if getattr(r.score, attr) is not None]
             return sum(vals) / len(vals) if vals else None
 
         return EvalReport(
@@ -211,7 +204,8 @@ class ReplayEvaluator:
 # CLI
 # =============================================================================
 
-def _fmt(v: Optional[float]) -> str:
+
+def _fmt(v: float | None) -> str:
     return f"{v:.3f}" if isinstance(v, (int, float)) else "  n/a"
 
 
@@ -219,7 +213,9 @@ def _print_summary(summary) -> None:
     print("\n" + "=" * 60)
     print(f"Replay run {summary.run_id}  (tag={summary.tag}, commit={summary.git_commit})")
     print("=" * 60)
-    print(f"  total / passed / failed : {summary.total_cases} / {summary.passed} / {summary.failed}")
+    print(
+        f"  total / passed / failed : {summary.total_cases} / {summary.passed} / {summary.failed}"
+    )
     print(f"  average_score           : {_fmt(summary.average_score)}")
     print(f"  avg_faithfulness        : {_fmt(summary.avg_faithfulness)}")
     print(f"  avg_answer_relevancy    : {_fmt(summary.avg_answer_relevancy)}")
@@ -257,8 +253,7 @@ async def _run(args: argparse.Namespace) -> int:
 
     if args.fail_on_regression:
         prior = [
-            s for s in load_history()
-            if s.dataset == dataset_tag and s.run_id != summary.run_id
+            s for s in load_history() if s.dataset == dataset_tag and s.run_id != summary.run_id
         ]
         baseline = prior[-1] if prior else None
         if baseline is None:
@@ -275,18 +270,22 @@ async def _run(args: argparse.Namespace) -> int:
     return 0
 
 
-def main(argv: Optional[List[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Offline replay evaluator: score recorded (query,answer,contexts) from JSONL."
     )
     parser.add_argument("dataset", help="Path to a JSONL replay dataset.")
     parser.add_argument("--concurrency", type=int, default=4)
-    parser.add_argument("--no-judge", action="store_true",
-                        help="Rule-based only (no judge LLM calls).")
+    parser.add_argument(
+        "--no-judge", action="store_true", help="Rule-based only (no judge LLM calls)."
+    )
     parser.add_argument("--tag", default="replay")
     parser.add_argument("--pass-threshold", type=float, default=0.6)
-    parser.add_argument("--fail-on-regression", action="store_true",
-                        help="Exit 1 if any metric regresses vs the previous replay run.")
+    parser.add_argument(
+        "--fail-on-regression",
+        action="store_true",
+        help="Exit 1 if any metric regresses vs the previous replay run.",
+    )
     args = parser.parse_args(argv)
 
     try:

@@ -32,8 +32,9 @@ ADMIN_GATED = [
 
 
 @pytest.fixture
-def client_strict_admin(tmp_data_dir, fake_llm, fake_retriever, fake_harness,
-                         fake_session_memory, monkeypatch):
+def client_strict_admin(
+    tmp_data_dir, fake_llm, fake_retriever, fake_harness, fake_session_memory, monkeypatch
+):
     """A TestClient with ADMIN_API_KEY configured, carrying NO key header so
     require_admin must reject non-loopback requests.
 
@@ -68,8 +69,13 @@ def client_strict_admin(tmp_data_dir, fake_llm, fake_retriever, fake_harness,
     import core.fast_mode as fast_mod
 
     async def _fake_fast_generate_async(query, **kwargs):
-        return SimpleNamespace(answer="ok", sources=[], retrieval_count=0,
-                               retrieval_time_ms=1.0, generation_time_ms=1.0)
+        return SimpleNamespace(
+            answer="ok",
+            sources=[],
+            retrieval_count=0,
+            retrieval_time_ms=1.0,
+            generation_time_ms=1.0,
+        )
 
     monkeypatch.setattr(fast_mod, "fast_generate_async", _fake_fast_generate_async)
 
@@ -87,8 +93,7 @@ def client_strict_admin(tmp_data_dir, fake_llm, fake_retriever, fake_harness,
     monkeypatch.setenv("ADMIN_API_KEY", "correct-stage1-key")
     from fastapi.testclient import TestClient
 
-    client = TestClient(app, headers={"X-Admin-Key": "WRONG-KEY"},
-                        raise_server_exceptions=True)
+    client = TestClient(app, headers={"X-Admin-Key": "WRONG-KEY"}, raise_server_exceptions=True)
     with client:
         yield client
     app.dependency_overrides.clear()
