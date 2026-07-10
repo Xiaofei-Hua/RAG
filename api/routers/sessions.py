@@ -97,7 +97,7 @@ async def list_sessions(
         )
     except Exception as e:
         log.error(f"Failed to list sessions: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="服务暂时不可用，请稍后重试")
 
 
 @router.get("/{session_id}", response_model=SessionInfo)
@@ -121,7 +121,7 @@ async def get_session(
         raise
     except Exception as e:
         log.error(f"Failed to get session: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="服务暂时不可用，请稍后重试")
 
 
 @router.post("/{session_id}/extend")
@@ -139,7 +139,7 @@ async def extend_session(
         raise
     except Exception as e:
         log.error(f"Failed to extend session: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="服务暂时不可用，请稍后重试")
 
 
 @router.delete("/{session_id}")
@@ -154,4 +154,4 @@ async def delete_session(
 
     except Exception as e:
         log.error(f"Failed to delete session: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="服务暂时不可用，请稍后重试")

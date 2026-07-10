@@ -92,17 +92,22 @@ def append_cases(path: str, new_cases: list[EvalCase]) -> int:
 
     Existing ids are skipped to avoid duplicates. Returns the number of cases
     actually appended.
+
+    The whole file is rewritten with a single top-level ``cases:`` key: the
+    previous implementation appended a fresh ``cases:`` mapping on every call
+    (append mode), and PyYAML ``safe_load`` keeps only the LAST duplicate
+    top-level key — so every previously-promoted case was silently lost on the
+    next promotion (B5).
     """
-    existing = {c.id for c in load_dataset(path)}
-    to_add = [c for c in new_cases if c.id and c.id not in existing]
+    existing = load_dataset(path)
+    seen = {c.id for c in existing if c.id}
+    to_add = [c for c in new_cases if c.id and c.id not in seen]
     if not to_add:
         return 0
 
-    # Serialize new cases as YAML dicts and append.
     import yaml
 
-    new_dicts: list[dict[str, Any]] = []
-    for c in to_add:
+    def _to_dict(c: EvalCase) -> dict[str, Any]:
         d: dict[str, Any] = {
             "id": c.id,
             "query": c.query,
@@ -117,15 +122,14 @@ def append_cases(path: str, new_cases: list[EvalCase]) -> int:
         }
         if c.expected_context_ids:
             d["expected_context_ids"] = c.expected_context_ids
-        new_dicts.append(d)
+        return d
 
+    # Preserve existing order, then append new cases.
+    all_dicts = [_to_dict(c) for c in existing] + [_to_dict(c) for c in to_add]
     p = Path(path)
-    mode = "a" if p.exists() else "w"
-    header = "" if p.exists() and p.stat().st_size > 0 else "cases:\n"
-    with p.open(mode, encoding="utf-8") as f:
-        f.write(header)
+    with p.open("w", encoding="utf-8") as f:
         yaml.dump(
-            {"cases": new_dicts},
+            {"cases": all_dicts},
             f,
             allow_unicode=True,
             default_flow_style=False,

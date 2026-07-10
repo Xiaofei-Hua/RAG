@@ -27,17 +27,20 @@ class ErrorHandlerMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         except Exception as e:
-            # Log the error
+            # Log the full detail server-side.
             trace_id = getattr(request.state, "trace_id", "unknown")
             log.error(f"[{trace_id}] Unhandled error: {e}", exc_info=True)
 
-            # Return standardized error response
+            # Return standardized error response. The message is generic — str(e)
+            # may contain internal paths, DB URIs, or stack internals (B3
+            # information-disclosure hardening). The trace_id lets operators
+            # correlate the client-visible error with the server log.
             return JSONResponse(
                 status_code=500,
                 content={
                     "error": {
                         "type": type(e).__name__,
-                        "message": str(e),
+                        "message": "服务暂时不可用，请稍后重试",
                         "trace_id": trace_id,
                     }
                 },

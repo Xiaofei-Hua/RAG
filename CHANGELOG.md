@@ -35,6 +35,36 @@ New env: `GRAPH_RAG_ENABLED`, `GRAPH_RAG_WEIGHT`, `GRAPH_RAG_TOP_K`,
 `core/retrieval/graph_retriever.py`. `DomainProfile` gains optional
 `entity_types` / `relation_types` fields (backward compatible).
 
+### Fixed — Security & data-loss audit (Stage 1) (`audit-stage1`)
+
+Five Critical/High bugs from the 2026-07 full-repo adversarial audit. See
+`docs/specs/bugfix-2026-07-stage1/`.
+
+- `[breaking]` **Admin auth gating** (B2): `GET /api/admin/eval/runs`,
+  `/eval/runs/{run_id}`, `/eval/candidates`, `/retrieval-misses`, and the
+  feedback endpoints `/stats/summary`, `/escalations/pending`,
+  `POST /escalations/{id}/resolve` are now gated by `require_admin` — they
+  were previously open, inconsistent with the already-gated `/inferences`
+  endpoints. `resolve_escalation` (state-mutating) was fully unauthenticated.
+  *Migration*: set `ADMIN_API_KEY` (production MUST) or call from loopback
+  (local dev). Anonymous callers now receive 401/403.
+- **Path traversal hardening** (B1): `eval_run_detail`'s `run_id` is now
+  validated against `^[A-Za-z0-9_-]+$` plus an `is_relative_to` containment
+  check before any filesystem read (defence-in-depth; malformed ids now 400).
+- **Exception-text disclosure** (B3): SSE error frames, `HTTPException(500)`
+  responses, and the error-handler middleware no longer forward `str(e)` to
+  clients (which could include internal paths/DB URIs). A generic message is
+  returned; the full detail is logged server-side with `trace_id`.
+- **Circuit-breaker `success_threshold`** (B4): the HALF_OPEN→CLOSED transition
+  compared against a cumulative success counter (never reset), so after warmup
+  a single half-open success closed the circuit — defeating
+  `success_threshold > 1`. Now tracks a dedicated `_half_open_successes` window
+  reset on every transition.
+- **Golden-case data loss** (B5): `append_cases` wrote a fresh top-level
+  `cases:` key on every promotion; PyYAML `safe_load` keeps only the last
+  duplicate key, so previously-promoted golden cases were silently lost. Now
+  rewrites the file with a single `cases:` key, preserving all cases.
+
 ### Changed — Milvus collection default renamed `[breaking]` (`collection-rename`)
 
 `[breaking]` The default `COLLECTION_NAME` changed from `t_collection01` to

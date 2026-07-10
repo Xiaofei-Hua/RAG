@@ -347,7 +347,7 @@ async def get_config(_: None = Depends(require_admin)):
 
 
 @router.get("/eval/runs")
-async def eval_runs(limit: int = 20):
+async def eval_runs(limit: int = 20, _: None = Depends(require_admin)):
     """List recent evaluation run summaries (history.jsonl)."""
     from agent.eval import load_history
 
@@ -356,21 +356,31 @@ async def eval_runs(limit: int = 20):
 
 
 @router.get("/eval/runs/{run_id}")
-async def eval_run_detail(run_id: str):
+async def eval_run_detail(run_id: str, _: None = Depends(require_admin)):
     """Full per-case detail for one eval run."""
     import json
+    import re
     from pathlib import Path
 
-    path = Path("data/eval/runs") / f"{run_id}.json"
-    if not path.exists():
-        from fastapi import HTTPException
+    from fastapi import HTTPException
 
+    # Defence-in-depth against path traversal: the run_id is user-controlled
+    # and flows into a filesystem path. Reject anything outside the safe
+    # allowlist BEFORE touching the filesystem (route converter alone does not
+    # decode %2f, so an encoded '/' could otherwise reach here).
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", run_id):
+        raise HTTPException(400, "Invalid run_id")
+    runs_dir = Path("data/eval/runs").resolve()
+    path = (runs_dir / f"{run_id}.json")
+    if not path.resolve().is_relative_to(runs_dir):
+        raise HTTPException(400, "Invalid run_id")
+    if not path.exists():
         raise HTTPException(404, f"Run not found: {run_id}")
     return json.loads(path.read_text(encoding="utf-8"))
 
 
 @router.get("/eval/candidates")
-async def eval_candidates():
+async def eval_candidates(_: None = Depends(require_admin)):
     """List candidates promoted from production feedback (awaiting golden promotion)."""
     from agent.eval import list_candidates
 
@@ -447,7 +457,7 @@ async def inference_detail(trace_id: str, _: None = Depends(require_admin)):
 
 
 @router.get("/retrieval-misses")
-async def retrieval_misses(limit: int = 50):
+async def retrieval_misses(limit: int = 50, _: None = Depends(require_admin)):
     """Retrieval-miss signals for offline tuning (low-faithfulness feedback)."""
     from agent.eval import get_retrieval_misses
 

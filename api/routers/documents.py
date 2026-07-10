@@ -407,7 +407,7 @@ async def upload_document(
         raise
     except Exception as e:
         log.error(f"Failed to upload document: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="服务暂时不可用，请稍后重试")
 
 
 def _extract_graph_if_enabled(documents: list[Document], source: str, file_hash: str) -> None:

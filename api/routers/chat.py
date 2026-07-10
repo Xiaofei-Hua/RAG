@@ -853,7 +853,7 @@ async def chat(
                 metadata=degraded_meta,
             )
 
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="服务暂时不可用，请稍后重试")
 
 
 @router.get("/history/{session_id}", response_model=ChatHistoryResponse)
@@ -889,7 +889,7 @@ async def get_chat_history(
 
     except Exception as e:
         log.error(f"Failed to get chat history: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="服务暂时不可用，请稍后重试")
 
 
 @router.delete("/session/{session_id}")
@@ -903,7 +903,7 @@ async def clear_session(
         return {"status": "success", "message": f"Session {session_id} cleared"}
     except Exception as e:
         log.error(f"Failed to clear session: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="服务暂时不可用，请稍后重试")
 
 
 @router.post("/stream")
@@ -1308,8 +1308,11 @@ async def chat_stream(
             yield _sse(done_payload)
 
         except Exception as e:
-            log.error(f"Stream error: {e}")
-            yield _sse({"type": "error", "message": str(e)})
+            # Log the full detail server-side, but send the client a generic
+            # message — str(e) may contain internal paths, DB URIs, or stack
+            # internals (B3 information-disclosure hardening).
+            log.error(f"Stream error: {e}", exc_info=True)
+            yield _sse({"type": "error", "message": "服务暂时不可用，请稍后重试"})
 
     return StreamingResponse(
         generate(),

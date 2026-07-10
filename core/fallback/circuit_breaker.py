@@ -98,6 +98,13 @@ class CircuitBreaker:
         self._state = CircuitState.CLOSED
         self._stats = CircuitStats()
         self._half_open_calls = 0
+        # Consecutive successes observed since entering HALF_OPEN. Used by
+        # _on_success to decide when enough healthy calls warrant closing the
+        # circuit (B4: the previous code compared against the cumulative
+        # successful_calls counter, which is never reset — so after warmup a
+        # single half-open success closed the circuit, defeating
+        # success_threshold > 1).
+        self._half_open_successes = 0
         self._last_state_change = time.time()
 
         log.debug(f"CircuitBreaker '{name}' created")
@@ -210,7 +217,8 @@ class CircuitBreaker:
         self._stats.consecutive_failures = 0
 
         if self._state == CircuitState.HALF_OPEN:
-            if self._stats.successful_calls >= self.config.success_threshold:
+            self._half_open_successes += 1
+            if self._half_open_successes >= self.config.success_threshold:
                 self._transition_to(CircuitState.CLOSED)
 
         log.debug(f"Circuit '{self.name}' call succeeded")
@@ -237,6 +245,11 @@ class CircuitBreaker:
         self._state = new_state
         self._last_state_change = time.time()
         self._half_open_calls = 0
+        # Reset the half-open success window on every transition. Entering
+        # HALF_OPEN starts a fresh consecutive-success count; leaving it
+        # (to CLOSED or back to OPEN) clears the window so a later re-entry
+        # requires the full success_threshold again (B4).
+        self._half_open_successes = 0
 
         log.info(f"Circuit '{self.name}' state change: {old_state.value} -> {new_state.value}")
 
@@ -245,6 +258,7 @@ class CircuitBreaker:
         self._state = CircuitState.CLOSED
         self._stats = CircuitStats()
         self._half_open_calls = 0
+        self._half_open_successes = 0
         self._last_state_change = time.time()
         log.info(f"Circuit '{self.name}' reset")
 

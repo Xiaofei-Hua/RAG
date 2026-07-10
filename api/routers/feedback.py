@@ -4,9 +4,10 @@ Feedback and Escalation API Endpoints
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
+from api.routers.admin import require_admin
 from utils.log_utils import log
 
 router = APIRouter()
@@ -86,7 +87,7 @@ async def submit_feedback(request: FeedbackRequest):
 
 
 @router.get("/stats/summary")
-async def feedback_stats():
+async def feedback_stats(_: None = Depends(require_admin)):
     """Get aggregate feedback statistics."""
     from agent.feedback.collector import get_feedback_collector
 
@@ -94,7 +95,7 @@ async def feedback_stats():
 
 
 @router.get("/escalations/pending")
-async def pending_escalations():
+async def pending_escalations(_: None = Depends(require_admin)):
     """List pending escalations (admin)."""
     from agent.feedback.escalation import get_escalation_manager
 
@@ -136,7 +137,9 @@ async def get_feedback(session_id: str):
 
 
 @router.post("/escalations/{escalation_id}/resolve")
-async def resolve_escalation(escalation_id: str, request: ResolveEscalationRequest):
+async def resolve_escalation(
+    escalation_id: str, request: ResolveEscalationRequest, _: None = Depends(require_admin)
+):
     """Resolve an escalation."""
     from agent.feedback.escalation import get_escalation_manager
 
