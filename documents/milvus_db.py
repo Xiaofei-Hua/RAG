@@ -57,6 +57,16 @@ def _env_int(name: str, default: int) -> int:
     return int(_env(name, str(default)))  # type: ignore[arg-type]
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    """Read a bool attribute from utils.env_utils live (test-sealable)."""
+    try:
+        import utils.env_utils as _env_mod
+
+        return bool(getattr(_env_mod, name))
+    except (ImportError, AttributeError):
+        return default
+
+
 @dataclass
 class MilvusConfig:
     """
@@ -99,6 +109,13 @@ class MilvusConfig:
         "file_hash",
         "parent_id",
     )
+
+    # Native sparse vector (docs/specs/retrieval-backend-modernization, F-02).
+    # When True, the collection gains a SPARSE_FLOAT_VECTOR field + SPARSE_INVERTED_INDEX,
+    # and the sparse retrieval leg uses Milvus sparse_search (BGE-M3 lexical_weights)
+    # instead of the self-implemented BM25. F-01: filter goes through search(filter=),
+    # a first-class param — NOT hybrid_search's top-level filter (pymilvus 2.5.18 drops it).
+    enable_sparse: bool = field(default_factory=lambda: _env_bool("MILVUS_SPARSE_INDEX", True))
 
     def __post_init__(self):
         # Read env vars live (not from cached module constants) so runtime
@@ -336,6 +353,11 @@ class MilvusManager:
         schema.add_field(
             field_name="dense", datatype=DataType.FLOAT_VECTOR, dim=self.config.dense_dim
         )
+        # Native sparse vector field (F-02). BGE-M3 lexical_weights enable Milvus
+        # sparse_search to replace the self-implemented BM25 leg. Gated by
+        # enable_sparse so MILVUS_SPARSE_INDEX=false reverts to the legacy schema.
+        if self.config.enable_sparse:
+            schema.add_field(field_name="sparse", datatype=DataType.SPARSE_FLOAT_VECTOR)
         # Metadata fields
         schema.add_field(
             field_name="source",
@@ -359,6 +381,14 @@ class MilvusManager:
         if self.config.index_params:
             index_kwargs.update(self.config.index_params)
         index_params.add_index(**index_kwargs)
+
+        # Sparse vector index (F-02): SPARSE_INVERTED_INDEX with IP metric.
+        if self.config.enable_sparse:
+            index_params.add_index(
+                field_name="sparse",
+                index_type="SPARSE_INVERTED_INDEX",
+                metric_type=MetricType.IP,
+            )
 
         # Create collection
         self.client.create_collection(
@@ -460,19 +490,31 @@ class MilvusManager:
             total_batches = (total + batch_size - 1) // batch_size
 
             try:
-                # Generate embeddings for this batch
+                # Generate embeddings for this batch. When the embedding function
+                # is BGEM3Embeddings and sparse is enabled, produce dense+sparse
+                # in one forward (encode_hybrid_batch); otherwise dense-only.
                 texts = [doc.page_content for doc in batch]
-                embeddings = self.embedding_function.embed_documents(texts)
+                sparse_vecs: list[dict[int, float]] | None = None
+                emb_fn = self.embedding_function
+                if self.config.enable_sparse and hasattr(emb_fn, "encode_hybrid_batch"):
+                    hybrid = emb_fn.encode_hybrid_batch(texts)
+                    embeddings = [dense for dense, _sparse in hybrid]
+                    sparse_vecs = [sparse for _dense, sparse in hybrid]
+                else:
+                    embeddings = emb_fn.embed_documents(texts)
 
                 # Prepare data for insertion
                 data = []
-                for doc, emb in zip(batch, embeddings):
+                for idx, (doc, emb) in enumerate(zip(batch, embeddings)):
                     row = {
                         "text": doc.page_content[: self.config.max_text_length],
                         "dense": emb,
                         "source": doc.metadata.get("source", "")[: self.config.max_metadata_length],
                         "title": doc.metadata.get("title", "")[: self.config.max_metadata_length],
                     }
+                    # F-02: write sparse vector when the collection has the field.
+                    if sparse_vecs is not None:
+                        row["sparse"] = sparse_vecs[idx]
                     # Add additional metadata as dynamic fields
                     for k, v in doc.metadata.items():
                         if k not in row and isinstance(v, (str, int, float, bool)):
@@ -611,6 +653,77 @@ class MilvusManager:
         except Exception as e:
             log.error(f"Search failed: {e}")
             raise MilvusOperationError(f"Search failed: {e}") from e
+
+    def sparse_search(
+        self,
+        query_sparse: dict[int, float],
+        top_k: int = 10,
+        filter_expr: str | None = None,
+    ) -> list[SearchResult]:
+        """Sparse vector search on the 'sparse' field (BGE-M3 lexical_weights).
+
+        F-02: replaces the self-implemented BM25 leg with Milvus native sparse
+        retrieval. F-01: filter goes through search(filter=), a first-class param
+        on MilvusClient.search — NOT hybrid_search's top-level filter which
+        pymilvus 2.5.18 silently drops (Prepare.hybrid_search_request_with_ranker
+        never reads it).
+        """
+        log.debug(f"Sparse searching (top_k={top_k})")
+        try:
+            self._ensure_collection_loaded()
+
+            output_fields = ["text", "source", "title"] + [
+                f for f in self.config.extra_output_fields
+            ]
+            search_params = {"metric_type": "IP"}
+
+            try:
+                results = self.client.search(
+                    collection_name=self.config.collection_name,
+                    data=[query_sparse],
+                    anns_field="sparse",
+                    search_params=search_params,
+                    limit=top_k,
+                    output_fields=output_fields,
+                    filter=filter_expr,  # F-01: first-class param on search()
+                )
+            except Exception as field_err:
+                # Legacy collection without extra dynamic fields — retry with base.
+                log.debug(f"sparse search with extra fields failed ({field_err}); retry base")
+                results = self.client.search(
+                    collection_name=self.config.collection_name,
+                    data=[query_sparse],
+                    anns_field="sparse",
+                    search_params=search_params,
+                    limit=top_k,
+                    output_fields=["text", "source", "title"],
+                    filter=filter_expr,
+                )
+
+            search_results = []
+            if results and len(results) > 0:
+                for hit in results[0]:
+                    entity = hit.get("entity", {})
+                    metadata = {
+                        "source": entity.get("source", ""),
+                        "title": entity.get("title", ""),
+                    }
+                    for fld in self.config.extra_output_fields:
+                        if fld in entity and entity[fld] not in (None, ""):
+                            metadata[fld] = entity[fld]
+                    search_results.append(
+                        SearchResult(
+                            id=hit.get("id", 0),
+                            text=entity.get("text", ""),
+                            score=hit.get("distance", 0.0),
+                            metadata=metadata,
+                        )
+                    )
+            log.debug(f"Sparse search found {len(search_results)} results")
+            return search_results
+        except Exception as e:
+            log.error(f"Sparse search failed: {e}")
+            raise MilvusOperationError(f"Sparse search failed: {e}") from e
 
     def query(
         self, filter_expr: str, output_fields: list[str] | None = None, limit: int = 100

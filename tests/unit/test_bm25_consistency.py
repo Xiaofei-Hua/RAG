@@ -36,15 +36,20 @@ class TestBM25SingletonUnification:
         """The hybrid retriever must consume the shared BM25 singleton, not a
         private copy, so document mutations are visible on the read path."""
         from core.retrieval.bm25_retriever import get_bm25_retriever
-        from core.retrieval.hybrid_retriever import HybridRetriever
+        from core.retrieval.hybrid_retriever import HybridRetriever, HybridRetrieverConfig
 
         # Build a retriever WITHOUT touching Milvus: inject a fake dense manager
         # whose query() returns nothing so _ensure_sparse_indexed is a no-op.
+        # enable_native_sparse=False forces the legacy BM25 leg (this test guards
+        # the BM25 singleton contract, not the M3 native sparse path).
         class _FakeDense:
             def query(self, **kwargs):
                 return []
 
-        hr = HybridRetriever(dense_manager=_FakeDense())
+        hr = HybridRetriever(
+            dense_manager=_FakeDense(),
+            config=HybridRetrieverConfig(enable_native_sparse=False),
+        )
         singleton = get_bm25_retriever()
         # Accessing the property resolves to the singleton.
         assert hr.sparse_retriever is singleton
@@ -57,7 +62,7 @@ class TestBM25SingletonUnification:
 
         from core.retrieval.bm25_retriever import get_bm25_retriever
         from core.retrieval.cache import bump_retrieval_cache_version
-        from core.retrieval.hybrid_retriever import HybridRetriever
+        from core.retrieval.hybrid_retriever import HybridRetriever, HybridRetrieverConfig
 
         class _FakeDense:
             def query(self, **kwargs):
@@ -79,7 +84,11 @@ class TestBM25SingletonUnification:
             singleton.add_documents([doc])
             bump_retrieval_cache_version()  # mirrors documents router behaviour
 
-            hr = HybridRetriever(dense_manager=_FakeDense())
+            # enable_native_sparse=False forces BM25 (this test guards BM25 contract).
+            hr = HybridRetriever(
+                dense_manager=_FakeDense(),
+                config=HybridRetrieverConfig(enable_native_sparse=False),
+            )
             results = hr.retrieve(marker, top_k=3)
             assert any(marker in d.page_content for d in results), (
                 "BM25 mutation did not propagate to the hybrid read path"

@@ -19,6 +19,7 @@ from utils.env_utils import (
     GRAPH_RAG_ENABLED,
     GRAPH_RAG_TOP_K,
     GRAPH_RAG_WEIGHT,
+    MILVUS_SPARSE_INDEX,
     RERANKER_CANDIDATE_TOP_K,
     RERANKER_ENABLED,
     RERANKER_TOP_K,
@@ -74,6 +75,15 @@ class HybridRetrieverConfig:
     enable_graph: bool = GRAPH_RAG_ENABLED
     graph_weight: float = GRAPH_RAG_WEIGHT
     graph_top_k: int = GRAPH_RAG_TOP_K
+
+    # Native sparse leg (docs/specs/retrieval-backend-modernization, F-02 方案 A).
+    # When True, the sparse leg uses Milvus sparse_search (BGE-M3 lexical_weights)
+    # instead of the self-implemented BM25Retriever. The dense and sparse legs stay
+    # two INDEPENDENT searches so _rrf_fusion's double-hit accumulation semantics
+    # (hybrid_retriever.py:637-639) are preserved byte-for-byte (F-02). F-01: filter
+    # goes through search(filter=), not hybrid_search's top-level filter.
+    # False reverts to BM25Retriever (REQ-RBM-005 legacy path, BM25 code retained).
+    enable_native_sparse: bool = MILVUS_SPARSE_INDEX
 
 
 @dataclass
@@ -301,7 +311,7 @@ class HybridRetriever:
                 )
             else:
                 dense_results = self._dense_retrieve(query, filter_expr)
-                sparse_results = self._sparse_retrieve(query)
+                sparse_results = self._sparse_retrieve(query, filter_expr)
                 graph_results = self._graph_retrieve(query, filter_expr)
 
             # Fuse results
@@ -371,7 +381,7 @@ class HybridRetriever:
         try:
             # Parallel async retrieval
             dense_task = asyncio.create_task(self._adense_retrieve(query, filter_expr))
-            sparse_task = asyncio.create_task(self._asparse_retrieve(query))
+            sparse_task = asyncio.create_task(self._asparse_retrieve(query, filter_expr))
             tasks = [dense_task, sparse_task]
             if self.config.enable_graph:
                 graph_task = asyncio.create_task(self._agraph_retrieve(query, filter_expr))
@@ -442,12 +452,54 @@ class HybridRetriever:
             log.warning(f"Dense retrieval failed: {e}")
             return []
 
-    def _sparse_retrieve(self, query: str) -> list[RetrievalResult]:
-        """Perform sparse (BM25) retrieval."""
+    def _sparse_retrieve(self, query: str, filter_expr: str | None = None) -> list[RetrievalResult]:
+        """Perform sparse retrieval.
+
+        F-02 方案 A: dispatches between native Milvus sparse_search (BGE-M3
+        lexical_weights) and the legacy self-implemented BM25. The native path
+        is filter-aware (F-01: filter via search.filter); the legacy BM25 leg
+        ignores filter_expr (pre-existing behaviour — BM25Retriever has no
+        source filtering). Both return independent rank lists so _rrf_fusion's
+        double-hit accumulation semantics are preserved.
+        """
+        if self.config.enable_native_sparse:
+            return self._sparse_retrieve_m3(query, filter_expr)
         try:
             return self.sparse_retriever.retrieve(query, self.config.sparse_top_k)
         except Exception as e:
-            log.warning(f"Sparse retrieval failed: {e}")
+            log.warning(f"Sparse (BM25) retrieval failed: {e}")
+            return []
+
+    def _sparse_retrieve_m3(
+        self, query: str, filter_expr: str | None = None
+    ) -> list[RetrievalResult]:
+        """Native Milvus sparse search (BGE-M3 lexical_weights).
+
+        F-02: replaces BM25. F-01: filter goes through sparse_search(filter_expr)
+        which calls MilvusClient.search(filter=) — a first-class param. Degrades
+        to [] on failure so RRF falls back to dense+graph (REQ-RBM-004).
+        """
+        try:
+            from models.bge_m3_embeddings import get_bge_m3_embeddings
+
+            emb = get_bge_m3_embeddings()
+            _dense, sparse = emb.encode_hybrid(query)
+            results = self.dense_manager.sparse_search(
+                query_sparse=sparse,
+                top_k=self.config.sparse_top_k,
+                filter_expr=filter_expr,
+            )
+            return [
+                RetrievalResult(
+                    document=r.to_document(),
+                    score=r.score,
+                    source="sparse",
+                    rank=i + 1,
+                )
+                for i, r in enumerate(results)
+            ]
+        except Exception as e:
+            log.warning(f"Sparse M3 retrieval failed, degraded to empty: {e}")
             return []
 
     async def _adense_retrieve(
@@ -458,9 +510,13 @@ class HybridRetriever:
             None, self._dense_retrieve, query, filter_expr
         )
 
-    async def _asparse_retrieve(self, query: str) -> list[RetrievalResult]:
+    async def _asparse_retrieve(
+        self, query: str, filter_expr: str | None = None
+    ) -> list[RetrievalResult]:
         """Async sparse retrieval."""
-        return await asyncio.get_running_loop().run_in_executor(None, self._sparse_retrieve, query)
+        return await asyncio.get_running_loop().run_in_executor(
+            None, self._sparse_retrieve, query, filter_expr
+        )
 
     def _graph_retrieve(self, query: str, filter_expr: str | None = None) -> list[RetrievalResult]:
         """GraphRAG leg (third RRF leg). Gated by ``enable_graph``.
@@ -575,7 +631,7 @@ class HybridRetriever:
         ``enable_graph`` is on and degrades to ``[]`` on any failure.
         """
         dense_future = self._executor.submit(self._dense_retrieve, query, filter_expr)
-        sparse_future = self._executor.submit(self._sparse_retrieve, query)
+        sparse_future = self._executor.submit(self._sparse_retrieve, query, filter_expr)
         dense_results = dense_future.result()
         sparse_results = sparse_future.result()
         graph_results: list[RetrievalResult] = []
