@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from langchain_core.documents import Document
 
@@ -39,20 +39,52 @@ def _retrieval_cache_enabled() -> bool:
     return os.getenv("RETRIEVAL_CACHE_ENABLED", "true").lower() in ("1", "true", "yes", "on")
 
 
+def _env_float(name: str, default: float) -> float:
+    """Read a float env var (F4 parameterisation — algorithm constants tunable)."""
+    import os
+
+    val = os.getenv(name)
+    if val is None or val.strip() == "":
+        return default
+    try:
+        return float(val)
+    except ValueError:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    """Read an int env var (F4 parameterisation)."""
+    import os
+
+    val = os.getenv(name)
+    if val is None or val.strip() == "":
+        return default
+    try:
+        return int(val)
+    except ValueError:
+        return default
+
+
 @dataclass
 class HybridRetrieverConfig:
-    """Configuration for hybrid retriever."""
+    """Configuration for hybrid retriever.
+
+    F4: algorithm constants (RRF k, MMR lambda, dense/sparse weights) are now
+    env-tunable so the eval flywheel can calibrate them without code changes.
+    Defaults match the pre-F4 hardcoded values (byte-for-byte identical when
+    the env vars are unset).
+    """
 
     # Dense retrieval
-    dense_weight: float = 0.5
+    dense_weight: float = field(default_factory=lambda: _env_float("DENSE_WEIGHT", 0.5))
     dense_top_k: int = RERANKER_CANDIDATE_TOP_K if RERANKER_ENABLED else 5
 
     # Sparse retrieval (BM25)
-    sparse_weight: float = 0.5
+    sparse_weight: float = field(default_factory=lambda: _env_float("SPARSE_WEIGHT", 0.5))
     sparse_top_k: int = RERANKER_CANDIDATE_TOP_K if RERANKER_ENABLED else 5
 
-    # RRF parameters
-    rrf_k: int = 60  # RRF constant
+    # RRF parameters — F4: RRF_K env-tunable (eval flywheel calibrates).
+    rrf_k: int = field(default_factory=lambda: _env_int("RRF_K", 60))
 
     # Final results. Without a reranker, RRF+MMR output is the final ranking —
     # 3 is too aggressive a cut (loses relevant-but-lower-ranked evidence);
@@ -62,9 +94,9 @@ class HybridRetrieverConfig:
 
     # MMR de-redundancy (applied after RRF, optionally after reranker).
     # When enabled, near-duplicate chunks are removed in favour of diverse,
-    # still-relevant evidence.
+    # still-relevant evidence. F4: MMR_LAMBDA env-tunable.
     enable_mmr: bool = True
-    mmr_lambda: float = 0.7  # 1.0 = pure relevance, 0.0 = pure diversity
+    mmr_lambda: float = field(default_factory=lambda: _env_float("MMR_LAMBDA", 0.7))
 
     # Performance
     enable_parallel: bool = True
