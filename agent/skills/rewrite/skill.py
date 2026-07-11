@@ -89,6 +89,18 @@ class RewriteSkill(BaseSkill):
         # Extract original question
         original_question = self._extract_question(messages)
 
+        # REQ-CR-003: resolve coreferences using conversation history before rewrite.
+        # E.g. "那第二条呢？" + history → "分析振动频率的具体步骤". No-op when no
+        # history or no coreference markers (avoids extra LLM call).
+        history = (context.shared_state or {}).get("conversation_history") or []
+        if history:
+            try:
+                from core.retrieval.query_transform import condense_query
+
+                original_question = condense_query(original_question, history)
+            except Exception:  # noqa: BLE001 — degrade to original question
+                pass
+
         # Rewrite with retry
         for attempt in range(self._skill_config.max_retries + 1):
             try:

@@ -370,6 +370,39 @@ def _is_identity_capability_query(message: str) -> bool:
     return False
 
 
+async def _load_history_for_rag(session_id: str, session_memory) -> list:
+    """Load + compress session history for the multi-turn RAG path (REQ-CR-001).
+
+    Reads history from session_memory, compresses via rolling summary when the
+    conversation is long, and returns messages oldest-first. Degrades to []
+    (single-turn) on any failure — never blocks the RAG path.
+    """
+    try:
+        history = await session_memory.get_messages(session_id)
+        history = list(reversed(history))  # oldest-first
+        if not history:
+            return []
+        if _conversational_rag_enabled():
+            from core.memory.summarizer import compress_history
+
+            return await compress_history(history)
+        return history
+    except Exception:  # noqa: BLE001 — degrade to single-turn
+        return []
+
+
+def _conversational_rag_enabled() -> bool:
+    """Whether multi-turn RAG (history injection + condensation) is enabled."""
+    import os
+
+    return os.getenv("CONVERSATIONAL_RAG_ENABLED", "true").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 async def _run_general_chat(
     message: str, session_id: str, session_memory
 ) -> tuple[str, list, float | None, bool, str]:
@@ -675,6 +708,10 @@ async def chat(
 
             harness = get_agent_harness()
 
+            # REQ-CR-001: load compressed conversation history for multi-turn RAG
+            # (coreference resolution in rewrite + context-aware generation).
+            rag_history = await _load_history_for_rag(session_id, session_memory)
+
             # Bug2 Layer ⑤: inject intent_confidence so GenerateSkill's A/B
             # shunt can distinguish a misrouted general question (low conf) from
             # a genuine KB miss (high conf). The merge_shared_state reducer
@@ -686,6 +723,7 @@ async def chat(
                     "intent_confidence": intent_result.confidence,
                     "intent": intent_val,
                 },
+                history=rag_history,
             )
 
             # Bug2 Layer ⑤ sentinel takeover: if the generate node shunted a
@@ -1116,6 +1154,9 @@ async def chat_stream(
 
                 harness = get_agent_harness()
 
+                # REQ-CR-001: load compressed history for multi-turn RAG.
+                rag_history = await _load_history_for_rag(session_id, session_memory)
+
                 full_response = ""
                 collected_messages = []
                 # Answer trustworthiness, captured from the generate node's
@@ -1135,6 +1176,7 @@ async def chat_stream(
                         "intent_confidence": intent_result.confidence,
                         "intent": intent_val,
                     },
+                    history=rag_history,
                 ):
                     if isinstance(event, tuple) and len(event) == 2 and event[0] == "custom":
                         custom_event = event[1]

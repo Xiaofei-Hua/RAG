@@ -118,6 +118,8 @@ class GenerateSkill(BaseSkill):
         # Extract question and context
         question = self._extract_question(messages)
         ctx = self._extract_context(messages)
+        # REQ-CR-005: append compressed conversation history for multi-turn coherence.
+        ctx = self._inject_history(ctx, context)
 
         # Bug2 Layer ⑤ — A/B shunt (must run BEFORE the empty-context check so
         # it takes priority). Distinguishes a misrouted general question (low
@@ -397,6 +399,8 @@ class GenerateSkill(BaseSkill):
 
         question = self._extract_question(messages)
         ctx = self._extract_context(messages)
+        # REQ-CR-005: append compressed conversation history for multi-turn coherence.
+        ctx = self._inject_history(ctx, context)
 
         # Bug2 Layer ⑤ — A/B shunt (parity with the sync path; see execute).
         shunt = self._should_fallback_or_refuse(context)
@@ -658,6 +662,30 @@ class GenerateSkill(BaseSkill):
             return human_message.content
         except Exception:
             return messages[-1].content if messages else ""
+
+    @staticmethod
+    def _inject_history(ctx: str, context: SkillContext) -> str:
+        """Append compressed conversation history to the context (REQ-CR-005).
+
+        Gives the generator multi-turn coherence without changing the prompt
+        template. The history is already compressed (rolling summary) by the
+        router before reaching here. Degrades to ctx unchanged when no history.
+        """
+        history = (context.shared_state or {}).get("conversation_history") or []
+        if not history:
+            return ctx
+        try:
+            lines: list[str] = []
+            for msg in history[-6:]:  # bound to recent 6
+                role = "用户" if msg.type == "human" else ("助手" if msg.type == "ai" else None)
+                if role and msg.content:
+                    lines.append(f"{role}: {str(msg.content)[:200]}")
+            if lines:
+                history_block = "\n[对话历史]\n" + "\n".join(lines)
+                return (ctx + "\n" + history_block) if ctx else history_block
+            return ctx
+        except Exception:  # noqa: BLE001
+            return ctx
 
     @staticmethod
     def _extract_context(messages: list[BaseMessage]) -> str:
