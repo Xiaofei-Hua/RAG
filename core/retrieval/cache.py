@@ -165,6 +165,13 @@ class CachedEmbeddingFunction:
     def base(self):
         return self._base
 
+    def __getattr__(self, name):
+        """Transparently delegate unknown attributes (e.g. encode_hybrid_batch,
+        encode_late_chunked) to the wrapped base, so BGE-M3 hybrid methods are
+        reachable through the cache wrapper (add_documents / markdown_parser
+        check hasattr(emb_fn, 'encode_hybrid_batch'))."""
+        return getattr(self._base, name)
+
 
 def cached_embedding_function(base):
     """Wrap an embedding model with query caching."""

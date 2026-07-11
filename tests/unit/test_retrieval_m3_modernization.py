@@ -15,6 +15,7 @@ Run: pytest tests/unit/test_retrieval_m3_modernization.py -v
 
 from __future__ import annotations
 
+import os
 import sys
 from unittest.mock import MagicMock, patch
 
@@ -274,3 +275,63 @@ class TestSparseRetrieveDispatch:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# ===========================================================================
+# F1 dispatch — _get_local_embeddings returns BGEM3Embeddings for bge-m3
+# ===========================================================================
+
+
+class TestEmbeddingDispatch:
+    """The local embedding factory must return BGEM3Embeddings when the model
+    is BGE-M3, and HuggingFaceEmbeddings otherwise. Regression for the dispatch
+    bug found in smoke testing (Stage A had the design but not the impl)."""
+
+    def test_bge_m3_model_returns_bgem3_adapter(self):
+        """When EMBEDDING_MODEL contains 'bge-m3', get_embeddings() local branch
+        returns a BGEM3Embeddings instance (has encode_hybrid_batch)."""
+        from models.embedding_models import reset_embeddings
+        from models.bge_m3_embeddings import BGEM3Embeddings
+
+        with (
+            patch.dict(os.environ, {"EMBEDDING_PROVIDER": "local"}),
+            patch(
+                "models.embedding_models.get_embedding_model_source",
+                return_value="models/local_models/bge-m3",
+            ),
+            patch("FlagEmbedding.BGEM3FlagModel"),
+        ):
+            reset_embeddings()
+            from models.embedding_models import get_embeddings
+
+            emb = get_embeddings()
+            assert isinstance(emb, BGEM3Embeddings), (
+                f"Expected BGEM3Embeddings for bge-m3, got {type(emb).__name__}"
+            )
+            reset_embeddings()
+
+    def test_non_m3_model_returns_huggingface(self):
+        """When EMBEDDING_MODEL is bge-small, get_embeddings() returns a
+        HuggingFaceEmbeddings (not BGEM3Embeddings)."""
+        from models.bge_m3_embeddings import BGEM3Embeddings
+        from models.embedding_models import reset_embeddings
+
+        with (
+            patch.dict(os.environ, {"EMBEDDING_PROVIDER": "local"}),
+            patch(
+                "models.embedding_models.get_embedding_model_source",
+                return_value="models/local_models/bge-small-zh-v1.5",
+            ),
+            patch("models.embedding_models._torch_available", return_value=True),
+            patch("langchain_huggingface.HuggingFaceEmbeddings") as mock_hf,
+        ):
+            mock_hf.return_value = MagicMock(spec=[])
+            reset_embeddings()
+            from models.embedding_models import get_embeddings
+
+            emb = get_embeddings()
+            # Must NOT be a BGEM3Embeddings instance.
+            assert not isinstance(emb, BGEM3Embeddings), (
+                "bge-small should return HuggingFaceEmbeddings, not BGEM3Embeddings"
+            )
+            reset_embeddings()
