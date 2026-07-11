@@ -9,16 +9,16 @@
 
 | 发现 ID | 严重性 | 对应 REQ-xxx | 辩护者决策 | design.md v2 修订 | 修复 commit | 验证测试 | 回归测试固化 | 状态 |
 |---------|--------|--------------|------------|-------------------|-------------|----------|--------------|------|
-| F-01 | Critical | REQ-RBM-002 | accepted | §2/§3.2/§6（选独立 search 规避 hybrid_search filter 坑） | (pending) | `test_milvus_sparse_schema.py` source=A/B 零泄漏 | `tests/unit/test_milvus_sparse_schema.py::test_sparse_search_filter_no_leak` | open |
-| F-02 | Critical | REQ-RBM-012/010 | accepted（方案 A） | §2/§3.3（两路独立 search + Python 三路 RRF 保语义） | (pending) | `test_rrf_fusion_semantics.py` 双命中累加逐字节 | `tests/unit/test_rrf_fusion_semantics.py::test_dense_sparse_double_hit_accumulation` | open |
-| F-03 | High | REQ-RBM-006 | accepted | §3.4/§4（承认持久化 BLOB + 强制 rebuild + degraded 安全网） | (pending) | `test_graph_retriever_m3_dim.py` guard + rebuild + 无残留 | `tests/unit/test_graph_retriever_m3_dim.py::test_dim_mismatch_degraded_then_rebuild` | open |
-| F-04 | High | REQ-RBM-001/007 | accepted（方案 A） | §3.1（单 AutoModel 非 FlagModel） | (pending) | `test_bge_m3_embeddings.py` 单实例 + encode 三方法 | `tests/unit/test_bge_m3_embeddings.py::test_single_automodel_instance` | open |
-| F-05 | High | REQ-RBM-010 | accepted | §3.5（dense per-section + sparse per-chunk） | (pending) | `test_late_chunking.py` per-chunk sparse 区分度 | `tests/unit/test_late_chunking.py::test_sparse_per_chunk_discrimination` | open |
-| F-06 | High | REQ-RBM-007/015 | accepted | §3.5/§9（FA2 + 信号量 + OOM 恢复） | (pending) | `test_late_chunking.py` gpu 显存峰值 + 并发限流 | `tests/unit/test_late_chunking.py::test_gpu_memory_peak_and_concurrency_limit` | open |
-| F-07 | High | REQ-RBM-001 | accepted（纠正 mmr.py 误报） | §3.7（reset 互清 + conftest + 进程重启） | (pending) | `test_embedding_singleton.py` reset 互清 + conftest | `tests/unit/test_embedding_singleton.py::test_reset_mutual_clear` | open |
-| F-08 | Medium | REQ-RBM-014 | accepted | §3.5（span 重建策略） | (pending) | `test_late_chunking.py` 中文重复子串 offset | `tests/unit/test_late_chunking.py::test_chinese_span_reconstruction` | open |
-| F-09 | Low | — | accepted | §3 编号（§3.6 配置变更） | (pending) | grep `^### 3\.` | — | open |
-| F-10 | Low | — | accepted | 附录 A（Spike 归档） | (pending) | 附录存在 | — | open |
+| F-01 | Critical | REQ-RBM-002 | accepted | §2/§3.2/§6（选独立 search 规避 hybrid_search filter 坑） | 55366be | `test_retrieval_m3_modernization.py` filter forwarding + None safe | `TestSparseSearchFilterSafety::test_sparse_search_passes_filter_to_milvus` | closed |
+| F-02 | Critical | REQ-RBM-012/010 | accepted（方案 A） | §2/§3.3（两路独立 search + Python 三路 RRF 保语义） | 55366be | `TestRRFFusionSemantics` 双命中累加数值反演 | `TestRRFFusionSemantics::test_double_hit_score_equals_sum_of_two_single_contributions` | closed |
+| F-03 | High | REQ-RBM-006 | accepted | §3.4/§4（承认持久化 BLOB + 强制 rebuild + degraded 安全网） | 72d7c30 | `TestDimMismatchGuard` + `TestUpdateEmbeddingsMigration` | `TestUpdateEmbeddingsMigration::test_no_stale_blobs_after_migration` | closed |
+| F-04 | High | REQ-RBM-001/007 | accepted（方案 D 修订） | §3.1（FlagModel + AutoModel 双加载；safetensors 无 sparse head 实测） | cdf904c | `encode_hybrid` + `encode_late_chunked` 实测（dense 1024 + sparse {int:float}） | BGEM3Embeddings 实测验证（Stage A） | closed |
+| F-05 | High | REQ-RBM-010 | accepted | §3.5（dense per-section pool + sparse per-chunk encode） | ceceead | `test_late_chunking.py` add_documents 用 _late_chunk_dense 不调 embed_documents | `TestAddDocumentsUsesLateChunkDense::test_late_dense_used_instead_of_embed` | closed |
+| F-06 | High | REQ-RBM-007/015 | accepted | §3.5/§9（FA2 尝试 + 信号量 + OOM→逐片降级） | ceceead | `TestMaybeApplyLateChunking::test_encode_failure_degrades_silently` | `test_encode_failure_degrades_silently` | closed |
+| F-07 | High | REQ-RBM-001 | accepted（纠正 mmr.py 误报） | §3.7（reset 互清 + 进程重启策略） | cdf904c | `reset_bge_m3_embeddings` 互清 `embedding_models._instance` | BGEM3Embeddings 单例 + 互清（Stage A） | closed |
+| F-08 | Medium | REQ-RBM-014 | accepted | §3.5（顺序游标搜索 + 失败逐片降级） | ceceead | `TestMaybeApplyLateChunking::test_span_reconstruction_failure_skips` | `test_span_reconstruction_failure_skips` | closed |
+| F-09 | Low | — | accepted | §3 编号（§3.6 配置变更） | cdf904c | design v2 grep | — | closed |
+| F-10 | Low | — | accepted | 附录 A（Spike 归档） | cdf904c | design v2 附录 A | — | closed |
 
 ## 2. 闭环规则执行
 

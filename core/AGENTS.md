@@ -30,6 +30,10 @@ core/
 | 组件 | 失败形态 | 降级 | 位置 |
 |------|----------|------|------|
 | 混合检索 | dense/sparse/graph 腿抛错 | `gather(return_exceptions=True)`/`return-exceptions`，失败腿返回空，继续用存活腿；graph 腿空 → RRF 退化为 dense+sparse 两路；整体失败 → dense-only；dense 失败 → `[]` | `core/retrieval/hybrid_retriever.py` |
+| Milvus 原生 sparse search（BGE-M3 lexical） | 异常 | sparse 腿返 `[]`，RRF 退化为 dense+graph；`enable_native_sparse=false` 回退 BM25 | `documents/milvus_db.py` `sparse_search`、`hybrid_retriever.py` `_sparse_retrieve_m3` |
+| BGE-M3 encode_hybrid | 模型不可用/OOM | 降级到 dense-only（embed_query 兜底）；稀疏腿返空 | `models/bge_m3_embeddings.py` |
+| GraphRAG 维度不匹配（model 切换后 BLOB 过期） | `_build_matrix_locked` 读到旧 dim BLOB | `degraded=True`、`_matrix=None`、graph 腿返 `[]`，RRF 退化为 dense+sparse；运行 `rebuild_graph_embeddings.py` 迁移后恢复 | `core/retrieval/graph_retriever.py`、`scripts/rebuild_graph_embeddings.py` |
+| late chunking 前向 | OOM/FA2 不可用/span 重建失败/模型不支持 | 逐片独立 embed（不阻断摄入），`_late_chunk_dense` 不附加 | `documents/markdown_parser.py` `_maybe_apply_late_chunking` |
 | GraphRAG 抽取（摄入期） | LLM 不可用/熔断/JSON 解析失败 | 跳过该 chunk 或整文档的图谱构建、log warning、不阻断主摄入（文档仍进 Milvus/BM25） | `documents/graph_extractor.py`、`api/routers/documents.py` `_extract_graph_if_enabled` |
 | GraphRAG 检索 leg（查询期） | 空图/embedding 失败/SQL 异常/指纹漂移 | 返 `[]`、`degraded=True`；graph 腿空时 RRF 自动退化为 dense+sparse | `core/retrieval/graph_retriever.py` |
 | Cross-encoder reranker | 未启用/抛错 | 保持 RRF 顺序 `documents[:top_k]`，`rerank_applied=false` | 同上 |
