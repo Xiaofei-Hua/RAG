@@ -493,15 +493,37 @@ class MilvusManager:
                 # Generate embeddings for this batch. When the embedding function
                 # is BGEM3Embeddings and sparse is enabled, produce dense+sparse
                 # in one forward (encode_hybrid_batch); otherwise dense-only.
+                # Late chunking (§3.5): when a chunk carries a pre-computed
+                # _late_chunk_dense vector (from markdown_parser), use it instead
+                # of re-embedding — it carries global section context. Sparse is
+                # still computed per-chunk (F-05: lexical BoW needs per-doc TF).
                 texts = [doc.page_content for doc in batch]
                 sparse_vecs: list[dict[int, float]] | None = None
                 emb_fn = self.embedding_function
+                late_dense = [doc.metadata.get("_late_chunk_dense") for doc in batch]
+                has_late = any(v is not None for v in late_dense)
+
                 if self.config.enable_sparse and hasattr(emb_fn, "encode_hybrid_batch"):
                     hybrid = emb_fn.encode_hybrid_batch(texts)
-                    embeddings = [dense for dense, _sparse in hybrid]
                     sparse_vecs = [sparse for _dense, sparse in hybrid]
+                    if has_late:
+                        # Dense from late chunking; sparse from per-chunk encode.
+                        embeddings = [
+                            late_dense[idx] if late_dense[idx] is not None else hybrid[idx][0]
+                            for idx in range(len(batch))
+                        ]
+                    else:
+                        embeddings = [dense for dense, _sparse in hybrid]
                 else:
-                    embeddings = emb_fn.embed_documents(texts)
+                    if has_late:
+                        embeddings = [
+                            late_dense[idx]
+                            if late_dense[idx] is not None
+                            else emb_fn.embed_query(texts[idx])
+                            for idx in range(len(batch))
+                        ]
+                    else:
+                        embeddings = emb_fn.embed_documents(texts)
 
                 # Prepare data for insertion
                 data = []
@@ -515,8 +537,11 @@ class MilvusManager:
                     # F-02: write sparse vector when the collection has the field.
                     if sparse_vecs is not None:
                         row["sparse"] = sparse_vecs[idx]
-                    # Add additional metadata as dynamic fields
+                    # Add additional metadata as dynamic fields (skip the internal
+                    # _late_chunk_dense key — it's not metadata, just an embedding carrier).
                     for k, v in doc.metadata.items():
+                        if k == "_late_chunk_dense":
+                            continue
                         if k not in row and isinstance(v, (str, int, float, bool)):
                             row[k] = v
                     data.append(row)
