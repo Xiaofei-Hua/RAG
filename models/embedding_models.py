@@ -102,11 +102,23 @@ def get_embeddings() -> Any:
 
 
 def _get_local_embeddings() -> Any:
-    """Construct the local HuggingFaceEmbeddings singleton.
+    """Construct the local embedding singleton.
 
-    The ``langchain_huggingface`` import is lazy + guarded so a torch-less
-    install fails with an actionable message instead of crashing at import.
+    Dispatches on the configured model: BGE-M3 (model id/path contains 'bge-m3'
+    or 'm3') loads ``BGEM3Embeddings`` (dense+sparse+late-chunk); all others load
+    ``HuggingFaceEmbeddings`` (dense only). The ``langchain_huggingface`` import
+    is lazy + guarded so a torch-less install fails with an actionable message.
     """
+    model_source = get_embedding_model_source()
+    model_lower = (model_source or "").lower()
+
+    if "bge-m3" in model_lower or model_lower.endswith("/bge-m3") or "bge_m3" in model_lower:
+        # BGE-M3: use the dedicated adapter (FlagModel + AutoModel, dense+sparse).
+        from models.bge_m3_embeddings import BGEM3Embeddings
+
+        log.info(f"Creating BGE-M3 embedding model: source={model_source}")
+        return BGEM3Embeddings(model_path=model_source)
+
     try:
         from langchain_huggingface import HuggingFaceEmbeddings
     except ImportError as exc:
@@ -117,7 +129,6 @@ def _get_local_embeddings() -> Any:
             "to use the DashScope embedding API instead."
         ) from exc
 
-    model_source = get_embedding_model_source()
     log.info(f"Creating local embedding model: source={model_source}, device={EMBEDDING_DEVICE}")
     return HuggingFaceEmbeddings(
         model_name=model_source,

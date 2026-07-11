@@ -35,6 +35,43 @@ New env: `GRAPH_RAG_ENABLED`, `GRAPH_RAG_WEIGHT`, `GRAPH_RAG_TOP_K`,
 `core/retrieval/graph_retriever.py`. `DomainProfile` gains optional
 `entity_types` / `relation_types` fields (backward compatible).
 
+### Added — Retrieval backend modernization (`retrieval-backend-modernization`)
+
+[breaking] Upgrades the embedding model from BGE-small-zh-v1.5 (2023, 512d) to
+BGE-M3 (dense 1024d + sparse lexical_weights from a single forward), replaces
+the self-implemented in-memory BM25 with Milvus native sparse retrieval, and
+adds late chunking for global-context-aware chunk embeddings. See
+`docs/specs/retrieval-backend-modernization/`.
+
+- `[breaking]` **BGE-M3 default embedding** (Stage A): `EMBEDDING_MODEL` default
+  → `BAAI/bge-m3`, `EMBEDDING_DIMENSION` → `1024`. Rebuild the Milvus collection
+  after switching (`scripts/download_bge_m3.py` fetches the model; the schema dim
+  change is detected by embedding_registry). `EMBEDDING_PROVIDER=api` (DashScope)
+  is unaffected. To revert: set `EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5` +
+  `EMBEDDING_DIMENSION=512` + `MILVUS_SPARSE_INDEX=false`.
+- **Milvus native sparse search** (Stage B): the collection gains a
+  `SPARSE_FLOAT_VECTOR` field + `SPARSE_INVERTED_INDEX`; the sparse retrieval leg
+  uses `BGE-M3 lexical_weights` via Milvus `sparse_search` instead of BM25.
+  `MILVUS_SPARSE_INDEX=false` reverts to BM25 (code retained). Filter goes through
+  `search(filter=)` — a first-class param (NOT `hybrid_search`'s top-level filter,
+  which pymilvus 2.5.18 silently drops; F-01).
+- **GraphRAG embedding migration** (Stage C): entity vectors are persisted BLOBs;
+  after the model switch run `scripts/rebuild_graph_embeddings.py` to re-embed all
+  entities to 1024d (the dim-mismatch guard degrades the graph leg to empty until
+  migration runs — never crashes; F-03).
+- **Late chunking** (Stage D): large parent sections are embedded whole (token-level
+  `last_hidden_state`), then mean-pooled per chunk span so each chunk carries global
+  section context. Dense uses late pooling; sparse stays per-chunk (F-05).
+  `LATE_CHUNKING_ENABLED=false` reverts to per-chunk embed.
+
+New env: `MILVUS_SPARSE_INDEX`, `BGE_M3_USE_FP16`, `BGE_M3_MAX_LENGTH`,
+`BGE_M3_DEVICE`, `BGE_M3_FLASH_ATTENTION`, `LATE_CHUNKING_ENABLED`,
+`LATE_CHUNKING_MIN_TOKENS`, `INGEST_EMBEDDING_CONCURRENCY`. New modules:
+`models/bge_m3_embeddings.py`, `scripts/download_bge_m3.py`,
+`scripts/rebuild_graph_embeddings.py`. New dep: `FlagEmbedding` (local-models extra).
+Adversarial review: 2 Critical + 5 High findings all closed
+(`docs/specs/retrieval-backend-modernization/review/`).
+
 ### Fixed — Security & data-loss audit (Stage 1) (`audit-stage1`)
 
 Five Critical/High bugs from the 2026-07 full-repo adversarial audit. See

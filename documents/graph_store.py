@@ -392,6 +392,69 @@ class GraphStore:
                 )
         return rows
 
+    def update_embeddings(
+        self,
+        embeddings: dict[str, list[float]],
+        embedding_model: str | None = None,
+        embedding_dim: int | None = None,
+    ) -> int:
+        """Batch-update entity embedding BLOBs (F-03 forced migration).
+
+        Re-packs each entity's embedding as float32 BLOB and updates the row.
+        Used by scripts/rebuild_graph_embeddings.py to migrate 512d → 1024d
+        when the embedding model changes (docs/specs/retrieval-backend-modernization).
+
+        Args:
+            embeddings: ``{entity_id: new_embedding_vector}``. Only entities in
+                this dict are updated; others keep their old (now-stale) vectors.
+            embedding_model: if given, updates graph_meta.embedding_model.
+            embedding_dim: if given, updates graph_meta.embedding_dim.
+
+        Returns the number of entities updated.
+        """
+        import struct
+
+        if not embeddings:
+            return 0
+        updated = 0
+        with self._lock:
+            with self._conn:
+                for eid, vec in embeddings.items():
+                    if not vec:
+                        continue
+                    blob = struct.pack(f"<{len(vec)}f", *vec)
+                    self._conn.execute(
+                        "UPDATE entities SET embedding = ? WHERE id = ?",
+                        (blob, eid),
+                    )
+                    updated += 1
+                if embedding_model:
+                    self._conn.execute(
+                        "INSERT OR REPLACE INTO graph_meta (key, value) VALUES (?, ?)",
+                        ("embedding_model", embedding_model),
+                    )
+                if embedding_dim:
+                    self._conn.execute(
+                        "INSERT OR REPLACE INTO graph_meta (key, value) VALUES (?, ?)",
+                        ("embedding_dim", str(int(embedding_dim))),
+                    )
+        return updated
+
+    def all_entity_names(self) -> list[tuple[str, str]]:
+        """Load all ``(entity_id, name)`` pairs for batch re-embedding (F-03)."""
+        rows: list[tuple[str, str]] = []
+        with self._lock:
+            cur = self._conn.execute("SELECT id, name FROM entities ORDER BY id")
+            rows = [(r["id"], r["name"]) for r in cur.fetchall()]
+        return rows
+
+    def get_meta(self, key: str) -> str | None:
+        """Read a graph_meta value (e.g. embedding_dim for migration checks)."""
+        with self._lock:
+            cur = self._conn.execute("SELECT value FROM graph_meta WHERE key = ?", (key,))
+            row = cur.fetchone()
+            return row["value"] if row else None
+
     def neighbors(self, entity_ids: list[str]) -> list[tuple[str, str, float]]:
         """1-hop adjacency: ``(neighbor_id, relation_type, weight)`` per seed.
 

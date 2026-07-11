@@ -37,6 +37,13 @@ def _get_local_embeddings():
     return get_local_embeddings()
 
 
+def _late_chunking_enabled() -> bool:
+    """Whether late chunking is enabled (env LATE_CHUNKING_ENABLED, default true)."""
+    import os
+
+    return os.getenv("LATE_CHUNKING_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+
+
 # version-safe import
 try:
     from langchain_text_splitters import RecursiveCharacterTextSplitter
@@ -834,6 +841,64 @@ class MarkdownParser:
             ],
         )
 
+    def _maybe_apply_late_chunking(self, parent: Document, pieces: list[Document]) -> None:
+        """Attach late-chunked dense vectors to each piece's metadata (§3.5).
+
+        F-04: uses BGEM3Embeddings.encode_late_chunked (section-level forward →
+        token-level last_hidden_state → per-span mean-pool). F-05: only dense;
+        sparse remains per-chunk (computed at Milvus insert time). F-08: spans
+        reconstructed via sequential cursor search. F-06: semaphore-serialised
+        inside encode_late_chunked. Degrades silently (no metadata key) on any
+        failure so add_documents falls back to per-chunk embed.
+        """
+        if not pieces:
+            return
+        try:
+            if not _late_chunking_enabled():
+                return
+            emb = _get_local_embeddings()
+        except Exception:  # noqa: BLE001 — late chunking is opt-in, never fatal
+            return
+
+        # Only BGEM3Embeddings supports encode_late_chunked.
+        if not hasattr(emb, "encode_late_chunked"):
+            return
+
+        parent_text = parent.page_content or ""
+        if not parent_text:
+            return
+
+        # F-08: reconstruct char spans via sequential cursor search.
+        spans: list[tuple[int, int]] = []
+        cursor = 0
+        ok = True
+        for piece in pieces:
+            chunk_text = piece.page_content or ""
+            if not chunk_text:
+                spans.append((cursor, cursor))
+                continue
+            idx = parent_text.find(chunk_text, cursor)
+            if idx == -1:
+                # Splitter normalised whitespace/newlines → substring not found.
+                # F-08 degradation: skip late chunking for this whole section.
+                ok = False
+                break
+            spans.append((idx, idx + len(chunk_text)))
+            cursor = idx + len(chunk_text)
+        if not ok or not spans:
+            self.log.debug("[MarkdownParser] late chunking skipped (span reconstruction failed)")
+            return
+
+        try:
+            dense_vecs = emb.encode_late_chunked(parent_text, spans)
+        except Exception as e:  # noqa: BLE001 — F-06 OOM / model failure → degrade
+            self.log.warning(f"[MarkdownParser] late chunking failed, degrading to per-chunk: {e}")
+            return
+
+        for piece, vec in zip(pieces, dense_vecs):
+            if vec:
+                piece.metadata["_late_chunk_dense"] = vec
+
     def _chunk_documents(
         self, docs: Sequence[Document]
     ) -> tuple[list[Document], int, int, int, int]:
@@ -927,6 +992,13 @@ class MarkdownParser:
 
             if not pieces and self.cfg.keep_original_on_split_error:
                 pieces = [doc]
+
+            # Late chunking (docs/specs/retrieval-backend-modernization §3.5):
+            # embed the full parent section once, then mean-pool per chunk span
+            # so each chunk carries global section context. F-05: dense only;
+            # sparse stays per-chunk (lexical BoW needs per-doc term frequency).
+            # F-08: char spans via sequential cursor search over the parent text.
+            self._maybe_apply_late_chunking(doc, pieces)
 
             for piece in pieces:
                 if pid:

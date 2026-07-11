@@ -701,6 +701,7 @@ class AgentHarness:
         max_rewrites: int | None = None,
         mode: str | None = None,
         shared_state: dict[str, Any] | None = None,
+        history: list | None = None,
     ) -> dict[str, Any]:
         """
         Invoke the agent with a question (thinking mode by default).
@@ -736,7 +737,10 @@ class AgentHarness:
             "messages": [HumanMessage(content=question)],
             "rewrite_count": 0,
             "max_rewrites": max_rewrites,
-            "shared_state": dict(shared_state or {}),
+            "shared_state": {
+                **(shared_state or {}),
+                **({"conversation_history": history} if history else {}),
+            },
         }
 
         run_collector = self._begin_run()
@@ -799,12 +803,18 @@ class AgentHarness:
         max_rewrites: int | None = None,
         mode: str | None = None,
         shared_state: dict[str, Any] | None = None,
+        history: list | None = None,
     ) -> dict[str, Any]:
         """Invoke the graph through its native asynchronous execution path.
 
         ``shared_state`` seeds the graph's cross-node scratchpad (merged via the
         ``merge_shared_state`` reducer). Bug2 Layer ②/⑤: the chat router injects
         ``intent_confidence`` here so GenerateSkill's A/B shunt can read it.
+
+        ``history`` (REQ-CR-002): conversation history for multi-turn RAG. Injected
+        into ``shared_state["conversation_history"]`` (read-only, harness-owned) so
+        rewrite/generate skills can resolve coreferences — NOT into AgentState.messages
+        (avoids add_messages reducer + checkpointer double-counting).
         """
         plan = self._planner.plan(query=question, mode=mode)
         if plan.plan_type == PlanType.FAST:
@@ -825,11 +835,14 @@ class AgentHarness:
         await self.astart()
         thread_id = thread_id or self._config.thread_id
         max_rewrites = max_rewrites or self._config.max_rewrites
+        merged_state = dict(shared_state or {})
+        if history:
+            merged_state["conversation_history"] = history
         inputs: dict[str, Any] = {
             "messages": [HumanMessage(content=question)],
             "rewrite_count": 0,
             "max_rewrites": max_rewrites,
-            "shared_state": dict(shared_state or {}),
+            "shared_state": merged_state,
         }
         config = {"configurable": {"thread_id": thread_id}}
 
@@ -847,18 +860,23 @@ class AgentHarness:
         stream_mode: Any = "values",
         max_rewrites: int | None = None,
         shared_state: dict[str, Any] | None = None,
+        history: list | None = None,
     ) -> AsyncIterator[Any]:
         """Stream graph updates and custom token events natively through asyncio.
 
-        ``shared_state`` seeds the cross-node scratchpad (Bug2 Layer ②/⑤)."""
+        ``shared_state`` seeds the cross-node scratchpad (Bug2 Layer ②/⑤).
+        ``history`` (REQ-CR-002): conversation history for multi-turn RAG."""
         await self.astart()
         thread_id = thread_id or self._config.thread_id
         max_rewrites = max_rewrites or self._config.max_rewrites
+        merged_state = dict(shared_state or {})
+        if history:
+            merged_state["conversation_history"] = history
         inputs = {
             "messages": [HumanMessage(content=question)],
             "rewrite_count": 0,
             "max_rewrites": max_rewrites,
-            "shared_state": dict(shared_state or {}),
+            "shared_state": merged_state,
         }
         config = {"configurable": {"thread_id": thread_id}}
 

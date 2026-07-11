@@ -50,6 +50,7 @@ dependencies = [
     "datasets>=5.0.0",
     "aiosqlite>=0.20,<1.0",
     "jieba>=0.42.1",
+    "flagembedding[local-models]>=1.4.0",
 ]
 
 [project.optional-dependencies]

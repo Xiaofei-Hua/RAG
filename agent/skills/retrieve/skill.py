@@ -26,6 +26,18 @@ from utils.log_utils import log
 __all__ = ["RetrieveSkill", "RetrieveSkillConfig"]
 
 
+def _per_doc_scoring_enabled() -> bool:
+    """Whether F3 per-document continuous scoring is enabled (env, default false)."""
+    import os
+
+    return os.getenv("PER_DOC_SCORING_ENABLED", "false").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 @dataclass
 class RetrieveSkillConfig:
     """Configuration for RetrieveSkill."""
@@ -115,6 +127,9 @@ class RetrieveSkill(BaseSkill):
             # Bug2 Layer ④: drop docs below the rerank relevance floor (cuts
             # weak batches before grading). Empty result is delegated to Layer ⑤.
             documents = self._filter_by_rerank_score(documents)
+            # F3: optional per-document continuous scoring (LLM grade + rerank +
+            # embed sim fusion) for finer-grained filtering + re-ranking.
+            documents = self._maybe_score_per_doc(query, documents, context)
 
             # Build result messages
             result_messages = self._build_result_messages(documents, messages, context)
@@ -209,6 +224,8 @@ class RetrieveSkill(BaseSkill):
             documents = self._inject_memories(context, documents)
             # Bug2 Layer ④: rerank relevance floor (see sync path comment).
             documents = self._filter_by_rerank_score(documents)
+            # F3: optional per-document continuous scoring (async).
+            documents = await self._amaybe_score_per_doc(query, documents, context)
 
             # Build result messages
             result_messages = self._build_result_messages(documents, messages, context)
@@ -270,6 +287,43 @@ class RetrieveSkill(BaseSkill):
         if not scores:
             return None
         return sum(scores) / len(scores)
+
+    def _maybe_score_per_doc(
+        self, query: str, documents: list[Document], context: SkillContext
+    ) -> list[Document]:
+        """F3: optional per-document continuous scoring (LLM grade + rerank fusion).
+
+        Gated by env PER_DOC_SCORING_ENABLED (default false — opt-in precision layer
+        on top of the binary grade gate). Scores each doc ∈ [0,1], filters below
+        threshold, re-ranks. Degrades to unchanged on any failure.
+        """
+        if not documents or not _per_doc_scoring_enabled():
+            return documents
+        try:
+            from agent.skills.grade.per_doc_scoring import score_documents
+            from models.llm_models import create_custom_llm
+
+            llm = create_custom_llm(temperature=0.0)
+            return score_documents(query, documents, llm)
+        except Exception as e:  # noqa: BLE001 — degrade to unfiltered
+            log.debug(f"per-doc scoring skipped: {e}")
+            return documents
+
+    async def _amaybe_score_per_doc(
+        self, query: str, documents: list[Document], context: SkillContext
+    ) -> list[Document]:
+        """F3 async: concurrent per-document scoring."""
+        if not documents or not _per_doc_scoring_enabled():
+            return documents
+        try:
+            from agent.skills.grade.per_doc_scoring import ascore_documents
+            from models.llm_models import create_custom_llm
+
+            llm = create_custom_llm(temperature=0.0)
+            return await ascore_documents(query, documents, llm)
+        except Exception as e:  # noqa: BLE001
+            log.debug(f"per-doc scoring (async) skipped: {e}")
+            return documents
 
     def _filter_by_rerank_score(self, documents: list[Document]) -> list[Document]:
         """Bug2 Layer ④ — dual sieve: sigmoid absolute floor + min-max relative.

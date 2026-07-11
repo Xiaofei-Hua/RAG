@@ -22,6 +22,7 @@ from __future__ import annotations
 import re
 
 from langchain_core.documents import Document
+from langchain_core.messages import BaseMessage
 
 from utils.log_utils import log
 
@@ -120,6 +121,80 @@ async def _allm_invoke(prompt: str) -> str | None:
     except Exception as e:  # noqa: BLE001
         log.debug(f"query-transform async LLM call failed: {e}")
         return None
+
+
+# ---------------------------------------------------------------------------
+# Query condensation (coreference resolution for multi-turn RAG)
+# ---------------------------------------------------------------------------
+
+# Coreference markers that trigger condensation (avoid an LLM call when the query
+# is already self-contained). Covers Chinese 这/那/它/上面/第几 + English it/that/above.
+_COREF_RE = re.compile(
+    r"这|那|它|他|她|上面|下面|前[面一]|后[面一]|第[一二三四五六七八九十两\d]+[条个步种项]|"
+    r"^it\b|^that\b|^this\b|^the (?:above|former|latter|second|third)|continu",
+    re.IGNORECASE,
+)
+
+_CONDENSE_PROMPT = (
+    "你是一个查询改写助手。根据以下对话历史，将用户的最新问题改写成一个独立、完整的问题，"
+    "使其不依赖上下文也能被理解。保留用户意图，补全指代对象。"
+    "只输出改写后的问题，不要添加任何解释。\n\n"
+    "对话历史:\n{history}\n\n"
+    "用户最新问题: {question}\n\n"
+    "改写后的独立问题:"
+)
+
+
+def _has_coreference(question: str) -> bool:
+    """Heuristic: does the question contain coreference markers?"""
+    return bool(_COREF_RE.search(question))
+
+
+def _format_history_for_condense(messages: list[BaseMessage]) -> str:
+    """Format messages into a compact dialog for the condense prompt."""
+    lines: list[str] = []
+    for msg in messages[-6:]:  # last 6 messages to bound prompt
+        role = "用户" if msg.type == "human" else ("助手" if msg.type == "ai" else msg.type)
+        content = str(msg.content)[:150] if msg.content else ""
+        lines.append(f"{role}: {content}")
+    return "\n".join(lines)
+
+
+def condense_query(question: str, history: list[BaseMessage]) -> str:
+    """Resolve coreferences using conversation history → standalone query.
+
+    Only triggers an LLM call when the question contains coreference markers
+    (这/那/它/上面/第几...). Self-contained queries pass through unchanged,
+    avoiding unnecessary latency. Degrades to the original question on any failure.
+
+    Args:
+        question: the user's latest message (may contain coreferences).
+        history: conversation history (oldest-first).
+
+    Returns:
+        A standalone query suitable for retrieval.
+    """
+    if not history or not _has_coreference(question):
+        return question
+    try:
+        prompt = _CONDENSE_PROMPT.format(
+            history=_format_history_for_condense(history),
+            question=question[:300],
+        )
+        result = _llm_invoke(prompt)
+        if result:
+            result = result.strip()
+            # Sanity: the condensed query should be non-trivial.
+            if len(result) >= 3:
+                return result
+        return question
+    except Exception as e:  # noqa: BLE001 — degrade to original
+        log.debug(f"condense_query failed, using original: {e}")
+        return question
+
+
+__all__.append("condense_query")
+__all__.append("_has_coreference")
 
 
 # ---------------------------------------------------------------------------
