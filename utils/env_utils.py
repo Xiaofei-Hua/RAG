@@ -87,6 +87,36 @@ EMBEDDING_DEVICE = _resolve_device("EMBEDDING_DEVICE", "auto")
 EMBEDDING_NORMALIZE = _get_bool("EMBEDDING_NORMALIZE", True)
 EMBEDDING_BATCH_SIZE = _get_int("EMBEDDING_BATCH_SIZE", 8)
 
+# BGE-M3 specific (docs/specs/retrieval-backend-modernization). When the
+# configured EMBEDDING_MODEL is BGE-M3, these tune its loading. F-04: BGEM3Embeddings
+# holds a single AutoModel (not BGEM3FlagModel), reused by encode_hybrid (dense +
+# sparse) and encode_late_chunked (last_hidden_state). F-06: FlashAttention2 cuts
+# the 8K-token attention peak from ~4.3GB to ~tens of MB; when unavailable,
+# max_length auto-lowers to 2048 and late chunking throughput drops.
+BGE_M3_USE_FP16 = _get_bool("BGE_M3_USE_FP16", True)
+BGE_M3_MAX_LENGTH = _get_int("BGE_M3_MAX_LENGTH", 8192)
+BGE_M3_DEVICE = _resolve_device("BGE_M3_DEVICE", "auto")
+BGE_M3_FLASH_ATTENTION = _get_bool("BGE_M3_FLASH_ATTENTION", True)
+
+# Milvus native sparse vector (docs/specs/retrieval-backend-modernization, F-02).
+# When true, the collection gains a SPARSE_FLOAT_VECTOR field indexed with
+# SPARSE_INVERTED_INDEX, and HybridRetriever's sparse leg uses Milvus sparse_search
+# (BGE-M3 lexical_weights) instead of the self-implemented in-memory BM25. F-01:
+# filter goes through search(filter=), a first-class param — NOT hybrid_search's
+# top-level filter which pymilvus 2.5.18 silently drops. False reverts to BM25.
+MILVUS_SPARSE_INDEX = _get_bool("MILVUS_SPARSE_INDEX", True)
+
+# Late chunking (docs/specs/retrieval-backend-modernization §3.5). Embed the full
+# parent section (≤8192 tokens) to get token-level last_hidden_state, then
+# mean-pool per chunk span — each chunk embedding carries global section context.
+# F-05: only dense is late-chunked; sparse is per-chunk encoded (lexical BoW
+# needs per-doc term frequency). F-06: ingest-time forward is serialised by a
+# semaphore to avoid stacking multiple 8K forwards. F-08: span reconstruction
+# uses sequential cursor search with per-chunk fallback.
+LATE_CHUNKING_ENABLED = _get_bool("LATE_CHUNKING_ENABLED", True)
+LATE_CHUNKING_MIN_TOKENS = _get_int("LATE_CHUNKING_MIN_TOKENS", 256)
+INGEST_EMBEDDING_CONCURRENCY = _get_int("INGEST_EMBEDDING_CONCURRENCY", 1)
+
 # Embedding provider selection (api-only-deploy). ``auto`` resolves to ``local``
 # when torch + langchain_huggingface are importable, otherwise ``api`` — this
 # makes the airgapped API-only image (torch absent) pick DashScope automatically.
