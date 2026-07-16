@@ -22,7 +22,7 @@ class TestMarkdownHeadingStack:
             "# A\n\nroot\n\n## B\n\nchild\n\n### C\n\ndeep\n\n## D\n\nsibling\n\n# E\n\nnext",
             encoding="utf-8",
         )
-        elements = MarkdownParser()._simple_markdown_load(path, "utf-8")
+        elements = MarkdownParser(embeddings=MagicMock())._simple_markdown_load(path, "utf-8")
         titles = {
             doc.page_content: doc.metadata
             for doc in elements
@@ -637,11 +637,15 @@ class TestEffectiveConfiguration:
         assert manager._embedding_model_name() == settings.model_source
 
     def test_bge_m3_opaque_cache_path_uses_native_sparse_adapter(self, monkeypatch, tmp_path):
-        import langchain_huggingface
+        import sys
+        import types
 
         import models.bge_m3_embeddings as bge_m3_module
         from models.embedding_models import _get_local_embeddings
         from utils.env_utils import resolve_embedding_settings
+
+        langchain_huggingface = types.ModuleType("langchain_huggingface")
+        monkeypatch.setitem(sys.modules, "langchain_huggingface", langchain_huggingface)
 
         cache = tmp_path.parent / "opaque-cache"
         cache.mkdir(exist_ok=True)
@@ -657,6 +661,7 @@ class TestEffectiveConfiguration:
             langchain_huggingface,
             "HuggingFaceEmbeddings",
             lambda **_kwargs: dense_marker,
+            raising=False,
         )
         monkeypatch.setattr(
             bge_m3_module,

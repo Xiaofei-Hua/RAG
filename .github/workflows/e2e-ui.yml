@@ -6,10 +6,23 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      cold_cache:
+        description: Disable the restored uv cache for a cold-install measurement
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   e2e-ui:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      UV_DEFAULT_INDEX: https://pypi.org/simple
+      UV_PYTHON: "3.13"
+      UV_SYNC_TIMEOUT_SECONDS: "300"
+      EMBEDDING_PROVIDER: api
+      MILVUS_SPARSE_INDEX: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -21,20 +34,46 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.13"
-          enable-cache: true
+          version: "0.11.8"
+          enable-cache: ${{ ! inputs.cold_cache }}
+
+      - name: Record dependency environment
+        run: |
+          uv --version
+          echo "runner_label=ubuntu-latest"
+          echo "runner_arch=${RUNNER_ARCH}"
+          echo "runner_image_os=${ImageOS:-unknown}"
+          echo "runner_image_version=${ImageVersion:-unknown}"
+          echo "cold_cache=${{ inputs.cold_cache || false }}"
 
       - name: Set up Node (frontend + Playwright)
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "20.20.2"
+
+      - name: Verify frontend toolchain
+        run: |
+          node --version
+          npm --version
+          test "$(node --version)" = "v20.20.2"
+          test "$(npm --version)" = "10.8.2"
 
       - name: Install backend deps (e2e fakes replace LLM/Milvus)
-        run: uv sync --frozen --extra dev
+        run: |
+          if [ "${{ inputs.cold_cache }}" = "true" ]; then
+            export UV_NO_CACHE=1
+          fi
+          bash scripts/sync_locked_deps.sh dev
 
       - name: Build frontend
         run: |
           npm ci
           npm run build
+
+      - name: Audit production frontend dependencies
+        run: >-
+          npm audit --omit=dev --userconfig=/dev/null
+          --registry=https://registry.npmjs.org/
 
       # Q8: eslint non-blocking baseline (first-time enablement). Surfaces
       # lint issues without failing the job; the web/ codebase predates this

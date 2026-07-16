@@ -10,6 +10,17 @@ on:
   # cases) and track B (script-style real-backend HTTP tests) are wired up and
   # verified green against a live Ollama + qwen3:14b runner.
   workflow_dispatch:
+    inputs:
+      cold_cache:
+        description: Disable the restored uv cache for a cold-install measurement
+        required: false
+        type: boolean
+        default: false
+      run_backend_nightly:
+        description: Explicitly request the self-hosted real-backend suite
+        required: false
+        type: boolean
+        default: false
   # NOTE: the nightly `schedule` cron is intentionally disabled. The repo has
   # NO registered self-hosted runner (gh api .../runners -> total_count:0), so
   # every scheduled run queued for 24h then timed out — a perpetual red CI
@@ -23,6 +34,13 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      UV_DEFAULT_INDEX: https://pypi.org/simple
+      UV_PYTHON: "3.13"
+      UV_SYNC_TIMEOUT_SECONDS: "300"
+      EMBEDDING_PROVIDER: api
+      MILVUS_SPARSE_INDEX: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -42,10 +60,24 @@ jobs:
           # adds pytest + coverage + mypy (the single dev extra). Base deps
           # include loguru/pymilvus/milvus-lite; torch stays out (it lives only
           # in the local-models extra), so the gate runs torch-less.
-          enable-cache: true
+          version: "0.11.8"
+          enable-cache: ${{ ! inputs.cold_cache }}
+
+      - name: Record dependency environment
+        run: |
+          uv --version
+          echo "runner_label=ubuntu-latest"
+          echo "runner_arch=${RUNNER_ARCH}"
+          echo "runner_image_os=${ImageOS:-unknown}"
+          echo "runner_image_version=${ImageVersion:-unknown}"
+          echo "cold_cache=${{ inputs.cold_cache || false }}"
 
       - name: Install dependencies
-        run: uv sync --frozen --extra dev
+        run: |
+          if [ "${{ inputs.cold_cache }}" = "true" ]; then
+            export UV_NO_CACHE=1
+          fi
+          bash scripts/sync_locked_deps.sh dev
 
       - name: Run unit + perf tests (PR gate, no live backend)
         # Single fail-on-error invocation. Previously two calls existed: the
@@ -58,8 +90,8 @@ jobs:
         # Wrapped in `coverage run` so the unit+e2e data accumulates into a
         # single .coverage file for the gate step below (--append merges).
         run: |
-          uv run coverage erase
-          uv run coverage run --branch -m pytest tests/unit/ tests/perf/ -q \
+          uv run --frozen --no-sync coverage erase
+          uv run --frozen --no-sync coverage run --branch -m pytest tests/unit/ tests/perf/ -q \
             -m "not requires_ollama and not requires_backend"
 
       - name: Run end-to-end tests (in-process, mocked singletons)
@@ -70,7 +102,7 @@ jobs:
           OPENAI_API_KEY: ollama
           PYTEST_RUN: "1"
         run: |
-          uv run coverage run --branch --append -m pytest tests/e2e/ -q -m "not requires_backend"
+          uv run --frozen --no-sync coverage run --branch --append -m pytest tests/e2e/ -q -m "not requires_backend"
 
       # Coverage gate (F-EG-05): a SEPARATE step so a test failure (red on the
       # pytest step above) and a coverage regression (red here) surface as
@@ -79,7 +111,7 @@ jobs:
       # Raising to 80 requires closing KNOWN-GAP-1 (track A in backend-nightly).
       - name: Coverage gate
         run: |
-          uv run coverage report --fail-under=60
+          uv run --frozen --no-sync coverage report --fail-under=60
 
       # Q8: mypy non-blocking baseline (AGENTS.md §5). First-time enablement;
       # existing code is not fully annotated, so this only REPORTS type issues
@@ -88,7 +120,7 @@ jobs:
       - name: Type check (mypy, non-blocking baseline)
         continue-on-error: true
         run: |
-          uv run mypy agent/ core/ api/ documents/ models/ utils/
+          uv run --frozen --no-sync mypy agent/ core/ api/ documents/ models/ utils/
 
       # NOTE: the retrieval benchmark regression gate used to run here but has
       # been moved to its own workflow (benchmark-regression.yml). The benchmark
@@ -121,7 +153,9 @@ jobs:
   # events (just on a different runner), which would send dispatch jobs onto
   # ubuntu-latest where every requires_ollama case skips.
   backend-nightly:
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    if: >-
+      github.event_name == 'schedule' ||
+      (github.event_name == 'workflow_dispatch' && inputs.run_backend_nightly)
     runs-on: self-hosted
     # Bounded execution: env-canary fails in seconds if Ollama/the model is
     # missing; track A (in-process LLM tests) takes a few minutes; track B
@@ -139,6 +173,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.13"
+          version: "0.11.8"
           enable-cache: true
 
       - name: Install dependencies (with ocr + dev + local-models extras)

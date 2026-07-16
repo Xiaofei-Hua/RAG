@@ -18,6 +18,17 @@ export default [
   ...tseslint.configs.recommended,
   ...pluginVue.configs["flat/essential"],
 
+  // Vue parser 负责 SFC 外壳，TypeScript parser 负责 <script setup lang="ts">。
+  {
+    files: ["**/*.vue"],
+    languageOptions: {
+      parserOptions: {
+        parser: tseslint.parser,
+        extraFileExtensions: [".vue"],
+      },
+    },
+  },
+
   // Project-specific relaxations for the baseline pass.
   {
     rules: {
@@ -30,6 +41,15 @@ export default [
       "@typescript-eslint/no-explicit-any": "warn",
       // Unused vars are common in refactors; warn rather than error.
       "@typescript-eslint/no-unused-vars": ["warn", { argsIgnorePattern: "^_" }],
+    },
+  },
+
+  // Vite 的标准 Vue shim 必须使用 DefineComponent 的开放泛型。
+  {
+    files: ["**/*.d.ts"],
+    rules: {
+      "@typescript-eslint/no-empty-object-type": "off",
+      "@typescript-eslint/no-explicit-any": "off",
     },
   },
 ];

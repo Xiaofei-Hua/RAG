@@ -83,6 +83,109 @@ test.describe("Chat UI", () => {
     await screenshot(page, SHOT_DIR, "stream-answer");
   });
 
+  test("sanitizes untrusted assistant HTML without breaking safe Markdown", async ({ page }) => {
+    const payload = [
+      "**sanitizer-safe-bold**",
+      '<a href="https://example.com/safe" target="_blank" rel="noopener">sanitizer-safe-link</a>',
+      '<img src="/missing-sanitizer-probe.png" onerror="window.__ragSanitizerExecuted = true">',
+      '<script>window.__ragSanitizerExecuted = true</script>',
+      '<a href="javascript:window.__ragSanitizerExecuted = true">sanitizer-unsafe-link</a>',
+    ].join("\n\n");
+
+    await page.addInitScript(() => {
+      (window as typeof window & { __ragSanitizerExecuted?: boolean })
+        .__ragSanitizerExecuted = false;
+    });
+    await page.route("**/api/chat/stream", async (route) => {
+      const events = [
+        { type: "session", session_id: "sanitizer-contract" },
+        { type: "token", content: payload },
+        { type: "done", full_response: payload, sources: [], metadata: {} },
+      ];
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        headers: { "cache-control": "no-cache" },
+        body: events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+      });
+    });
+
+    await page.goto("/");
+    const input = page.getByTestId("chat-input");
+    await input.fill("sanitizer contract probe");
+    await input.press("Enter");
+
+    const answer = page.locator("[data-testid='message'].assistant").last();
+    await expect(answer.locator("strong")).toHaveText("sanitizer-safe-bold");
+    await expect(answer.getByText("sanitizer-safe-link")).toHaveAttribute(
+      "href",
+      "https://example.com/safe",
+    );
+    await expect(answer.locator("script, img, [onerror]")).toHaveCount(0);
+    const unsafeLink = answer.getByText("sanitizer-unsafe-link");
+    await expect(unsafeLink).not.toHaveAttribute("href", /javascript:/i);
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    }));
+    expect(await page.evaluate(() => (
+      window as typeof window & { __ragSanitizerExecuted?: boolean }
+    ).__ragSanitizerExecuted)).toBe(false);
+    await screenshot(page, SHOT_DIR, "sanitizer-safe-output");
+  });
+
+  test("fails closed when the sanitizer throws", async ({ page }) => {
+    const payload = [
+      "sanitizer-fallback-text",
+      '<img data-force-sanitizer-error="1" src="/missing-fallback-probe.png"',
+      ' onerror="window.__ragSanitizerExecuted = true">',
+    ].join("\n");
+
+    await page.addInitScript(() => {
+      const state = window as typeof window & { __ragSanitizerExecuted?: boolean };
+      state.__ragSanitizerExecuted = false;
+      const nativeRemoveChild = Node.prototype.removeChild;
+      Object.defineProperty(Node.prototype, "removeChild", {
+        configurable: true,
+        value(this: Node, child: Node) {
+          if (
+            child instanceof HTMLImageElement
+            && child.dataset.forceSanitizerError === "1"
+          ) {
+            throw new Error("forced sanitizer failure");
+          }
+          return nativeRemoveChild.call(this, child);
+        },
+      });
+    });
+    await page.route("**/api/chat/stream", async (route) => {
+      const events = [
+        { type: "token", content: payload },
+        { type: "done", full_response: payload, sources: [], metadata: {} },
+      ];
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+      });
+    });
+
+    await page.goto("/");
+    const input = page.getByTestId("chat-input");
+    await input.fill("sanitizer failure probe");
+    await input.press("Enter");
+
+    const answer = page.locator("[data-testid='message'].assistant").last();
+    await expect(answer).toContainText("sanitizer-fallback-text");
+    await expect(answer.locator("script, img, [onerror]")).toHaveCount(0);
+    await page.evaluate(() => new Promise<void>((resolve) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+    }));
+    expect(await page.evaluate(() => (
+      window as typeof window & { __ragSanitizerExecuted?: boolean }
+    ).__ragSanitizerExecuted)).toBe(false);
+    await screenshot(page, SHOT_DIR, "sanitizer-failure-fallback");
+  });
+
   test("sources panel opens when an answer has sources", async ({ page }) => {
     await page.goto("/");
     const input = page.getByTestId("chat-input");

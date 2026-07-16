@@ -340,8 +340,20 @@ function renderMarkdown(text: string): string {
     }
     return result
   } catch {
-    return text
+    console.error('Markdown sanitization failed; rendering escaped plain text')
+    return escapeHtml(text)
   }
+}
+
+function escapeHtml(text: string): string {
+  const entities: Record<string, string> = {
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;',
+  }
+  return text.replace(/[&<>"']/g, (character) => entities[character])
 }
 
 function formatTime(timestamp: number): string {

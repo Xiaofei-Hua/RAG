@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import os
 import sys
+import types
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -293,6 +294,8 @@ class TestEmbeddingDispatch:
         from models.bge_m3_embeddings import BGEM3Embeddings
         from models.embedding_models import reset_embeddings
 
+        fake_huggingface = types.ModuleType("langchain_huggingface")
+
         with (
             patch.dict(
                 os.environ,
@@ -304,7 +307,7 @@ class TestEmbeddingDispatch:
                     "MILVUS_SPARSE_INDEX": "true",
                 },
             ),
-            patch("FlagEmbedding.BGEM3FlagModel"),
+            patch.dict(sys.modules, {"langchain_huggingface": fake_huggingface}),
         ):
             reset_embeddings()
             from models.embedding_models import get_embeddings
@@ -321,6 +324,10 @@ class TestEmbeddingDispatch:
         from models.bge_m3_embeddings import BGEM3Embeddings
         from models.embedding_models import reset_embeddings
 
+        fake_huggingface = types.ModuleType("langchain_huggingface")
+        mock_hf = MagicMock()
+        fake_huggingface.HuggingFaceEmbeddings = mock_hf
+
         with (
             patch.dict(
                 os.environ,
@@ -332,7 +339,7 @@ class TestEmbeddingDispatch:
                     "MILVUS_SPARSE_INDEX": "false",
                 },
             ),
-            patch("langchain_huggingface.HuggingFaceEmbeddings") as mock_hf,
+            patch.dict(sys.modules, {"langchain_huggingface": fake_huggingface}),
         ):
             mock_hf.return_value = MagicMock(spec=[])
             reset_embeddings()

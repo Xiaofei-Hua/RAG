@@ -16,7 +16,10 @@ env
 models/local_models
 
 # Runtime data / SQLite (the image creates a fresh volume at runtime).
-data
+# Keep versioned domain profiles: DOMAIN_PROFILE must work inside the image.
+data/*
+!data/profiles/
+!data/profiles/**
 *.db
 milvus_data.db
 

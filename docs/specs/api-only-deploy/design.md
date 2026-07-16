@@ -265,7 +265,8 @@ CMD ["uv", "run", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "800
 ≈ **~2.3 GB**（远 < 4GB）。
 
 ### 4.2 .dockerignore
-排除 `.venv`、`node_modules`、`data/*.db`、`models/local_models/`、`tests/`、`.git`、`docs/`。
+排除 `.venv`、`node_modules`、`data/` 下运行时数据与数据库、`models/local_models/`、`tests/`、
+`.git`、`docs/`；必须重新包含受版本控制的 `data/profiles/**`，保证 `DOMAIN_PROFILE` 在镜像内仍可切换。
 
 ### 4.3 Secret 处理（安全基线）
 `DASHSCOPE_API_KEY` / `OPENAI_API_KEY` / `ADMIN_API_KEY` **MUST** 仅 `docker run -e` 或 secret 注入，

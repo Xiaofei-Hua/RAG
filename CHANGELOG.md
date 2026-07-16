@@ -7,6 +7,26 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Fixed — CI dependency routing (`ci-index-routing`)
+
+- GitHub-hosted backend, Playwright and API-only Docker jobs now install a frozen, hashed
+  dependency export from the official PyPI index without reusing the canonical lock's Aliyun
+  artifact URLs. Index environment inputs are isolated, uv is pinned to 0.11.8, and dependency,
+  job and Docker-build budgets fail closed with recorded cold/warm timings.
+- `[breaking]` A base install is now genuinely torch-less: FlagEmbedding and its CUDA/model stack
+  live only in the `local-models` extra. Local BGE-M3 users must install with
+  `uv sync --extra local-models`; API-only and dev/CI profiles no longer download that stack.
+
+### Security — Web sanitizer lock (`web-sanitizer-lock-refresh`)
+
+- Updated the locked DOMPurify resolution from 3.4.7 to 3.4.12 within the existing manifest
+  range, closing the known production sanitizer advisories without raising the dependency floor.
+- The production Docker web builder now consumes the canonical root workspace lock with pinned
+  Node/npm and `npm ci`; CI gates registry provenance, production audit, malicious HTML rendering,
+  and the builder's actually installed DOMPurify version.
+- API-only images retain the versioned `data/profiles` YAML files while continuing to exclude
+  runtime databases, so `DOMAIN_PROFILE` no longer silently falls back inside the container.
+
 ### Fixed — RAG core correctness (`rag-core-correctness`)
 
 - Structured `retrieval_evidence` and token-budgeted `generation_evidence` now keep

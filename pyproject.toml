@@ -50,7 +50,6 @@ dependencies = [
     "datasets>=5.0.0",
     "aiosqlite>=0.20,<1.0",
     "jieba>=0.42.1",
-    "flagembedding[local-models]>=1.4.0",
 ]
 
 [project.optional-dependencies]
@@ -78,6 +77,7 @@ local-models = [
     "transformers>=4.40.0",
     "torch>=2.0.0",
     "langchain-huggingface>=1.0.0,<2.0.0",
+    "flagembedding>=1.4.0",
 ]
 # Marker extra documenting the API-only install profile; the base deps already
 # exclude torch, so this adds nothing — it exists so Dockerfile / CI can name
@@ -185,6 +185,9 @@ ignore = [
 "scripts/**" = ["E402"]
 
 [dependency-groups]
+ci-build = [
+    "setuptools==81.0.0",
+]
 # dev deps live in [project.optional-dependencies] dev (project convention:
 # `uv sync --extra dev`). This group is kept empty to avoid a split source of
 # truth; coverage + pytest are declared above.

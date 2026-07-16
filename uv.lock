@@ -5015,7 +5015,6 @@ dependencies = [
     { name = "aiosqlite" },
     { name = "datasets" },
     { name = "fastapi" },
-    { name = "flagembedding" },
     { name = "httpx" },
     { name = "jieba" },
     { name = "langchain" },
@@ -5066,6 +5065,7 @@ doc = [
     { name = "python-pptx" },
 ]
 local-models = [
+    { name = "flagembedding" },
     { name = "langchain-huggingface" },
     { name = "sentence-transformers" },
     { name = "torch" },
@@ -5083,6 +5083,9 @@ ui = [
 ]
 
 [package.dev-dependencies]
+ci-build = [
+    { name = "setuptools" },
+]
 dev = [
     { name = "mypy" },
 ]
@@ -5094,7 +5097,7 @@ requires-dist = [
     { name = "coverage", marker = "extra == 'dev'", specifier = ">=7.14.3" },
     { name = "datasets", specifier = ">=5.0.0" },
     { name = "fastapi", specifier = ">=0.109.0" },
-    { name = "flagembedding", extras = ["local-models"], specifier = ">=1.4.0" },
+    { name = "flagembedding", marker = "extra == 'local-models'", specifier = ">=1.4.0" },
     { name = "gradio", marker = "extra == 'ui'", specifier = ">=4.0.0" },
     { name = "httpx", specifier = ">=0.25.0" },
     { name = "jieba", specifier = ">=0.42.1" },
@@ -5146,6 +5149,7 @@ requires-dist = [
 provides-extras = ["dev", "redis", "ui", "local-models", "api-only", "ocr", "doc"]
 
 [package.metadata.requires-dev]
+ci-build = [{ name = "setuptools", specifier = "==81.0.0" }]
 dev = [{ name = "mypy", specifier = ">=2.1.0" }]
 
 [[package]]

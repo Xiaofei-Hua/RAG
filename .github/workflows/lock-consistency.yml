@@ -32,6 +32,7 @@ jobs:
         uses: astral-sh/setup-uv@v6
         with:
           python-version: "3.13"
+          version: "0.11.8"
 
       - name: Check uv.lock is in sync with pyproject.toml
         run: |
@@ -44,8 +45,15 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "20.20.2"
           cache: npm
+
+      - name: Verify frontend toolchain
+        run: |
+          node --version
+          npm --version
+          test "$(node --version)" = "v20.20.2"
+          test "$(npm --version)" = "10.8.2"
 
       # npm ci --dry-run parses package-lock.json against package.json WITHOUT
       # downloading/installing, failing fast on the "Missing: ... from lock
@@ -55,7 +63,9 @@ jobs:
         run: |
           if ! npm ci --dry-run --no-audit --no-fund; then
             echo "::error::package-lock.json is out of sync with package.json. \
-          Run 'npm install' at the repo root (NOT inside web/), commit \
+          With Node 20.20.2/npm 10.8.2, run 'npm install --package-lock-only \
+          --ignore-scripts --userconfig=/dev/null \
+          --registry=https://registry.npmjs.org/' at the repo root, commit \
           package-lock.json, and push again."
             exit 1
           fi

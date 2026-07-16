@@ -8,24 +8,29 @@
 # runtime (`docker run -e ...` or a secret mount) — they are NEVER baked in.
 
 # ───────────────────────── Stage 1: web builder ──────────────────────────────
-FROM node:20-alpine AS web-builder
-WORKDIR /web
-# Copy manifests first for layer caching.
-COPY web/package.json web/package-lock.json* ./
-# `npm install` (not `npm ci`) tolerates lockfile drift across npm versions;
-# the web-builder is a throwaway stage, so reproducibility is not the goal here
-# (the committed lockfile still drives local/CI installs).
-RUN npm install
-COPY web/ .
-RUN npm run build  # → /web/dist (vue-tsc typecheck + vite build)
+FROM node:20.20.2-bookworm-slim AS web-builder
+WORKDIR /workspace
+
+# `web` is an npm workspace; the canonical lock lives at the repository root.
+# Debian/glibc matches the Rollup native artifact recorded in that lock.
+COPY package.json package-lock.json ./
+COPY web/package.json ./web/package.json
+RUN node --version \
+    && npm --version \
+    && npm ci --workspace web --ignore-scripts \
+    && npm ls 'dompurify@>=3.4.11' --workspace web \
+    && npm ls dompurify --workspace web
+COPY web/ ./web/
+RUN npm run build --workspace web
 
 # ───────────────────────── Stage 2: app ──────────────────────────────────────
 FROM python:3.13-slim AS app
 
-# uv: install the pinned copy declared in pyproject's dependency-groups, then
-# make it invocable on PATH. Using the official installer keeps versions in sync
-# with the lockfile rather than pulling a floating image.
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+# uv 版本与 hosted workflows 固定一致，避免 export/hash 语义随 latest 漂移。
+COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /usr/local/bin/uv
+
+ARG UV_DEFAULT_INDEX=https://mirrors.aliyun.com/pypi/simple/
+ARG UV_SYNC_TIMEOUT_SECONDS=600
 
 ENV UV_PROJECT_ENVIRONMENT=/app/venv \
     UV_PYTHON_DOWNLOADS=never \
@@ -34,14 +39,16 @@ ENV UV_PROJECT_ENVIRONMENT=/app/venv \
 
 WORKDIR /app
 
-# Install dependencies first (layer cache: only rebuild when pyproject/lock change).
-# api-only extra = torch-less profile (base deps already exclude torch).
+# 先安装依赖层；canonical lock 保留国内源，build arg 决定本次 artifact index。
 COPY pyproject.toml uv.lock ./
-RUN uv sync --frozen --no-dev --extra api-only
+COPY scripts/sync_locked_deps.sh ./scripts/
+RUN UV_DEFAULT_INDEX="$UV_DEFAULT_INDEX" \
+    UV_SYNC_TIMEOUT_SECONDS="$UV_SYNC_TIMEOUT_SECONDS" \
+    bash scripts/sync_locked_deps.sh api-only
 
 # Copy application source and the built frontend.
 COPY . .
-COPY --from=web-builder /web/dist ./web/dist
+COPY --from=web-builder /workspace/web/dist ./web/dist
 
 # Non-secret runtime defaults. Secrets are injected at `docker run`.
 ENV EMBEDDING_PROVIDER=api \
@@ -58,4 +65,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
     CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/admin/health',timeout=3).status==200 else 1)" || exit 1
 
-CMD ["uv", "run", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uv", "run", "--frozen", "--no-sync", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -251,6 +251,7 @@ class TestB7StaleProcessingRecovery:
 
         row = reg.find_by_file_hash(stale_hash)
         assert row["status"] == "failed"
+        reg.close()
 
     def test_recover_leaves_recent_processing_alone(self, tmp_path):
         import api.routers.documents as docs_mod
@@ -272,6 +273,7 @@ class TestB7StaleProcessingRecovery:
 
         row = reg.find_by_file_hash(fresh_hash)
         assert row["status"] == "processing"  # untouched — not stale
+        reg.close()
 
     def test_recover_leaves_indexed_alone(self, tmp_path):
         import api.routers.documents as docs_mod
@@ -291,6 +293,7 @@ class TestB7StaleProcessingRecovery:
         docs_mod._recover_stale_processing(reg, "ok.md", "idxhash")
         row = reg.find_by_file_hash("idxhash")
         assert row["status"] == "indexed"  # only processing rows are recovered
+        reg.close()
 
 
 if __name__ == "__main__":

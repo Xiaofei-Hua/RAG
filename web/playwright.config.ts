@@ -35,7 +35,7 @@ export default defineConfig({
     // (domain-agnostic) profile.
     command: process.env.E2E_NO_WEBSERVER
       ? "echo 'using externally-started backend'"
-      : `cd .. && PYTEST_RUN=1 RAG_E2E_FAKES=1 uv run uvicorn api.main:app --host 127.0.0.1 --port 8000`,
+      : `cd .. && PYTEST_RUN=1 RAG_E2E_FAKES=1 uv run --frozen --no-sync uvicorn api.main:app --host 127.0.0.1 --port 8000`,
     url: BACKEND,
     reuseExistingServer: true,
     timeout: 120_000,

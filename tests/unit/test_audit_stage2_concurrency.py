@@ -147,6 +147,7 @@ def test_b8_escalation_concurrent_creates_no_lock_error(tmp_path):
     # All 120 records should persist (6 threads × 20).
     pending = mgr.get_pending()
     assert len(pending) == 120, f"expected 120 escalations, got {len(pending)}"
+    mgr.close()
 
 
 if __name__ == "__main__":
