@@ -351,3 +351,75 @@ class TestEmbeddingDispatch:
                 "bge-small should return HuggingFaceEmbeddings, not BGEM3Embeddings"
             )
             reset_embeddings()
+
+
+class TestHybridHeadAssets:
+    @staticmethod
+    def _base_model(path):
+        path.mkdir()
+        (path / "config.json").write_text("{}", encoding="utf-8")
+        (path / "model.safetensors").write_bytes(b"base")
+
+    def test_missing_trained_heads_degrades_to_dense_without_random_sparse(self, tmp_path):
+        import numpy as np
+
+        from models.bge_m3_embeddings import BGEM3Embeddings
+
+        model_path = tmp_path / "bge-m3"
+        self._base_model(model_path)
+        embedding = BGEM3Embeddings(str(model_path), device="cpu", use_fp16=False)
+
+        class FakeModel:
+            def encode(self, texts, **kwargs):
+                assert kwargs["return_sparse"] is False
+                assert kwargs["return_colbert_vecs"] is False
+                return {
+                    "dense_vecs": np.asarray(
+                        [[1.0, 2.0] for _ in texts],
+                        dtype=np.float32,
+                    )
+                }
+
+        embedding._flag_model = FakeModel()
+        representation = embedding.encode_query_representation("query", return_colbert=True)
+        batch = embedding.encode_hybrid_batch(["document"])
+
+        assert representation == {
+            "dense": [1.0, 2.0],
+            "sparse": None,
+            "colbert": None,
+        }
+        assert batch == [([1.0, 2.0], {})]
+
+    def test_hybrid_asset_fingerprint_requires_both_trained_heads(self, tmp_path):
+        from models.bge_m3_embeddings import (
+            bge_m3_hybrid_asset_fingerprint,
+            bge_m3_hybrid_assets_ready,
+        )
+
+        model_path = tmp_path / "bge-m3"
+        self._base_model(model_path)
+        assert bge_m3_hybrid_assets_ready(str(model_path)) is False
+        assert bge_m3_hybrid_asset_fingerprint(str(model_path)) == "missing"
+
+        (model_path / "sparse_linear.pt").write_bytes(b"trained-sparse")
+        (model_path / "colbert_linear.pt").write_bytes(b"trained-colbert")
+
+        assert bge_m3_hybrid_assets_ready(str(model_path)) is True
+        first = bge_m3_hybrid_asset_fingerprint(str(model_path))
+        (model_path / "sparse_linear.pt").write_bytes(b"changed-sparse-with-new-size")
+        assert bge_m3_hybrid_asset_fingerprint(str(model_path)) != first
+
+    def test_download_contract_requires_sparse_and_colbert_heads(self, tmp_path):
+        from scripts.download_bge_m3 import missing_required_assets
+
+        model_path = tmp_path / "bge-m3"
+        self._base_model(model_path)
+        assert set(missing_required_assets(model_path)) == {
+            "sparse_linear.pt",
+            "colbert_linear.pt",
+        }
+
+        (model_path / "sparse_linear.pt").write_bytes(b"sparse")
+        (model_path / "colbert_linear.pt").write_bytes(b"colbert")
+        assert missing_required_assets(model_path) == ()

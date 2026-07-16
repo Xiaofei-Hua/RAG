@@ -135,6 +135,32 @@ def test_local_preflight_requires_only_active_components(tmp_path):
     assert result.reason == "embedding_checkpoint_missing"
 
 
+def test_native_sparse_preflight_requires_trained_bge_m3_heads(tmp_path):
+    model_path = tmp_path / "bge-m3"
+    model_path.mkdir()
+    (model_path / "config.json").write_text("{}", encoding="utf-8")
+    (model_path / "model.safetensors").write_bytes(b"base")
+    env = build_minimal_child_env(
+        {"PATH": "/usr/bin", "HOME": str(tmp_path)},
+        {
+            "RETRIEVAL_DENSE_ENABLED": "false",
+            "RETRIEVAL_SPARSE_ENABLED": "true",
+            "MILVUS_SPARSE_INDEX": "true",
+            "RERANKER_ENABLED": "false",
+            "RETRIEVAL_MMR_ENABLED": "false",
+        },
+        {"EMBEDDING_MODEL_PATH": str(model_path)},
+    )
+
+    result = preflight_local_components(env)
+    assert result.available is False
+    assert result.reason == "embedding_hybrid_heads_missing"
+
+    (model_path / "sparse_linear.pt").write_bytes(b"trained-sparse")
+    (model_path / "colbert_linear.pt").write_bytes(b"trained-colbert")
+    assert preflight_local_components(env).available is True
+
+
 def test_workload_preflight_rejects_corpus_and_disk_over_budget(tmp_path, monkeypatch):
     dataset = tmp_path / "benchmark.yaml"
     corpus = tmp_path / "benchmark_corpus.yaml"

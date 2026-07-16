@@ -459,7 +459,18 @@ class MilvusManager:
         """The actual embedding loader source used for fingerprinting."""
         from utils.env_utils import resolve_embedding_settings
 
-        return resolve_embedding_settings().model_source
+        settings = resolve_embedding_settings()
+        source = settings.model_source
+        enable_sparse = getattr(
+            getattr(self, "config", None),
+            "enable_sparse",
+            settings.sparse_enabled,
+        )
+        if enable_sparse:
+            from models.bge_m3_embeddings import bge_m3_hybrid_asset_fingerprint
+
+            source = f"{source}#hybrid-heads:{bge_m3_hybrid_asset_fingerprint(source)}"
+        return source
 
     def collection_compatibility(self) -> dict[str, Any]:
         """Return the effective collection/embedding compatibility verdict."""

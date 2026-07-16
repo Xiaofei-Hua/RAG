@@ -415,11 +415,15 @@ EMBEDDING_DIMENSION=1024
 - `EMBEDDING_MODEL` 是下载来源或 Hugging Face 模型 ID。
 - `EMBEDDING_MODEL_PATH` 是本地缓存路径。路径内存在已保存模型时优先加载本地模型。
 - `EMBEDDING_DIMENSION` 必须与模型实际输出维度一致。
+- 本地 BGE-M3 初次准备或历史缓存升级时运行
+  `uv run --frozen --extra local-models python scripts/download_bge_m3.py`。下载器会保留完整
+  snapshot，并强制校验 `sparse_linear.pt` 与 `colbert_linear.pt`；仅有 AutoModel 基础权重时，
+  系统不会使用随机初始化的头部，而是保留 dense 并将 sparse/ColBERT 安全降级。
 - 显式选择非 BGE-M3 本地模型时，系统不会继承 BGE-M3 的默认缓存路径或维度；
   未显式给出 `EMBEDDING_DIMENSION` 会直接报配置错误，避免静默建立错误向量空间。
 - Milvus native sparse 只支持本地 BGE-M3。API embedding 或其它本地模型必须设置
   `MILVUS_SPARSE_INDEX=false`；显式启用会在启动阶段 fail fast。
-- Collection registry 记录实际加载的模型来源、维度与 sparse capability，任一变化都必须迁移。
+- Collection registry 记录实际加载的模型来源、维度、sparse capability 与训练头指纹，任一变化都必须迁移。
 
 切换 embedding 模型、维度或 sparse capability 时，已有 collection 会被兼容性门禁阻断，
 不会继续混用不同向量空间。用 parent store 中的可信正文重建到一个**新** collection：

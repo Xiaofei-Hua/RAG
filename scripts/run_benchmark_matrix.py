@@ -347,9 +347,26 @@ def _model_cache_ready(path: Path | None) -> bool:
     )
 
 
+def _hybrid_heads_ready(path: Path | None) -> bool:
+    return bool(
+        path
+        and all(
+            (path / filename).is_file() and (path / filename).stat().st_size > 0
+            for filename in ("sparse_linear.pt", "colbert_linear.pt")
+        )
+    )
+
+
 def _path_fingerprint(path: Path) -> str:
     rows = []
-    for marker in ("config.json", "modules.json", "model.safetensors"):
+    for marker in (
+        "config.json",
+        "modules.json",
+        "model.safetensors",
+        "pytorch_model.bin",
+        "sparse_linear.pt",
+        "colbert_linear.pt",
+    ):
         candidate = path / marker
         if candidate.is_file():
             rows.append(f"{marker}:{candidate.stat().st_size}")
@@ -372,6 +389,10 @@ def preflight_local_components(env: dict[str, str]) -> PreflightResult:
         if importlib.util.find_spec("torch") is None or importlib.util.find_spec("FlagEmbedding") is None:
             return PreflightResult(False, "embedding_dependency_missing")
         fingerprints["embedding"] = _path_fingerprint(embedding_path)
+        if sparse_native:
+            if not _hybrid_heads_ready(embedding_path):
+                return PreflightResult(False, "embedding_hybrid_heads_missing")
+            fingerprints["embedding_hybrid_heads"] = _path_fingerprint(embedding_path)
     if reranker:
         reranker_path = _resolved_model_path(env.get("RERANKER_MODEL_PATH"))
         if not _model_cache_ready(reranker_path):

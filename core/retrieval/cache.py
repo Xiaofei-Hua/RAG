@@ -164,6 +164,7 @@ def embedding_fingerprint(base: Any) -> str:
             "query_prefix",
             "prompt_name",
         ),
+        "hybrid_heads": _known_attr(target, config, "hybrid_head_fingerprint"),
     }
     raw = json.dumps(values, ensure_ascii=True, sort_keys=True, default=str)
     return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]

@@ -653,6 +653,36 @@ class TestEffectiveConfiguration:
         assert settings.model_source == str(cache.resolve())
         assert manager._embedding_model_name() == settings.model_source
 
+    def test_native_sparse_registry_identity_includes_trained_head_fingerprint(
+        self, monkeypatch, tmp_path
+    ):
+        from types import SimpleNamespace
+
+        from documents.milvus_db import MilvusManager
+        from models.bge_m3_embeddings import bge_m3_hybrid_asset_fingerprint
+        from utils.env_utils import resolve_embedding_settings
+
+        cache = tmp_path / "bge-m3"
+        cache.mkdir()
+        (cache / "config.json").write_text("{}", encoding="utf-8")
+        (cache / "model.safetensors").write_bytes(b"base")
+        (cache / "sparse_linear.pt").write_bytes(b"trained-sparse")
+        (cache / "colbert_linear.pt").write_bytes(b"trained-colbert")
+        monkeypatch.setenv("EMBEDDING_PROVIDER", "local")
+        monkeypatch.setenv("EMBEDDING_MODEL", "BAAI/bge-m3")
+        monkeypatch.setenv("EMBEDDING_MODEL_PATH", str(cache))
+        monkeypatch.setenv("EMBEDDING_DIMENSION", "1024")
+        monkeypatch.setenv("MILVUS_SPARSE_INDEX", "true")
+
+        settings = resolve_embedding_settings()
+        manager = object.__new__(MilvusManager)
+        manager.config = SimpleNamespace(enable_sparse=True)
+
+        assert manager._embedding_model_name() == (
+            f"{settings.model_source}#hybrid-heads:"
+            f"{bge_m3_hybrid_asset_fingerprint(settings.model_source)}"
+        )
+
     def test_bge_m3_opaque_cache_path_uses_native_sparse_adapter(self, monkeypatch, tmp_path):
         import sys
         import types

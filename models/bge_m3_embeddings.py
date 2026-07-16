@@ -22,9 +22,12 @@ F-07: singleton with ``reset_bge_m3_embeddings``; ``reset_embeddings`` in
 
 from __future__ import annotations
 
+import hashlib
 import os
 import threading
 from collections.abc import Sequence
+from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
 from langchain_core.embeddings import Embeddings
@@ -40,11 +43,15 @@ from utils.log_utils import log
 
 __all__ = [
     "BGEM3Embeddings",
+    "bge_m3_hybrid_asset_fingerprint",
+    "bge_m3_hybrid_assets_ready",
     "get_bge_m3_embeddings",
     "set_bge_m3_embeddings_instance",
     "reset_bge_m3_embeddings",
     "is_bge_m3_cached",
 ]
+
+_HYBRID_HEAD_FILES = ("sparse_linear.pt", "colbert_linear.pt")
 
 
 # 进程级单例。F-07: reset_bge_m3_embeddings 与 embedding_models.reset_embeddings 互清。
@@ -54,10 +61,52 @@ _instance_lock = threading.Lock()
 
 def is_bge_m3_cached(model_path: str) -> bool:
     """Return whether the local model directory looks loadable."""
-    from pathlib import Path
-
     p = Path(model_path)
-    return p.is_dir() and (p / "model.safetensors").is_file()
+    return p.is_dir() and any(
+        (p / filename).is_file()
+        for filename in ("model.safetensors", "pytorch_model.bin")
+    )
+
+
+def bge_m3_hybrid_assets_ready(model_path: str) -> bool:
+    """Whether trained sparse and ColBERT heads are available for inference."""
+    path = Path(model_path)
+    return is_bge_m3_cached(str(path)) and all(
+        (path / filename).is_file() and (path / filename).stat().st_size > 0
+        for filename in _HYBRID_HEAD_FILES
+    )
+
+
+@lru_cache(maxsize=16)
+def _hybrid_asset_fingerprint_cached(
+    model_path: str,
+    signatures: tuple[tuple[str, int, int, int], ...],
+) -> str:
+    digest = hashlib.sha256()
+    path = Path(model_path)
+    for filename, _size, _mtime_ns, _ctime_ns in signatures:
+        digest.update(filename.encode("utf-8"))
+        with (path / filename).open("rb") as stream:
+            for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                digest.update(chunk)
+    return digest.hexdigest()[:16]
+
+
+def bge_m3_hybrid_asset_fingerprint(model_path: str) -> str:
+    """Stable identity for the trained sparse/ColBERT heads, or ``missing``."""
+    path = Path(model_path).expanduser().resolve(strict=False)
+    if not bge_m3_hybrid_assets_ready(str(path)):
+        return "missing"
+    signatures = tuple(
+        (
+            filename,
+            (path / filename).stat().st_size,
+            (path / filename).stat().st_mtime_ns,
+            (path / filename).stat().st_ctime_ns,
+        )
+        for filename in _HYBRID_HEAD_FILES
+    )
+    return _hybrid_asset_fingerprint_cached(str(path), signatures)
 
 
 class BGEM3Embeddings(Embeddings):
@@ -94,6 +143,8 @@ class BGEM3Embeddings(Embeddings):
         self._flag_load_attempted = False
         self._query_forward_count = 0
         self._query_count_lock = threading.Lock()
+        self.hybrid_heads_available = bge_m3_hybrid_assets_ready(model_path)
+        self.hybrid_head_fingerprint = bge_m3_hybrid_asset_fingerprint(model_path)
 
         # F-06: 摄入期 late chunking 信号量（进程级串行，避免多 8K 前向叠加 OOM）
         self._late_chunk_semaphore = threading.Semaphore(
@@ -104,6 +155,11 @@ class BGEM3Embeddings(Embeddings):
             f"BGEM3Embeddings configured: path={model_path}, device={device}, "
             f"fp16={self.use_fp16}, max_length={max_length}, flash_attn={flash_attention}"
         )
+        if not self.hybrid_heads_available:
+            log.warning(
+                "BGE-M3 trained sparse/ColBERT heads are missing; dense embeddings remain "
+                "available while sparse and ColBERT degrade safely. Run scripts/download_bge_m3.py."
+            )
 
     # ------------------------------------------------------------------
     # 模型加载（懒加载，各自独立失败处理）
@@ -213,18 +269,26 @@ class BGEM3Embeddings(Embeddings):
         model = self._ensure_flag_model()
         with self._query_count_lock:
             self._query_forward_count += 1
+        use_hybrid_heads = self.hybrid_heads_available
         out = model.encode(
             [text],
             batch_size=1,
             return_dense=True,
-            return_sparse=True,
-            return_colbert_vecs=return_colbert,
+            return_sparse=use_hybrid_heads,
+            return_colbert_vecs=bool(return_colbert and use_hybrid_heads),
             max_length=self.max_length,
         )
         dense = out["dense_vecs"][0].tolist()
-        sparse = {int(key): float(value) for key, value in out["lexical_weights"][0].items()}
+        sparse = (
+            {
+                int(key): float(value)
+                for key, value in out["lexical_weights"][0].items()
+            }
+            if use_hybrid_heads
+            else None
+        )
         colbert = None
-        if return_colbert:
+        if return_colbert and use_hybrid_heads:
             vectors = out.get("colbert_vecs")
             if vectors is not None and len(vectors):
                 first = vectors[0]
@@ -242,21 +306,26 @@ class BGEM3Embeddings(Embeddings):
         """批量 hybrid 编码。FlagModel 一次前向处理整批。"""
         model = self._ensure_flag_model()
         # FlagModel 返回 dict: dense_vecs (np.ndarray), lexical_weights (list[dict[str,float]])
+        use_hybrid_heads = self.hybrid_heads_available
         out = model.encode(
             list(texts),
             batch_size=min(self.batch_size, len(texts)) if texts else 1,
             return_dense=True,
-            return_sparse=True,
+            return_sparse=use_hybrid_heads,
             return_colbert_vecs=False,
             max_length=self.max_length,
         )
         dense_arr = out["dense_vecs"]  # np.ndarray (n, 1024)
-        sparse_list = out["lexical_weights"]  # list[dict[str, np.float32]]
+        sparse_list = out.get("lexical_weights") if use_hybrid_heads else None
         results: list[tuple[list[float], dict[int, float]]] = []
         for i in range(len(texts)):
             dense = dense_arr[i].tolist()
             # F-01/sparse 兼容: FlagModel 返回 str key，Milvus 需要 int key
-            sparse = {int(k): float(v) for k, v in sparse_list[i].items()}
+            sparse = (
+                {int(k): float(v) for k, v in sparse_list[i].items()}
+                if sparse_list is not None
+                else {}
+            )
             results.append((dense, sparse))
         return results
 
@@ -270,6 +339,8 @@ class BGEM3Embeddings(Embeddings):
         """Encode bounded document token vectors for late interaction."""
         if not texts:
             return []
+        if not self.hybrid_heads_available:
+            raise RuntimeError("BGE-M3 trained ColBERT head is unavailable")
         model = self._ensure_flag_model()
         effective_batch = max(1, min(batch_size or self.batch_size, len(texts)))
         results: list[list[list[float]]] = []

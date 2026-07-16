@@ -25,6 +25,18 @@ starting from 0.1.0.
   microbenchmarks. Static enlarged funnels/contextual indexing and all frontier channels remain
   default-off because their real-model/domain promotion gates have not been met.
 
+### Fixed — BGE-M3 hybrid-head asset integrity
+
+- The offline BGE-M3 downloader now preserves the repository snapshot and requires the trained
+  `sparse_linear.pt` and `colbert_linear.pt` files. A base AutoModel-only directory previously made
+  FlagEmbedding randomly initialize both heads in every process, which caused native-sparse RRF
+  quality drift. Missing heads now retain deterministic dense retrieval and safely degrade sparse /
+  ColBERT instead of indexing random weights.
+- Native-sparse benchmark preflight rejects incomplete checkpoints, cache and collection identities
+  include the trained-head fingerprint, and adding/replacing the heads therefore requires rebuilding
+  the sparse collection. Existing local BGE-M3 users should rerun `scripts/download_bge_m3.py` before
+  migration.
+
 ### Fixed — CI dependency routing (`ci-index-routing`)
 
 - GitHub-hosted backend, Playwright and API-only Docker jobs now install a frozen, hashed

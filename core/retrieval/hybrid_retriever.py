@@ -1144,6 +1144,8 @@ class HybridRetriever:
 
                 emb = get_bge_m3_embeddings()
                 sparse = emb.encode_query_representation(query)["sparse"]
+            if not sparse:
+                return self._legacy_sparse_fallback(query, filter_expr, top_k)
             limit = top_k or (_request_budgets.get() or self.config.resolve_budgets()).candidate_k
             results = self.dense_manager.sparse_search(
                 query_sparse=sparse,

@@ -107,6 +107,7 @@ def test_bge_m3_document_colbert_encoding_uses_one_bounded_forward():
     model = FlagModel()
     embedding._flag_model = model
     embedding._flag_load_attempted = True
+    embedding.hybrid_heads_available = True
 
     vectors = embedding.encode_colbert_documents(
         ["a", "b"],
