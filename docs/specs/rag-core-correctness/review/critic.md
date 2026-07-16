@@ -145,7 +145,7 @@
 | F-14 benchmark baseline fail-closed | High | closed by `440092b` |
 | F-15 UI `1.0` 分数边界 | Medium | closed by `440092b` |
 | F-16 evidence metadata wire safety | High | closed by `440092b` |
-| F-17 review/tracking 未同步 | High | implementation closed；documentation tracking 待收尾 |
+| F-17 review/tracking 未同步 | High | closed by `3ea045d` |
 | F-18 旧版本 checkpoint 回滚演练 | Medium | closed by compatibility drill |
 
 ### F-12 — checkpoint 请求态跨轮串扰
@@ -218,7 +218,7 @@
 - **root_cause**: 实现与验证先于评审归档更新。
 - **recommendation**: 归档本终审与 Defender 裁决，使用真实 implementation SHA 更新 tracking，再独立提交文档闭环。
 - **verification**: tracking 覆盖 F-12～F-18，且 Critical/High 四列完整。
-- **status**: implementation evidence 已齐；documentation closure 由后续 tracking commit 完成。
+- **status**: closed；review archive `3ea045d`，tracking 已填入 implementation/verification/regression 四列。
 
 ### F-18 — rollback 曾声明不存在的 feature flag
 
@@ -255,4 +255,4 @@
 | Elevation | 未改变 Admin 权限边界。 |
 | OWASP LLM | evidence 定界和 data-only 指令覆盖 generate/grade。 |
 
-**Push Gate**：运行时代码无新增阻断；F-12～F-16 与 F-18 已闭环。F-17 在正式 tracking 使用真实文档 commit SHA 后关闭。
+**Push Gate**：运行时代码无新增阻断；F-12～F-18 均已闭环，允许 push。

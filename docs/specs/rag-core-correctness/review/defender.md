@@ -48,7 +48,7 @@
 | F-14 | Critical | accepted | tracked fail-closed baselines + two real gates | closed at `440092b` |
 | F-15 | High | accepted | closed-interval formatter + Playwright | closed at `440092b` |
 | F-16 | High | accepted | consumer normalization + strict saver | closed at `440092b` |
-| F-17 | High | accepted | review/tasks/tracking must match current facts | pending documentation tracking |
+| F-17 | High | accepted | review/tasks/tracking must match current facts | closed at `3ea045d` |
 | F-18 | Medium | defended-with-alternative | version rollback + compatibility drill | closed |
 
 ### F-12 — Request-state isolation
@@ -97,7 +97,7 @@ object/Path/cycle/NaN/越界整数与 sync/async saver。
 实现通过不等于工程门禁完成；旧 review/tracking 会让 Critical/High 缺 commit、verification、regression 四列。
 不存在等价替代，必须归档终审、刷新 tasks 并写入真实 SHA。
 
-**Decision**: accepted；在 documentation tracking commit 后 closed。
+**Decision**: accepted；review archive `3ea045d` 后 closed。
 
 ### F-18 — Rollback without a feature flag
 
@@ -124,4 +124,4 @@ object/Path/cycle/NaN/越界整数与 sync/async saver。
 - Graph v2 回滚到 v1 backup 会丢失观察期新增 graph 写入。
 - 既有依赖弃用与 SQLite `ResourceWarning` 未造成失败，仍是后续生命周期技术债。
 
-**Push Gate**：F-12～F-16 与 F-18 已满足运行时门禁；F-17 在 tracking 记录真实文档闭环 commit 后允许 push。
+**Push Gate**：F-12～F-18 已满足运行时与工程门禁，允许 push。

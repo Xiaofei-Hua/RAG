@@ -20,8 +20,8 @@
 | F-14 | Critical | RCC-017A | accepted | v4 tracked baseline | `440092b` schema/digest/fail-closed/atomic update | baseline unit tests; two fresh gates PASS | `TestBenchmarkLifecycle` | closed |
 | F-15 | High | RCC-009B | accepted | v4 score semantics | `440092b` nullable closed-interval formatter | UI red→green; Playwright 19 | `chat.spec.ts` score boundaries | closed |
 | F-16 | High | RCC-003A/015 | accepted | v4 consumer normalization | `440092b` recursive normalizer + caller boundary | strict saver + blockers/full matrix | unsafe metadata/caller/saver tests | closed |
-| F-17 | High | Spec-Gate | accepted | v4 review closure | pending documentation report commit | critic/defender/tasks/tracking cross-check | Spec-Gate checklist | open |
-| F-18 | Medium | RCC-016 | defended-with-alternative | v4 version rollback | `440092b` compatibility + documentation closure | current write → `45d68f0` read/continue drill | checkpoint + legacy `ToolMessage` tests | closed |
+| F-17 | High | Spec-Gate | accepted | v4 review closure | `3ea045d` critic/defender/tasks/tracking archive | report/tasks/log cross-check | Spec-Gate checklist | closed |
+| F-18 | Medium | RCC-016 | defended-with-alternative | v4 version rollback | `440092b` compatibility + `3ea045d` rollback docs | current write → `45d68f0` read/continue drill | checkpoint + legacy `ToolMessage` tests | closed |
 
 ## Verification record
 
@@ -40,5 +40,5 @@
 ## Closure rule
 
 Critical/High 只有 Design、Implementation、Verification、Regression 四列全部可定位时才能 `closed`。
-F-01～F-16 已满足；F-18 采用 Defender 等价替代并完成实际演练。F-17 必须在本轮 critic、defender、
-tasks 与 tracking 进入一个真实 documentation commit 后，使用该 SHA 替换 pending 并关闭。
+F-01～F-17 已满足；F-18 采用 Defender 等价替代并完成实际演练。Implementation commit 为
+`440092b`，review archive commit 为 `3ea045d`，所有合并门禁已闭合。
