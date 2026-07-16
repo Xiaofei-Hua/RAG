@@ -69,6 +69,16 @@ def test_ui_workflow_uses_controlled_production_audit() -> None:
     assert "npm audit --omit=dev" in workflow
     assert "--userconfig=/dev/null" in workflow
     assert "--registry=https://registry.npmjs.org/" in workflow
+    assert "uses: actions/upload-artifact@v4" in workflow
+    assert "if: always()" in workflow
+    assert "tests/e2e_ui/screenshots/" in workflow
+    assert "web/test-results/" in workflow
+    assert "if-no-files-found: error" in workflow
+
+
+def test_playwright_retains_failure_trace_for_uploaded_evidence() -> None:
+    config = (ROOT / "web" / "playwright.config.ts").read_text(encoding="utf-8")
+    assert 'trace: "retain-on-failure"' in config
 
 
 def test_lock_workflow_uses_the_same_frontend_toolchain() -> None:

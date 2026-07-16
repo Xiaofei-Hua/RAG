@@ -49,6 +49,7 @@
         class="session-card"
         @click="openSession(session.session_id)"
         data-testid="session-card"
+        :data-session-id="session.session_id"
       >
         <div class="session-header">
           <div class="session-icon">

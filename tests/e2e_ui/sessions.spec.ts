@@ -11,14 +11,18 @@ import { screenshot, autoConfirmDialog } from "./helpers";
 
 const SHOT_DIR = "sessions";
 const SEEDED_QUESTION = "git 合并冲突如何解决？";
+const SENTINEL_QUESTION = "Git rebase 和 merge 有什么区别？";
 
-async function seedSession(page: import("@playwright/test").Page): Promise<string> {
+async function seedSession(
+  page: import("@playwright/test").Page,
+  question = SEEDED_QUESTION,
+): Promise<string> {
   await page.goto("/");
   const input = page.getByTestId("chat-input");
   const requestPromise = page.waitForRequest((request) => {
     return new URL(request.url()).pathname === "/api/chat/stream" && request.method() === "POST";
   });
-  await input.fill(SEEDED_QUESTION);
+  await input.fill(question);
   await input.press("Enter");
   const request = await requestPromise;
   const payload = request.postDataJSON() as { session_id: string };
@@ -30,10 +34,7 @@ async function seedSession(page: import("@playwright/test").Page): Promise<strin
 }
 
 function seededSessionCard(page: import("@playwright/test").Page, sessionId: string) {
-  const fallbackTitle = `${sessionId.substring(0, 12)}...`;
-  return page.getByTestId("session-card").filter({
-    has: page.getByText(fallbackTitle, { exact: true }),
-  });
+  return page.locator(`[data-testid="session-card"][data-session-id="${sessionId}"]`);
 }
 
 test.describe("Sessions UI", () => {
@@ -70,19 +71,28 @@ test.describe("Sessions UI", () => {
   });
 
   test("delete removes the session from the list", async ({ page }) => {
+    const sentinelId = await seedSession(page, SENTINEL_QUESTION);
     const sessionId = await seedSession(page);
     await page.goto("/sessions");
     // Wait for the seeded session to register in the (process-scoped) store
     // before counting. Under combined-suite load the chat-turn -> session
     // registration can race the navigation, leaving the list momentarily empty.
     const target = seededSessionCard(page, sessionId);
+    const sentinel = seededSessionCard(page, sentinelId);
     await expect(target).toBeVisible({ timeout: 30_000 });
+    await expect(sentinel).toBeVisible({ timeout: 30_000 });
 
     const stop = autoConfirmDialog(page, true);
+    const deleteResponse = page.waitForResponse((response) => {
+      return new URL(response.url()).pathname === `/api/sessions/${sessionId}`
+        && response.request().method() === "DELETE";
+    });
     await target.getByTestId("session-delete").click();
+    expect((await deleteResponse).ok()).toBe(true);
     stop();
 
     await expect(target).toHaveCount(0, { timeout: 30_000 });
+    await expect(sentinel).toBeVisible();
     await screenshot(page, SHOT_DIR, "after-delete");
   });
 });
