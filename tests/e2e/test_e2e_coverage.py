@@ -120,12 +120,28 @@ class TestRetrievalEndpoints:
         body = resp.json()
         assert "results" in body and isinstance(body["results"], list)
 
-    @pytest.mark.skipif(not _DENSE_RUNNABLE, reason=_DENSE_SKIP_REASON)
-    def test_dense_retrieval(self, client):
+    def test_dense_retrieval(self, client, monkeypatch):
+        from documents.milvus_db import SearchResult
+
+        class _DenseManager:
+            def search(self, query, top_k=3):
+                return [
+                    SearchResult(
+                        id=1,
+                        text="Git 合并冲突处理",
+                        score=0.9,
+                        metadata={"source": "git_guide", "title": "合并冲突"},
+                    )
+                ][:top_k]
+
+        monkeypatch.setattr(
+            "documents.milvus_db.get_milvus_manager",
+            lambda: _DenseManager(),
+        )
         resp = client.post("/api/retrieval/dense", json={"query": "git 合并", "top_k": 3})
         assert resp.status_code == 200
         body = resp.json()
-        assert "results" in body and isinstance(body["results"], list)
+        assert [item["source"] for item in body["results"]] == ["git_guide"]
 
     def test_sparse_retrieval_endpoint_wired(self, client):
         # /sparse delegates to retriever.sparse_retriever (a real BM25 index in

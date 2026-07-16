@@ -25,8 +25,8 @@ class TestHealth:
         resp = client.get("/health")
         assert resp.status_code == 200
         body = resp.json()
-        # status field present.
-        assert "status" in body or "status_code" in body or resp.json()
+        assert body["status"] in ("healthy", "degraded")
+        assert set(body["runtime_config"]) == {"schema_version", "fingerprint"}
 
     def test_admin_health(self, client):
         resp = client.get("/api/admin/health")

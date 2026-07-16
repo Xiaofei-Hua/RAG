@@ -13,3 +13,6 @@
 *.pt filter=lfs diff=lfs merge=lfs -text
 *.onnx filter=lfs diff=lfs merge=lfs -text
 *.ckpt filter=lfs diff=lfs merge=lfs -text
+
+# Preserve this tracked CRLF file and let whitespace checks accept CR-at-EOL.
+api/main.py whitespace=cr-at-eol

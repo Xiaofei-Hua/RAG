@@ -48,6 +48,7 @@ ENV EMBEDDING_PROVIDER=api \
     RERANKER_ENABLED=false \
     EMBEDDING_MODEL=text-embedding-v3 \
     EMBEDDING_DIMENSION=512 \
+    MILVUS_SPARSE_INDEX=false \
     OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1 \
     MILVUS_DB_URI=/app/data/milvus_data.db
 

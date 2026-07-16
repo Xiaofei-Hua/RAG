@@ -193,12 +193,12 @@ class TestEmbeddingFingerprint:
         finally:
             reg.close()
 
-    def test_registry_unknown_collection_is_compatible(self, tmp_path):
+    def test_registry_unknown_existing_collection_is_incompatible(self, tmp_path):
         from documents.embedding_registry import EmbeddingRegistry
 
         reg = EmbeddingRegistry(str(tmp_path / "er.db"))
         try:
-            assert reg.is_compatible("nope", "bge", 512) is True
+            assert reg.is_compatible("nope", "bge", 512) is False
         finally:
             reg.close()
 

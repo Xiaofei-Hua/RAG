@@ -100,13 +100,21 @@ async def health_check():
     }
 
     # Check vector database
+    manager = None
     try:
         from documents.milvus_db import get_milvus_manager
 
         manager = get_milvus_manager()
         health = manager.health_check()
+        milvus_status = (
+            "unhealthy"
+            if not health.get("connected")
+            else "degraded"
+            if health.get("embedding_compatible") is False
+            else "healthy"
+        )
         services["milvus"] = {
-            "status": "healthy" if health.get("connected") else "unhealthy",
+            "status": milvus_status,
             "details": health,
         }
     except Exception as e:
@@ -114,6 +122,12 @@ async def health_check():
             "status": "unhealthy",
             "error": str(e),
         }
+    finally:
+        if manager is not None:
+            try:
+                manager.close()
+            except Exception:
+                pass
 
     from utils.env_utils import RERANKER_ENABLED
 
@@ -135,13 +149,17 @@ async def health_check():
         }
 
     # Overall status
-    all_healthy = all(
+    all_operational = all(
         s.get("status") in ("healthy", "degraded", "ready", "cold") for s in services.values()
     )
+    milvus_degraded = services.get("milvus", {}).get("status") == "degraded"
+
+    from utils.env_utils import runtime_config_fingerprint
 
     return {
-        "status": "healthy" if all_healthy else "degraded",
+        "status": "healthy" if all_operational and not milvus_degraded else "degraded",
         "services": services,
+        "runtime_config": runtime_config_fingerprint(),
     }
 
 
@@ -253,11 +271,7 @@ async def get_config(_: None = Depends(require_admin)):
         DASHSCOPE_BASE_URL,
         EMBEDDING_BATCH_SIZE,
         EMBEDDING_DEVICE,
-        EMBEDDING_DIMENSION,
-        EMBEDDING_MODEL,
-        EMBEDDING_MODEL_PATH,
         EMBEDDING_NORMALIZE,
-        EMBEDDING_PROVIDER,
         LLM_MAX_RETRIES,
         LLM_MAX_TOKENS,
         LLM_MODEL,
@@ -284,9 +298,14 @@ async def get_config(_: None = Depends(require_admin)):
         RERANKER_MODEL_PATH,
         RERANKER_TOP_K,
         RERANKER_WARMUP,
+        resolve_embedding_settings,
+        runtime_config_fingerprint,
     )
 
+    embedding_settings = resolve_embedding_settings()
+
     return {
+        "runtime_config": runtime_config_fingerprint(),
         "llm": {
             "model": LLM_MODEL,
             "temperature": LLM_TEMPERATURE,
@@ -295,14 +314,15 @@ async def get_config(_: None = Depends(require_admin)):
             "max_retries": LLM_MAX_RETRIES,
         },
         "embedding": {
-            "model": EMBEDDING_MODEL,
-            "provider": EMBEDDING_PROVIDER,
-            "local_path": EMBEDDING_MODEL_PATH,
-            "dimension": EMBEDDING_DIMENSION,
+            "model": embedding_settings.model,
+            "model_source": embedding_settings.model_source,
+            "provider": embedding_settings.provider,
+            "local_path": embedding_settings.model_path,
+            "dimension": embedding_settings.dimension,
             "device": EMBEDDING_DEVICE,
             "normalize": EMBEDDING_NORMALIZE,
             "batch_size": EMBEDDING_BATCH_SIZE,
-            "api_base_url": DASHSCOPE_BASE_URL if EMBEDDING_PROVIDER == "api" else None,
+            "api_base_url": (DASHSCOPE_BASE_URL if embedding_settings.provider == "api" else None),
         },
         "reranker": {
             "enabled": RERANKER_ENABLED,

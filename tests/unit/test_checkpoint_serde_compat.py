@@ -309,6 +309,72 @@ class TestStrictMsgpack:
         finally:
             conn.close()
 
+    def test_structured_evidence_round_trips_in_sync_saver(self, tmp_path):
+        from langgraph.checkpoint.sqlite import SqliteSaver
+
+        conn = __import__("sqlite3").connect(
+            str(tmp_path / "strict-evidence.db"), check_same_thread=False
+        )
+        saver = SqliteSaver(conn)
+        try:
+            config, checkpoint, metadata = _sample_checkpoint("strict-evidence-sync")
+            evidence = [
+                {
+                    "content": "证据",
+                    "source": "manual.md",
+                    "title": "章节",
+                    "score": 0.8,
+                    "metadata": {"page": 1, "tags": ["a", "b"]},
+                }
+            ]
+            checkpoint["channel_values"]["shared_state"] = {
+                "retrieval_evidence": evidence,
+                "generation_evidence": evidence,
+            }
+            saver.put(config, checkpoint, metadata, {})
+            got = saver.get_tuple({"configurable": {"thread_id": "strict-evidence-sync"}})
+            assert got.checkpoint["channel_values"]["shared_state"] == {
+                "retrieval_evidence": evidence,
+                "generation_evidence": evidence,
+            }
+        finally:
+            conn.close()
+
+    def test_structured_evidence_round_trips_in_async_saver(self, tmp_path):
+        import aiosqlite
+        from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+
+        async def _run():
+            conn = await aiosqlite.connect(str(tmp_path / "strict-evidence-async.db"))
+            try:
+                saver = AsyncSqliteSaver(conn)
+                config, checkpoint, metadata = _sample_checkpoint("strict-evidence-async")
+                evidence = [
+                    {
+                        "content": "证据",
+                        "source": "manual.md",
+                        "title": "章节",
+                        "score": None,
+                        "metadata": {"nested": {"ok": True}},
+                    }
+                ]
+                checkpoint["channel_values"]["shared_state"] = {
+                    "retrieval_evidence": evidence,
+                    "generation_evidence": evidence,
+                }
+                await saver.aput(config, checkpoint, metadata, [])
+                got = await saver.aget_tuple(
+                    {"configurable": {"thread_id": "strict-evidence-async"}}
+                )
+                assert got.checkpoint["channel_values"]["shared_state"] == {
+                    "retrieval_evidence": evidence,
+                    "generation_evidence": evidence,
+                }
+            finally:
+                await conn.close()
+
+        asyncio.run(_run())
+
 
 # ===========================================================================
 # F-CS-04 — sqlite-vec transitive dependency (offline/air-gap)

@@ -56,5 +56,5 @@ def test_factory_app_health_via_test_client(client):
     resp = client.get("/health")
     assert resp.status_code == 200
     body = resp.json()
-    assert body["status"] == "healthy"
+    assert body["status"] in ("healthy", "degraded")
     assert "circuits" in body

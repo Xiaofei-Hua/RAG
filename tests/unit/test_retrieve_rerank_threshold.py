@@ -115,24 +115,25 @@ class TestFilterByRerankScore:
         assert len(result) == 2, "degraded docs must pass through unchanged"
 
     def test_mixed_keeps_others(self):
-        """Non-reranked docs (memories, score:1.0, no rerank_applied) are kept
-        alongside filtered reranked docs."""
+        """A mixed batch keeps the real top reranked candidate plus unavailable docs."""
         skill = self._skill()
         docs = [
-            _doc(rerank_score=-6.0, rerank_applied=True),  # dropped
+            _doc(rerank_score=-6.0, rerank_applied=True),
             _doc(score=1.0),  # memory, no rerank_applied -> kept
         ]
         result = skill._filter_by_rerank_score(docs)
-        assert len(result) == 1
-        assert result[0].metadata.get("score") == 1.0
+        assert len(result) == 2
+        assert result[0].metadata.get("rerank_score") == -6.0
+        assert result[1].metadata.get("score") == 1.0
 
     def test_missing_rerank_score_treated_as_unavailable(self):
         """[critic-v2 Low #3] rerank_applied=True but rerank_score missing =
-        data inconsistency -> treated as unavailable (not sigmoid(0)=0.5)."""
+        data inconsistency -> bypass filtering without inventing a probability."""
         skill = self._skill()
         docs = [_doc(rerank_applied=True)]  # no rerank_score key
         result = skill._filter_by_rerank_score(docs)
-        assert result == [], "missing score must not be treated as sigmoid(0)=0.5"
+        assert result == docs
+        assert skill._compute_max_rerank_prob(docs) is None
 
     def test_empty_input_returns_empty(self):
         skill = self._skill()

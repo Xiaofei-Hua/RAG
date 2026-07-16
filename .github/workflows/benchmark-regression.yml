@@ -30,16 +30,16 @@ jobs:
     timeout-minutes: 15
     env:
       DOMAIN_PROFILE: general
-      # Prefer local embeddings when local-models is installed; otherwise fall
-      # back to the DashScope API (requires DASHSCOPE_API_KEY secret).
-      EMBEDDING_PROVIDER: ${{ secrets.DASHSCOPE_API_KEY && 'api' || 'local' }}
-      DASHSCOPE_API_KEY: ${{ secrets.DASHSCOPE_API_KEY }}
+      EMBEDDING_PROVIDER: local
+      EMBEDDING_MODEL: BAAI/bge-m3
+      EMBEDDING_MODEL_PATH: models/local_models/bge-m3
+      EMBEDDING_DIMENSION: "1024"
+      MILVUS_SPARSE_INDEX: "true"
+      GRAPH_RAG_ENABLED: "false"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Install local-models when no API key is configured, so local embeddings
-      # are available; with a key, the lighter api-only install suffices.
       - name: Set up uv
         uses: astral-sh/setup-uv@v6
         with:
@@ -47,21 +47,24 @@ jobs:
           enable-cache: true
 
       - name: Install dependencies
-        run: |
-          if [ -z "$DASHSCOPE_API_KEY" ]; then
-            uv sync --frozen --extra dev --extra local-models
-          else
-            uv sync --frozen --extra dev
-          fi
+        run: uv sync --frozen --extra dev --extra local-models
 
       - name: Run retrieval benchmark (CMRC2018, fail on regression)
+        env:
+          MILVUS_DB_URI: /tmp/benchmark-cmrc2018.db
+          EMBEDDING_REGISTRY_DB: /tmp/benchmark-cmrc2018-registry.db
+          COLLECTION_NAME: benchmark_cmrc2018
         run: |
-          uv run python scripts/run_benchmark.py \
+          uv run --frozen python scripts/run_benchmark.py \
             --dataset data/benchmark/benchmark_cmrc2018.yaml --top-k 4 \
-            --fail-on-regression
+            --repeats 3 --fail-on-regression
 
       - name: Run retrieval benchmark (HotpotQA, fail on regression)
+        env:
+          MILVUS_DB_URI: /tmp/benchmark-hotpotqa.db
+          EMBEDDING_REGISTRY_DB: /tmp/benchmark-hotpotqa-registry.db
+          COLLECTION_NAME: benchmark_hotpotqa
         run: |
-          uv run python scripts/run_benchmark.py \
+          uv run --frozen python scripts/run_benchmark.py \
             --dataset data/benchmark/benchmark_hotpotqa.yaml --top-k 4 \
-            --fail-on-regression
+            --repeats 3 --fail-on-regression

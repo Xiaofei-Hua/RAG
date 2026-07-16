@@ -12,6 +12,27 @@ const SCREENSHOTS_ROOT = path.resolve(__dirname, "screenshots");
  * node is captured so a reviewer can verify the UI rendered correctly.
  */
 export async function screenshot(page: Page, area: string, name: string): Promise<void> {
+  await page.waitForFunction(() => {
+    const transitioning = document.querySelector(
+      ".fade-enter-active, .fade-leave-active, .slide-enter-active, .slide-leave-active",
+    );
+    const messages = Array.from(document.querySelectorAll(".message"));
+    return !transitioning && messages.every((message) => {
+      return Number.parseFloat(getComputedStyle(message).opacity) >= 0.99;
+    });
+  });
+  await page.addStyleTag({
+    content: `
+      *, *::before, *::after {
+        animation: none !important;
+        transition: none !important;
+        caret-color: transparent !important;
+      }
+    `,
+  });
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
+  }));
   await page.screenshot({
     path: path.join(SCREENSHOTS_ROOT, area, `${name}.png`),
     fullPage: true,

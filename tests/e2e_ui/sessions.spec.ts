@@ -45,7 +45,11 @@ test.describe("Sessions UI", () => {
     await page.getByTestId("session-card").first().click();
     await expect(page).toHaveURL("/");
     // History should render the prior turn (user + assistant messages).
-    await expect(page.locator("[data-testid='message']")).toHaveCount(2, { timeout: 30_000 });
+    const messages = page.locator("[data-testid='message']");
+    await expect(messages).toHaveCount(2, { timeout: 30_000 });
+    await expect(messages.nth(0)).toHaveClass(/user/);
+    await expect(messages.nth(0)).toContainText("git 合并冲突如何解决？");
+    await expect(messages.nth(1)).toHaveClass(/assistant/);
     await screenshot(page, SHOT_DIR, "opened-session");
   });
 
@@ -55,17 +59,16 @@ test.describe("Sessions UI", () => {
     // Wait for the seeded session to register in the (process-scoped) store
     // before counting. Under combined-suite load the chat-turn -> session
     // registration can race the navigation, leaving the list momentarily empty.
-    await expect(page.getByTestId("session-card").first()).toBeVisible({ timeout: 30_000 });
-    const before = await page.getByTestId("session-card").count();
-    expect(before).toBeGreaterThan(0);
+    const target = page.getByTestId("session-card").first();
+    await expect(target).toBeVisible({ timeout: 30_000 });
+    const targetTitle = (await target.locator(".session-title").textContent())?.trim();
+    expect(targetTitle).toBeTruthy();
 
     const stop = autoConfirmDialog(page, true);
-    await page.getByTestId("session-delete").first().click();
+    await target.getByTestId("session-delete").click();
     stop();
 
-    await expect(page.getByTestId("session-card")).toHaveCount(before - 1, {
-      timeout: 30_000,
-    });
+    await expect(page.getByText(targetTitle!, { exact: true })).toHaveCount(0, { timeout: 30_000 });
     await screenshot(page, SHOT_DIR, "after-delete");
   });
 });

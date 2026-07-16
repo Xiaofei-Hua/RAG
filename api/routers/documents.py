@@ -437,7 +437,7 @@ def _extract_graph_if_enabled(documents: list[Document], source: str, file_hash:
         from documents.graph_extractor import get_graph_extractor
         from documents.graph_store import get_graph_store
         from models.embedding_models import get_embeddings
-        from utils.env_utils import EMBEDDING_DIMENSION, EMBEDDING_MODEL
+        from utils.env_utils import resolve_embedding_settings
 
         extractor = get_graph_extractor()
         entities, relations = extractor.extract(documents, source=source, file_hash=file_hash)
@@ -446,6 +446,7 @@ def _extract_graph_if_enabled(documents: list[Document], source: str, file_hash:
         # Embed entities with the shared BGE singleton so graph cosine matches
         # the dense leg's vector space.
         emb = get_embeddings()
+        embedding_settings = resolve_embedding_settings()
         texts = [e.name for e in entities]
         vectors = emb.embed_documents(texts) if texts else []
         for e, v in zip(entities, vectors, strict=False):
@@ -454,14 +455,14 @@ def _extract_graph_if_enabled(documents: list[Document], source: str, file_hash:
         # embedding model was swapped (e.g. BGE-small → BGE-large), the env value
         # is stale but the vectors reflect the live model. Recording the real dim
         # keeps the graph retriever's fingerprint check accurate (F-09).
-        actual_dim = len(vectors[0]) if vectors else EMBEDDING_DIMENSION
+        actual_dim = len(vectors[0]) if vectors else embedding_settings.dimension
         store = get_graph_store()
         store.upsert(
             entities,
             relations,
             source=source,
             file_hash=file_hash,
-            embedding_model=EMBEDDING_MODEL,
+            embedding_model=embedding_settings.model_source,
             embedding_dim=actual_dim,
         )
         # Invalidate the graph retriever's cached matrix + the retrieval cache.

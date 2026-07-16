@@ -30,7 +30,9 @@ def main() -> int:
 
     from documents.graph_store import GraphStore, get_graph_store
     from models.embedding_models import get_embeddings
-    from utils.env_utils import EMBEDDING_DIMENSION, EMBEDDING_MODEL
+    from utils.env_utils import resolve_embedding_settings
+
+    embedding_settings = resolve_embedding_settings()
 
     store: GraphStore = get_graph_store()
     entities = store.all_entity_names()
@@ -41,7 +43,10 @@ def main() -> int:
     old_dim = store.get_meta("embedding_dim")
     print(f"Entities: {len(entities)}")
     print(f"Old embedding_dim (graph_meta): {old_dim}")
-    print(f"New model: {EMBEDDING_MODEL} (dim {EMBEDDING_DIMENSION})")
+    print(
+        f"New model: {embedding_settings.model} "
+        f"(source={embedding_settings.model_source}, dim {embedding_settings.dimension})"
+    )
 
     if args.dry_run:
         print("[dry-run] would re-embed all entities. Exiting without write.")
@@ -62,8 +67,8 @@ def main() -> int:
 
     updated = store.update_embeddings(
         new_embeddings,
-        embedding_model=EMBEDDING_MODEL,
-        embedding_dim=EMBEDDING_DIMENSION,
+        embedding_model=embedding_settings.model_source,
+        embedding_dim=embedding_settings.dimension,
     )
 
     # Verify: no stale-dim BLOBs remain.
@@ -75,14 +80,14 @@ def main() -> int:
             cur = store._conn.execute("SELECT embedding FROM entities WHERE id = ?", (eid,))
             row = cur.fetchone()
             blob = row["embedding"] if row else None
-            if blob and len(blob) // 4 != EMBEDDING_DIMENSION:
+            if blob and len(blob) // 4 != embedding_settings.dimension:
                 stale += 1
 
     print(
         {
             "updated": updated,
             "total_entities": total,
-            "new_dim": EMBEDDING_DIMENSION,
+            "new_dim": embedding_settings.dimension,
             "stale_blobs_remaining": stale,
         }
     )

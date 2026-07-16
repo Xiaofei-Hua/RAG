@@ -11,8 +11,9 @@ short hash of ``(model_name, dimension)``. On collection creation we record
 the fingerprint; on search we compare the current embedding config against the
 recorded one and emit a prominent warning when they diverge.
 
-This is deliberately advisory (warn, never block) so a config change during
-operations does not hard-stop retrieval — but it makes the drift visible.
+Compatibility is a correctness gate. Existing collections without a registry
+record, or with a mismatched model/dimension/sparse capability, are blocked
+until they are rebuilt into a collection registered with the effective model.
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ __all__ = [
     "fingerprint",
     "EmbeddingRegistry",
     "get_registry",
+    "reset_embedding_registry",
     "check_collection_compatible",
     "DEFAULT_DB_PATH",
 ]
@@ -37,8 +39,13 @@ __all__ = [
 DEFAULT_DB_PATH = os.getenv("EMBEDDING_REGISTRY_DB", "./data/embedding_registry.db")
 
 
-def fingerprint(model_name: str, dimension: int) -> str:
+def fingerprint(model_name: str, dimension: int, sparse_enabled: bool = False) -> str:
     """Stable short fingerprint for an embedding model + dimension pair."""
+    raw = f"{model_name}|{int(dimension)}|sparse={int(sparse_enabled)}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
+
+
+def _legacy_fingerprint(model_name: str, dimension: int) -> str:
     raw = f"{model_name}|{int(dimension)}"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
@@ -46,7 +53,9 @@ def fingerprint(model_name: str, dimension: int) -> str:
 class EmbeddingRegistry:
     """Thread-safe SQLite registry of embedding fingerprints per collection."""
 
-    def __init__(self, db_path: str = DEFAULT_DB_PATH):
+    def __init__(self, db_path: str | None = None):
+        if db_path is None:
+            db_path = DEFAULT_DB_PATH
         self._db_path = db_path
         self._lock = threading.RLock()
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
@@ -59,11 +68,19 @@ class EmbeddingRegistry:
                 fingerprint   TEXT,
                 model         TEXT,
                 dimension     INTEGER,
+                sparse_enabled INTEGER NOT NULL DEFAULT 0,
                 created_at    REAL,
                 updated_at    REAL
             )
             """
         )
+        columns = {
+            row["name"] for row in self._conn.execute("PRAGMA table_info(embedding_registry)")
+        }
+        if "sparse_enabled" not in columns:
+            self._conn.execute(
+                "ALTER TABLE embedding_registry ADD COLUMN sparse_enabled INTEGER NOT NULL DEFAULT 0"
+            )
         self._conn.commit()
 
     def register(
@@ -71,9 +88,10 @@ class EmbeddingRegistry:
         collection: str,
         model_name: str,
         dimension: int,
+        sparse_enabled: bool = False,
     ) -> str:
         """Record (or update) the embedding fingerprint for a collection."""
-        fp = fingerprint(model_name, dimension)
+        fp = fingerprint(model_name, dimension, sparse_enabled)
         import time
 
         now = time.time()
@@ -81,15 +99,17 @@ class EmbeddingRegistry:
             self._conn.execute(
                 """
                 INSERT INTO embedding_registry
-                    (collection, fingerprint, model, dimension, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                    (collection, fingerprint, model, dimension, sparse_enabled,
+                     created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(collection) DO UPDATE SET
                     fingerprint = excluded.fingerprint,
                     model = excluded.model,
                     dimension = excluded.dimension,
+                    sparse_enabled = excluded.sparse_enabled,
                     updated_at = excluded.updated_at
                 """,
-                (collection, fp, model_name, int(dimension), now, now),
+                (collection, fp, model_name, int(dimension), int(sparse_enabled), now, now),
             )
             self._conn.commit()
         log.info(f"EmbeddingRegistry: {collection} -> {model_name} dim={dimension} (fp={fp})")
@@ -108,13 +128,60 @@ class EmbeddingRegistry:
         collection: str,
         model_name: str,
         dimension: int,
+        sparse_enabled: bool = False,
     ) -> bool:
-        """True when the current embedding config matches the recorded one."""
+        """True when the current embedding config matches a recorded collection."""
+        return self.compatibility(collection, model_name, dimension, sparse_enabled)["compatible"]
+
+    def compatibility(
+        self,
+        collection: str,
+        model_name: str,
+        dimension: int,
+        sparse_enabled: bool = False,
+    ) -> dict:
+        """Return a safe, structured compatibility verdict for an existing collection."""
         record = self.get(collection)
         if record is None:
-            # No record yet — treat as compatible (first use).
-            return True
-        return record["fingerprint"] == fingerprint(model_name, dimension)
+            return {
+                "compatible": False,
+                "reason": "registry_missing",
+                "record": None,
+            }
+        expected = fingerprint(model_name, dimension, sparse_enabled)
+        if (
+            record["model"] == model_name
+            and int(record["dimension"]) == int(dimension)
+            and record["fingerprint"] == _legacy_fingerprint(model_name, dimension)
+        ):
+            with self._lock:
+                self._conn.execute(
+                    """
+                    UPDATE embedding_registry
+                    SET fingerprint = ?, sparse_enabled = ?
+                    WHERE collection = ? AND fingerprint = ?
+                    """,
+                    (expected, int(sparse_enabled), collection, record["fingerprint"]),
+                )
+                self._conn.commit()
+            record = self.get(collection) or record
+        if record["fingerprint"] == expected:
+            return {
+                "compatible": True,
+                "reason": "compatible",
+                "record": record,
+            }
+        if record["model"] != model_name:
+            reason = "model_mismatch"
+        elif int(record["dimension"]) != int(dimension):
+            reason = "dimension_mismatch"
+        else:
+            reason = "sparse_mismatch"
+        return {
+            "compatible": False,
+            "reason": reason,
+            "record": record,
+        }
 
     def close(self) -> None:
         with self._lock:
@@ -134,30 +201,37 @@ def get_registry() -> EmbeddingRegistry:
     return _registry
 
 
+def reset_embedding_registry() -> None:
+    global _registry
+    with _registry_lock:
+        if _registry is not None:
+            _registry.close()
+        _registry = None
+
+
 def check_collection_compatible(
     collection: str,
     model_name: str,
     dimension: int,
+    sparse_enabled: bool = False,
 ) -> bool:
     """
-    Check + warn helper used by the retriever.
-
-    Returns True if compatible (or no record). Emits a WARNING when the
-    embedding model changed since the collection was created — the most common
-    cause of silent retrieval-quality collapse.
+    Fail-closed compatibility helper used by vector read/write paths.
     """
     try:
         reg = get_registry()
-        if reg.is_compatible(collection, model_name, dimension):
+        verdict = reg.compatibility(collection, model_name, dimension, sparse_enabled)
+        if verdict["compatible"]:
             return True
-        record = reg.get(collection) or {}
+        record = verdict.get("record") or {}
         log.warning(
-            f"Embedding model mismatch for '{collection}': "
+            f"Embedding collection incompatible for '{collection}' "
+            f"({verdict['reason']}): "
             f"current={model_name}/{dimension} vs "
             f"recorded={record.get('model')}/{record.get('dimension')}. "
             f"Stored vectors are in a different space — re-index this collection."
         )
         return False
-    except Exception as e:  # noqa: BLE001 - never block retrieval on registry
-        log.debug(f"embedding compatibility check failed: {e}")
-        return True
+    except Exception as e:  # noqa: BLE001 - registry failure is degraded, never compatible
+        log.warning(f"embedding compatibility registry unavailable: {e}")
+        return False

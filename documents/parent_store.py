@@ -47,7 +47,9 @@ def make_parent_id(source: str, section_index: int) -> str:
 class ParentStore:
     """Thread-safe SQLite store of parent documents keyed by parent_id."""
 
-    def __init__(self, db_path: str = DEFAULT_DB_PATH):
+    def __init__(self, db_path: str | None = None):
+        if db_path is None:
+            db_path = DEFAULT_DB_PATH
         self._db_path = db_path
         self._lock = threading.RLock()
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
@@ -97,6 +99,14 @@ class ParentStore:
                 parent_ids,
             ).fetchall()
         return {r["parent_id"]: dict(r) for r in rows}
+
+    def list_all(self) -> list[dict]:
+        """Return every persisted parent section for offline re-indexing."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT parent_id, source, title, content FROM parents ORDER BY parent_id"
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def close(self) -> None:
         with self._lock:
@@ -153,7 +163,7 @@ def expand_to_parents(
         return []
 
     # Group children by parent_id; track the best (max) score per parent.
-    parent_best: dict[str, float] = {}
+    parent_best: dict[str, float | None] = {}
     parent_first: dict[str, Document] = {}
     orphans: list[Document] = []
 
@@ -165,7 +175,8 @@ def expand_to_parents(
             orphans.append(child)
             continue
         score = _norm(child.metadata.get("score"))
-        if pid not in parent_best or score > parent_best[pid]:
+        current = parent_best.get(pid)
+        if pid not in parent_best or (score is not None and (current is None or score > current)):
             parent_best[pid] = score
             parent_first[pid] = child
 
@@ -181,7 +192,12 @@ def expand_to_parents(
         return children[:top_k] if top_k else children
 
     # Build parent Documents, sorted by best child score desc.
-    ordered_pids = sorted(parent_best, key=lambda p: parent_best[p], reverse=True)
+    scored_pids = sorted(
+        (pid for pid, score in parent_best.items() if score is not None),
+        key=lambda pid: parent_best[pid],
+        reverse=True,
+    )
+    ordered_pids = scored_pids + [pid for pid, score in parent_best.items() if score is None]
     expanded: list[Document] = []
     for pid in ordered_pids:
         parent = parents.get(pid)
@@ -190,7 +206,11 @@ def expand_to_parents(
             expanded.append(parent_first[pid])
             continue
         child_meta = dict(parent_first[pid].metadata)
-        child_meta["score"] = parent_best[pid]
+        score = parent_best[pid]
+        if score is None:
+            child_meta.pop("score", None)
+        else:
+            child_meta["score"] = score
         child_meta["parent_id"] = pid
         child_meta["expanded_from_child"] = True
         expanded.append(Document(page_content=parent["content"], metadata=child_meta))
@@ -203,8 +223,7 @@ def expand_to_parents(
     return expanded
 
 
-def _norm(s) -> float:
-    try:
-        return float(s)
-    except (TypeError, ValueError):
-        return 0.0
+def _norm(s) -> float | None:
+    from core.retrieval.scoring import finite_real
+
+    return finite_real(s)

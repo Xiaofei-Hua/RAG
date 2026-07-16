@@ -35,7 +35,7 @@ class SourceDocument(BaseModel):
     content: str
     source: str | None = None
     title: str | None = None
-    score: float = 0.0
+    score: float | None = None
 
 
 class ChatResponse(BaseModel):

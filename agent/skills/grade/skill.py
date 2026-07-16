@@ -211,10 +211,12 @@ class GradeSkill(BaseSkill):
         """
         for attempt in range(self._skill_config.max_retries + 1):
             try:
+                from core.retrieval.evidence import render_untrusted_text
+
                 result = self.chain.invoke(
                     {
                         "question": question,
-                        "context": context,
+                        "context": render_untrusted_text(context),
                     }
                 )
 
@@ -234,10 +236,12 @@ class GradeSkill(BaseSkill):
 
         for attempt in range(self._skill_config.max_retries + 1):
             try:
+                from core.retrieval.evidence import render_untrusted_text
+
                 result = await self.chain.ainvoke(
                     {
                         "question": question,
-                        "context": context,
+                        "context": render_untrusted_text(context),
                     }
                 )
                 return self._parse_relevance(result)

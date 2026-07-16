@@ -60,6 +60,28 @@ def _install_reranker(monkeypatch, payload: dict) -> None:
 @pytest.fixture
 def health_client(client, monkeypatch):
     """Reuse the sealed in-process client (RERANKER_ENABLED off by default)."""
+
+    class _HealthyMilvus:
+        def __init__(self):
+            self.closed = False
+
+        def health_check(self):
+            return {
+                "connected": True,
+                "embedding_compatible": True,
+                "embedding_compatibility": {
+                    "compatible": True,
+                    "reason": "compatible",
+                },
+            }
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(
+        "documents.milvus_db.get_milvus_manager",
+        lambda: _HealthyMilvus(),
+    )
     return client
 
 
@@ -119,3 +141,32 @@ def test_reranker_degraded_does_not_lower_top_level_status(health_client, monkey
     assert body["services"]["reranker"]["status"] == "degraded"
     # degraded is in the all_healthy set, so top-level stays "healthy".
     assert body["status"] == "healthy"
+
+
+def test_embedding_incompatibility_degrades_health_and_exposes_fingerprint(
+    health_client, monkeypatch
+):
+    class _IncompatibleMilvus:
+        def health_check(self):
+            return {
+                "connected": True,
+                "embedding_compatible": False,
+                "embedding_compatibility": {
+                    "compatible": False,
+                    "reason": "model_mismatch",
+                },
+            }
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        "documents.milvus_db.get_milvus_manager",
+        lambda: _IncompatibleMilvus(),
+    )
+
+    response = health_client.get("/api/admin/health")
+    body = response.json()
+    assert body["status"] == "degraded"
+    assert body["services"]["milvus"]["status"] == "degraded"
+    assert set(body["runtime_config"]) == {"schema_version", "fingerprint"}

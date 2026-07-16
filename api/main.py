@@ -36,6 +36,8 @@ from api.routers import admin, chat, documents, feedback, retrieval, sessions
 from core.prompts.profile_prompts import (
     GENERATE_SYSTEM_PROMPT,
     INTENT_CLASSIFICATION_PROMPT,
+    PER_DOC_GRADE_HUMAN_PROMPT,
+    PER_DOC_GRADE_SYSTEM_PROMPT,
 )
 from utils.log_utils import log
 
@@ -87,7 +89,12 @@ async def lifespan(app: FastAPI):
     # F-05: aggregate generate + intent prompts so edits to EITHER are
     # detectable via signature drift (REQ-RG-016).
     prompt_sig = hashlib.sha1(
-        (GENERATE_SYSTEM_PROMPT + INTENT_CLASSIFICATION_PROMPT).encode("utf-8")
+        (
+            GENERATE_SYSTEM_PROMPT
+            + INTENT_CLASSIFICATION_PROMPT
+            + PER_DOC_GRADE_SYSTEM_PROMPT
+            + PER_DOC_GRADE_HUMAN_PROMPT
+        ).encode("utf-8")
     ).hexdigest()[:12]
     from core.prompts.domain_profile import get_active_profile
 
@@ -96,6 +103,9 @@ async def lifespan(app: FastAPI):
         f"Domain Profile: {active_profile.name} "
         f"(label={active_profile.prompt_profile_generate}, sig={prompt_sig})"
     )
+    from utils.env_utils import runtime_config_fingerprint
+
+    log.info(f"Runtime Config: {runtime_config_fingerprint()['fingerprint']}")
 
     from agent.harness import get_agent_harness
 
@@ -179,6 +189,12 @@ async def lifespan(app: FastAPI):
         reset_document_registry()
     except Exception as e:  # noqa: BLE001
         log.debug(f"Document registry close skipped: {e}")
+    try:
+        from documents.embedding_registry import reset_embedding_registry
+
+        reset_embedding_registry()
+    except Exception as e:  # noqa: BLE001
+        log.debug(f"Embedding registry close skipped: {e}")
 
     log.info("Shutdown complete")
 
@@ -250,14 +266,38 @@ def create_app() -> FastAPI:
 
         llm_circuit = get_llm_circuit()
         retriever_circuit = get_retriever_circuit()
+        embedding_compatible = None
+        manager = None
+        try:
+            from documents.milvus_db import get_milvus_manager
+
+            manager = get_milvus_manager()
+            milvus_health = manager.health_check()
+            embedding_compatible = milvus_health.get("embedding_compatible")
+            vector_healthy = bool(milvus_health.get("connected")) and (
+                embedding_compatible is not False
+            )
+        except Exception as exc:  # noqa: BLE001 - health reports degraded, never raises
+            log.debug(f"Public health vector check degraded: {exc}")
+            vector_healthy = False
+        finally:
+            if manager is not None:
+                try:
+                    manager.close()
+                except Exception:
+                    pass
+
+        from utils.env_utils import runtime_config_fingerprint
 
         return {
-            "status": "healthy",
+            "status": "healthy" if vector_healthy else "degraded",
             "timestamp": time.time(),
             "circuits": {
                 "llm": llm_circuit.state.value,
                 "retriever": retriever_circuit.state.value,
             },
+            "embedding_compatible": embedding_compatible,
+            "runtime_config": runtime_config_fingerprint(),
         }
 
     # API information endpoint

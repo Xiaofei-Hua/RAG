@@ -48,6 +48,12 @@ _STORES = [
     ),
     ("documents.parent_store", "DEFAULT_DB_PATH", "_store", "reset_parent_store"),
     ("documents.document_registry", "DEFAULT_DB_PATH", "_registry", "reset_document_registry"),
+    (
+        "documents.embedding_registry",
+        "DEFAULT_DB_PATH",
+        "_registry",
+        "reset_embedding_registry",
+    ),
 ]
 
 
@@ -110,7 +116,11 @@ def test_reset_closes_singleton_connection(
             "_store": "get_parent_store",
             "_registry": "get_document_registry",
         }[holder_attr]
+        if module_name == "documents.embedding_registry":
+            get_fn_name = "get_registry"
         instance = getattr(mod, get_fn_name)()
+        if module_name in {"documents.parent_store", "documents.embedding_registry"}:
+            assert instance._db_path == str(tmp_path / "store.db")
         conn = instance._cache._conn if holder_attr == "_judge" else instance._conn
         getattr(mod, reset_fn)()
         with pytest.raises(sqlite3.ProgrammingError):

@@ -40,6 +40,8 @@ class TestPromptSignatureCoversIntent:
         from core.prompts.profile_prompts import (
             GENERATE_SYSTEM_PROMPT,
             INTENT_CLASSIFICATION_PROMPT,
+            PER_DOC_GRADE_HUMAN_PROMPT,
+            PER_DOC_GRADE_SYSTEM_PROMPT,
         )
 
         client = pytest.importorskip("fastapi.testclient").TestClient
@@ -54,7 +56,12 @@ class TestPromptSignatureCoversIntent:
 
         # The expected signature aggregates generate + intent prompts.
         expected = hashlib.sha1(
-            (GENERATE_SYSTEM_PROMPT + INTENT_CLASSIFICATION_PROMPT).encode("utf-8")
+            (
+                GENERATE_SYSTEM_PROMPT
+                + INTENT_CLASSIFICATION_PROMPT
+                + PER_DOC_GRADE_SYSTEM_PROMPT
+                + PER_DOC_GRADE_HUMAN_PROMPT
+            ).encode("utf-8")
         ).hexdigest()[:12]
         assert actual_sig == expected, (
             "signature must aggregate generate + intent prompts (F-05); "

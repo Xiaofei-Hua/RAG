@@ -44,6 +44,7 @@ __all__ = [
     "GraphStore",
     "make_entity_id",
     "make_relation_id",
+    "restore_graph_v1_backup",
     "get_graph_store",
     "reset_graph_store",
 ]
@@ -51,6 +52,7 @@ __all__ = [
 # Module-level path so tests/conftest.py can redirect it to tmp_path
 # (AGENTS.md §6/§10 persistence contract).
 DEFAULT_DB_PATH = "./data/graph_store.db"
+DEFAULT_V1_BACKUP_PATH = "./data/graph_store_v1_backup.db"
 
 # F-03: cap LLM-generated descriptions so an injected payload cannot smuggle a
 # long instruction into the store. The retrieval context returns original chunk
@@ -143,16 +145,94 @@ class GraphRow:
     embedding: list[float] = field(default_factory=list)
 
 
+def restore_graph_v1_backup(
+    db_path: str | None = None,
+    backup_path: str | None = None,
+) -> None:
+    """Restore a pre-migration v1 backup while the service is stopped."""
+    db_path = db_path or DEFAULT_DB_PATH
+    backup_path = backup_path or DEFAULT_V1_BACKUP_PATH
+    if not os.path.isfile(backup_path):
+        raise FileNotFoundError(f"Graph v1 backup not found: {backup_path}")
+    source = sqlite3.connect(backup_path)
+    try:
+        primary_key = {
+            row[1]: row[5]
+            for row in source.execute("PRAGMA table_info(relations)").fetchall()
+            if row[5]
+        }
+        if primary_key != {"id": 1}:
+            raise RuntimeError("Backup is not a Graph relation schema v1 database")
+        os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
+        temporary_path = f"{db_path}.restore-{os.getpid()}-{threading.get_ident()}"
+        destination = sqlite3.connect(temporary_path)
+        try:
+            source.backup(destination)
+        finally:
+            destination.close()
+        for suffix in ("-wal", "-shm"):
+            sidecar = f"{db_path}{suffix}"
+            if os.path.exists(sidecar):
+                os.remove(sidecar)
+        os.replace(temporary_path, db_path)
+    finally:
+        source.close()
+
+
 class GraphStore:
     """Thread-safe SQLite store of entities / relations / entity-chunk refs."""
 
-    def __init__(self, db_path: str = DEFAULT_DB_PATH):
+    def __init__(
+        self,
+        db_path: str | None = None,
+        v1_backup_path: str | None = None,
+    ):
+        db_path = db_path or DEFAULT_DB_PATH
         self._db_path = db_path
+        self._v1_backup_path = v1_backup_path or (
+            DEFAULT_V1_BACKUP_PATH if db_path == DEFAULT_DB_PATH else f"{db_path}.v1.backup"
+        )
         self._lock = threading.RLock()
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
-        self._create_tables()
+        try:
+            self._backup_v1_if_needed()
+            self._create_tables()
+        except Exception:
+            self._conn.close()
+            raise
+
+    def _backup_v1_if_needed(self) -> None:
+        table = self._conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'relations'"
+        ).fetchone()
+        if table is None:
+            return
+        columns = self._conn.execute("PRAGMA table_info(relations)").fetchall()
+        primary_key = {row["name"]: row["pk"] for row in columns if row["pk"]}
+        if primary_key != {"id": 1} or os.path.isfile(self._v1_backup_path):
+            return
+
+        import fcntl
+
+        os.makedirs(os.path.dirname(self._v1_backup_path) or ".", exist_ok=True)
+        lock_path = f"{self._v1_backup_path}.lock"
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            if os.path.isfile(self._v1_backup_path):
+                return
+            temporary_path = f"{self._v1_backup_path}.tmp-{os.getpid()}-{threading.get_ident()}"
+            destination = sqlite3.connect(temporary_path)
+            try:
+                self._conn.backup(destination)
+            finally:
+                destination.close()
+            os.replace(temporary_path, self._v1_backup_path)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
 
     def _create_tables(self) -> None:
         with self._lock:
@@ -174,13 +254,14 @@ class GraphStore:
                 CREATE INDEX IF NOT EXISTS idx_entities_name_type ON entities(name, type);
 
                 CREATE TABLE IF NOT EXISTS relations (
-                    id            TEXT PRIMARY KEY,
+                    id            TEXT NOT NULL,
                     src_entity    TEXT NOT NULL,
                     tgt_entity    TEXT NOT NULL,
                     relation_type TEXT NOT NULL,
                     description   TEXT,
                     source        TEXT NOT NULL,
-                    weight        REAL DEFAULT 1.0
+                    weight        REAL DEFAULT 1.0,
+                    PRIMARY KEY (id, source)
                 );
                 CREATE INDEX IF NOT EXISTS idx_relations_src ON relations(src_entity);
                 CREATE INDEX IF NOT EXISTS idx_relations_tgt ON relations(tgt_entity);
@@ -207,6 +288,58 @@ class GraphStore:
                 """
             )
             self._conn.commit()
+            self._migrate_relations_v2()
+
+    def _migrate_relations_v2(self) -> None:
+        columns = self._conn.execute("PRAGMA table_info(relations)").fetchall()
+        primary_key = {row["name"]: row["pk"] for row in columns if row["pk"]}
+        if primary_key == {"id": 1, "source": 2}:
+            self._conn.execute("PRAGMA user_version = 2")
+            self._conn.commit()
+            return
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            columns = self._conn.execute("PRAGMA table_info(relations)").fetchall()
+            primary_key = {row["name"]: row["pk"] for row in columns if row["pk"]}
+            if primary_key == {"id": 1, "source": 2}:
+                self._conn.execute("PRAGMA user_version = 2")
+                self._conn.commit()
+                return
+            self._conn.execute("DROP TABLE IF EXISTS relations_v2")
+            self._conn.execute(
+                """
+                CREATE TABLE relations_v2 (
+                    id TEXT NOT NULL, src_entity TEXT NOT NULL, tgt_entity TEXT NOT NULL,
+                    relation_type TEXT NOT NULL, description TEXT, source TEXT NOT NULL,
+                    weight REAL DEFAULT 1.0, PRIMARY KEY (id, source)
+                )
+                """
+            )
+            old_count = self._conn.execute("SELECT COUNT(*) FROM relations").fetchone()[0]
+            self._conn.execute(
+                """
+                INSERT INTO relations_v2
+                    (id, src_entity, tgt_entity, relation_type, description, source, weight)
+                SELECT id, src_entity, tgt_entity, relation_type, description, source, weight
+                FROM relations
+                """
+            )
+            self._verify_relation_migration(old_count)
+            self._conn.execute("DROP TABLE relations")
+            self._conn.execute("ALTER TABLE relations_v2 RENAME TO relations")
+            self._conn.execute("CREATE INDEX idx_relations_src ON relations(src_entity)")
+            self._conn.execute("CREATE INDEX idx_relations_tgt ON relations(tgt_entity)")
+            self._conn.execute("CREATE INDEX idx_relations_source ON relations(source)")
+            self._conn.execute("PRAGMA user_version = 2")
+            self._conn.commit()
+        except Exception:
+            self._conn.rollback()
+            raise
+
+    def _verify_relation_migration(self, old_count: int) -> None:
+        new_count = self._conn.execute("SELECT COUNT(*) FROM relations_v2").fetchone()[0]
+        if new_count != old_count:
+            raise RuntimeError("relations migration row count mismatch")
 
     # ------------------------------------------------------------------
     # Write path
@@ -296,6 +429,9 @@ class GraphStore:
                             (id, src_entity, tgt_entity, relation_type,
                              description, source, weight)
                         VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(id, source) DO UPDATE SET
+                            description = excluded.description,
+                            weight = excluded.weight
                         """,
                         (
                             rid,

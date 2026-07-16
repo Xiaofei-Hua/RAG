@@ -19,8 +19,9 @@ from models.embedding_models import (
 
 
 @pytest.fixture(autouse=True)
-def _isolate_singleton():
+def _isolate_singleton(monkeypatch):
     """F-05: ensure the unified singleton never leaks across tests."""
+    monkeypatch.setenv("MILVUS_SPARSE_INDEX", "false")
     reset_embeddings()
     yield
     reset_embeddings()

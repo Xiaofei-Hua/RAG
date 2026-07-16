@@ -78,11 +78,21 @@ class MilvusConfig:
     ``MILVUS_INDEX_PARAMS`` / ``MILVUS_SEARCH_PARAMS`` for tunable recall.
     """
 
-    uri: str = field(default_factory=lambda: _env("MILVUS_URI", "./milvus_data.db"))
+    uri: str = field(
+        default_factory=lambda: __import__(
+            "utils.env_utils", fromlist=["resolve_milvus_uri"]
+        ).resolve_milvus_uri()
+    )
     collection_name: str = field(
         default_factory=lambda: _env("COLLECTION_NAME", "rag_knowledge_base")
     )
-    dense_dim: int = field(default_factory=lambda: _env_int("EMBEDDING_DIMENSION", 512))
+    dense_dim: int = field(
+        default_factory=lambda: (
+            __import__("utils.env_utils", fromlist=["resolve_embedding_settings"])
+            .resolve_embedding_settings()
+            .dimension
+        )
+    )
     max_text_length: int = 4000  # Reduced from 6000
     max_metadata_length: int = 500  # Reduced from 1000
     batch_size: int = 20  # Small batch size for low memory
@@ -115,7 +125,13 @@ class MilvusConfig:
     # and the sparse retrieval leg uses Milvus sparse_search (BGE-M3 lexical_weights)
     # instead of the self-implemented BM25. F-01: filter goes through search(filter=),
     # a first-class param — NOT hybrid_search's top-level filter (pymilvus 2.5.18 drops it).
-    enable_sparse: bool = field(default_factory=lambda: _env_bool("MILVUS_SPARSE_INDEX", True))
+    enable_sparse: bool = field(
+        default_factory=lambda: (
+            __import__("utils.env_utils", fromlist=["resolve_embedding_settings"])
+            .resolve_embedding_settings()
+            .sparse_enabled
+        )
+    )
 
     def __post_init__(self):
         # Read env vars live (not from cached module constants) so runtime
@@ -294,15 +310,20 @@ class MilvusManager:
         Call this when done to release resources.
         """
         if self._client is not None:
+            client = self._client
             try:
                 if self._collection_loaded:
                     try:
-                        self._client.release_collection(self.config.collection_name)
+                        client.release_collection(self.config.collection_name)
                     except Exception:
                         pass
             except Exception:
                 pass
             finally:
+                try:
+                    client.close()
+                except Exception:
+                    pass
                 self._client = None
                 self._collection_loaded = False
 
@@ -404,21 +425,84 @@ class MilvusManager:
                 collection=self.config.collection_name,
                 model_name=self._embedding_model_name(),
                 dimension=self.config.dense_dim,
+                sparse_enabled=self.config.enable_sparse,
             )
-        except Exception as e:  # noqa: BLE001 - non-fatal
-            log.debug(f"Embedding fingerprint registration skipped: {e}")
+        except Exception as e:
+            try:
+                self.client.drop_collection(self.config.collection_name)
+            except Exception:  # noqa: BLE001 - preserve the registry root cause
+                pass
+            raise MilvusOperationError(
+                "Collection creation aborted because embedding fingerprint registration failed"
+            ) from e
 
         log.info(f"Collection created: {self.config.collection_name}")
         return True
 
     def _embedding_model_name(self) -> str:
-        """The configured embedding model identifier (for fingerprinting)."""
-        try:
-            from utils.env_utils import EMBEDDING_MODEL
+        """The actual embedding loader source used for fingerprinting."""
+        from utils.env_utils import resolve_embedding_settings
 
-            return EMBEDDING_MODEL
-        except Exception:  # noqa: BLE001
-            return "unknown"
+        return resolve_embedding_settings().model_source
+
+    def collection_compatibility(self) -> dict[str, Any]:
+        """Return the effective collection/embedding compatibility verdict."""
+        try:
+            if self.config.collection_name not in self.client.list_collections():
+                return {
+                    "compatible": True,
+                    "reason": "collection_missing",
+                    "record": None,
+                }
+            description = self.client.describe_collection(self.config.collection_name)
+            fields = {
+                field.get("name"): field
+                for field in description.get("fields", [])
+                if isinstance(field, dict) and field.get("name")
+            }
+            dense = fields.get("dense") or {}
+            dense_params = dense.get("params") if isinstance(dense.get("params"), dict) else {}
+            try:
+                actual_dimension = int(dense_params.get("dim"))
+            except (TypeError, ValueError):
+                actual_dimension = None
+            if actual_dimension != self.config.dense_dim:
+                return {
+                    "compatible": False,
+                    "reason": "schema_dimension_mismatch",
+                    "record": None,
+                }
+            actual_sparse = "sparse" in fields
+            if actual_sparse != self.config.enable_sparse:
+                return {
+                    "compatible": False,
+                    "reason": "schema_sparse_mismatch",
+                    "record": None,
+                }
+            from documents.embedding_registry import get_registry
+
+            return get_registry().compatibility(
+                self.config.collection_name,
+                self._embedding_model_name(),
+                self.config.dense_dim,
+                self.config.enable_sparse,
+            )
+        except Exception as e:  # noqa: BLE001 - report degraded without leaking internals
+            log.warning(f"Collection compatibility check unavailable: {e}")
+            return {
+                "compatible": False,
+                "reason": "registry_unavailable",
+                "record": None,
+            }
+
+    def _assert_collection_compatible(self) -> None:
+        verdict = self.collection_compatibility()
+        if verdict["compatible"]:
+            return
+        raise MilvusOperationError(
+            "Collection embedding fingerprint is incompatible "
+            f"({verdict['reason']}); rebuild into a new collection"
+        )
 
     def _ensure_collection_loaded(self) -> None:
         """Ensure collection exists and is loaded into memory."""
@@ -477,11 +561,12 @@ class MilvusManager:
 
         log.info(f"Adding {total} documents (batch_size={batch_size})")
 
-        # Pre-load embedding model before Milvus operations to avoid
-        # gRPC connection timeout during slow model loading (~75s)
-        _ = self.embedding_function
-
         self._ensure_collection_loaded()
+        self._assert_collection_compatible()
+
+        # Pre-load embedding model only after the compatibility gate. This
+        # avoids spending model memory for a write that must be rejected.
+        _ = self.embedding_function
 
         # Process in small batches
         for i in range(0, total, batch_size):
@@ -593,15 +678,7 @@ class MilvusManager:
         try:
             self._ensure_collection_loaded()
 
-            # Advisory: detect an embedding-model drift that would silently
-            # corrupt similarity scores (query vectors in a different space).
-            from documents.embedding_registry import check_collection_compatible
-
-            check_collection_compatible(
-                self.config.collection_name,
-                self._embedding_model_name(),
-                self.config.dense_dim,
-            )
+            self._assert_collection_compatible()
 
             # Generate query embedding
             query_embedding = self.embedding_function.embed_query(query)
@@ -696,6 +773,7 @@ class MilvusManager:
         log.debug(f"Sparse searching (top_k={top_k})")
         try:
             self._ensure_collection_loaded()
+            self._assert_collection_compatible()
 
             output_fields = ["text", "source", "title"] + [
                 f for f in self.config.extra_output_fields
@@ -784,7 +862,13 @@ class MilvusManager:
 
     def health_check(self) -> dict[str, Any]:
         """Check connection health. Works with both Milvus server and Milvus Lite."""
-        result = {"connected": False, "server_info": None, "error": None}
+        result = {
+            "connected": False,
+            "server_info": None,
+            "error": None,
+            "embedding_compatible": None,
+            "embedding_compatibility": None,
+        }
 
         try:
             # Milvus Lite (local .db) doesn't support get_server_version,
@@ -792,6 +876,12 @@ class MilvusManager:
             collections = self.client.list_collections()
             result["collections"] = collections
             result["connected"] = True
+            compatibility = self.collection_compatibility()
+            result["embedding_compatible"] = compatibility["compatible"]
+            result["embedding_compatibility"] = {
+                "compatible": compatibility["compatible"],
+                "reason": compatibility["reason"],
+            }
 
             # Detect Milvus Lite from URI to avoid calling unsupported API
             uri = self.config.uri

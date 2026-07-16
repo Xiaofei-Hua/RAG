@@ -267,14 +267,14 @@
           </button>
         </div>
         <div class="source-list">
-          <div v-for="(source, i) in sources" :key="i" class="source-item">
+          <div v-for="(source, i) in sources" :key="i" class="source-item" data-testid="source-item">
             <div class="source-header">
               <span class="source-number">{{ i + 1 }}</span>
               <span class="source-title">{{ source.title || '知识库文档' }}</span>
             </div>
             <div class="source-content">{{ truncateText(source.content, 150) }}</div>
-            <div class="source-meta" v-if="source.score">
-              <span class="relevance-score">相关度: {{ source.score < 1 ? (source.score * 100).toFixed(1) + '%' : source.score.toFixed(4) }}</span>
+            <div class="source-meta" v-if="source.score != null" data-testid="source-score">
+              <span class="relevance-score">相关度: {{ formatSourceScore(source.score) }}</span>
             </div>
           </div>
         </div>
@@ -349,6 +349,13 @@ function formatTime(timestamp: number): string {
     hour: '2-digit',
     minute: '2-digit',
   })
+}
+
+function formatSourceScore(score: number): string {
+  if (Number.isFinite(score) && score >= 0 && score <= 1) {
+    return `${(score * 100).toFixed(1)}%`
+  }
+  return Number.isFinite(score) ? score.toFixed(4) : '不可用'
 }
 
 function truncateText(text: string, maxLength: number): string {

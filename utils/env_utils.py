@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+from dataclasses import dataclass
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -79,10 +82,95 @@ LLM_MAX_TOKENS = _get_int("LLM_MAX_TOKENS", 4096)
 LLM_TIMEOUT = _get_float("LLM_TIMEOUT", 60.0)
 LLM_MAX_RETRIES = _get_int("LLM_MAX_RETRIES", 1)
 
-# Embedding: local path is preferred when it exists; otherwise model ID is used.
-EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5")
-EMBEDDING_MODEL_PATH = _get_path("EMBEDDING_MODEL_PATH", "models/local_models/bge-small-zh-v1.5")
-EMBEDDING_DIMENSION = _get_int("EMBEDDING_DIMENSION", 512)
+
+@dataclass(frozen=True)
+class EmbeddingSettings:
+    provider: str
+    model: str
+    model_path: str
+    model_source: str
+    dimension: int
+    sparse_enabled: bool
+    is_bge_m3: bool
+
+
+def _is_bge_m3_model(value: str) -> bool:
+    normalized = str(value or "").strip().lower().rstrip("/")
+    return normalized == "baai/bge-m3" or normalized.rsplit("/", 1)[-1] in {
+        "bge-m3",
+        "bge_m3",
+    }
+
+
+def _is_model_cache(path: str) -> bool:
+    if not path:
+        return False
+    candidate = Path(path)
+    return candidate.is_dir() and any(
+        (candidate / marker).is_file()
+        for marker in ("modules.json", "config.json", "model.safetensors")
+    )
+
+
+def resolve_embedding_settings(provider: str | None = None) -> EmbeddingSettings:
+    effective_provider = (provider or os.getenv("EMBEDDING_PROVIDER", "auto")).strip().lower()
+    if effective_provider == "auto":
+        try:
+            import langchain_huggingface  # noqa: F401
+            import torch  # noqa: F401
+
+            effective_provider = "local"
+        except ImportError:
+            effective_provider = "api"
+    if effective_provider not in {"local", "api"}:
+        raise ValueError(
+            f"EMBEDDING_PROVIDER must be one of auto|local|api, got {effective_provider!r}"
+        )
+    local = effective_provider == "local"
+    model = (os.getenv("EMBEDDING_MODEL") or "").strip() or (
+        "BAAI/bge-m3" if local else "text-embedding-v3"
+    )
+    is_bge_m3 = local and _is_bge_m3_model(model)
+
+    raw_dimension = os.getenv("EMBEDDING_DIMENSION")
+    if raw_dimension not in (None, ""):
+        dimension = int(raw_dimension)
+    elif is_bge_m3:
+        dimension = 1024
+    elif local:
+        raise ValueError("EMBEDDING_DIMENSION is required for a non-default local embedding model")
+    else:
+        dimension = 512
+    if dimension <= 0:
+        raise ValueError("EMBEDDING_DIMENSION must be a positive integer")
+
+    default_path = "models/local_models/bge-m3" if is_bge_m3 else ""
+    model_path = _get_path("EMBEDDING_MODEL_PATH", default_path) if local else ""
+    default_m3_path = str((PROJECT_ROOT / "models/local_models/bge-m3").resolve())
+    if local and not is_bge_m3 and model_path == default_m3_path:
+        raise ValueError("A non-BGE-M3 model cannot reuse the default BGE-M3 EMBEDDING_MODEL_PATH")
+    model_source = model_path if local and _is_model_cache(model_path) else model
+
+    sparse_enabled = _get_bool("MILVUS_SPARSE_INDEX", is_bge_m3)
+    if sparse_enabled and not is_bge_m3:
+        raise ValueError(
+            "native sparse (MILVUS_SPARSE_INDEX=true) is supported only by local BGE-M3"
+        )
+    return EmbeddingSettings(
+        provider=effective_provider,
+        model=model,
+        model_path=model_path,
+        model_source=model_source,
+        dimension=dimension,
+        sparse_enabled=sparse_enabled,
+        is_bge_m3=is_bge_m3,
+    )
+
+
+_EMBEDDING_SETTINGS = resolve_embedding_settings()
+EMBEDDING_MODEL = _EMBEDDING_SETTINGS.model
+EMBEDDING_MODEL_PATH = _EMBEDDING_SETTINGS.model_path
+EMBEDDING_DIMENSION = _EMBEDDING_SETTINGS.dimension
 EMBEDDING_DEVICE = _resolve_device("EMBEDDING_DEVICE", "auto")
 EMBEDDING_NORMALIZE = _get_bool("EMBEDDING_NORMALIZE", True)
 EMBEDDING_BATCH_SIZE = _get_int("EMBEDDING_BATCH_SIZE", 8)
@@ -104,7 +192,7 @@ BGE_M3_FLASH_ATTENTION = _get_bool("BGE_M3_FLASH_ATTENTION", True)
 # (BGE-M3 lexical_weights) instead of the self-implemented in-memory BM25. F-01:
 # filter goes through search(filter=), a first-class param — NOT hybrid_search's
 # top-level filter which pymilvus 2.5.18 silently drops. False reverts to BM25.
-MILVUS_SPARSE_INDEX = _get_bool("MILVUS_SPARSE_INDEX", True)
+MILVUS_SPARSE_INDEX = _EMBEDDING_SETTINGS.sparse_enabled
 
 # Late chunking (docs/specs/retrieval-backend-modernization §3.5). Embed the full
 # parent section (≤8192 tokens) to get token-level last_hidden_state, then
@@ -171,8 +259,37 @@ OTEL_EXPORTER_OTLP_ENDPOINT = os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT", "")
 OTEL_SAMPLE_RATE = _get_float("OTEL_SAMPLE_RATE", 1.0)
 OTEL_CONSOLE_EXPORTER = _get_bool("OTEL_CONSOLE_EXPORTER", False)
 
+
 # Storage. Do not use the name `MILVUS_URI`; pymilvus reserves it for servers.
-MILVUS_URI = os.getenv("MILVUS_DB_URI", "./milvus_data.db")
+def resolve_milvus_uri() -> str:
+    return os.getenv("MILVUS_DB_URI") or os.getenv("MILVUS_URI") or "./milvus_data.db"
+
+
+MILVUS_URI = resolve_milvus_uri()
+
+
+def runtime_config_fingerprint() -> dict[str, str | int]:
+    settings = resolve_embedding_settings()
+    payload = {
+        "schema_version": 1,
+        "profile": os.getenv("DOMAIN_PROFILE", "general"),
+        "embedding_provider": settings.provider,
+        "embedding_model": settings.model,
+        "embedding_dimension": settings.dimension,
+        "collection": os.getenv("COLLECTION_NAME", "rag_knowledge_base"),
+        "sparse_enabled": settings.sparse_enabled,
+        "reranker_enabled": _get_bool("RERANKER_ENABLED", True),
+        "reranker_model": os.getenv("RERANKER_MODEL", "BAAI/bge-reranker-v2-m3"),
+        "graph_enabled": _get_bool("GRAPH_RAG_ENABLED", False),
+        "late_chunking_enabled": _get_bool("LATE_CHUNKING_ENABLED", True),
+    }
+    canonical = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    return {
+        "schema_version": 1,
+        "fingerprint": hashlib.sha1(canonical.encode("utf-8")).hexdigest()[:12],
+    }
+
+
 COLLECTION_NAME = os.getenv("COLLECTION_NAME", "rag_knowledge_base")
 
 # Vector index tuning. AUTOINDEX is the safe default (works on Milvus Lite).

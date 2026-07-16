@@ -11,7 +11,6 @@ This skill is used in both:
 
 from __future__ import annotations
 
-import math
 import re
 import time
 from dataclasses import dataclass
@@ -60,12 +59,9 @@ class RetrieveSkillConfig:
 
 
 def _sigmoid(s: float) -> float:
-    """Numerically stable sigmoid; avoids math.exp overflow for |s| > ~710."""
-    if s >= 0:
-        z = math.exp(-s)
-        return 1.0 / (1.0 + z)
-    z = math.exp(s)
-    return z / (1.0 + z)
+    from core.retrieval.scoring import stable_sigmoid
+
+    return stable_sigmoid(s)
 
 
 class RetrieveSkill(BaseSkill):
@@ -108,6 +104,8 @@ class RetrieveSkill(BaseSkill):
         """
         start = time.perf_counter()
         messages = context.messages
+        cleared_updates = self._retrieval_shared_updates([])
+        context.shared_state.update(cleared_updates)
 
         try:
             query = self._extract_query(context)
@@ -116,6 +114,7 @@ class RetrieveSkill(BaseSkill):
                     status=SkillStatus.SKIPPED,
                     skill_name=self.name,
                     error="No query found in context",
+                    state_updates={"shared_state": self._retrieval_shared_updates([])},
                 )
 
             # Retrieve documents (optional metadata filter + transform from shared_state)
@@ -142,25 +141,14 @@ class RetrieveSkill(BaseSkill):
             # Publish mean retrieval relevance + per-doc scores into shared_state
             # so the generate node's composite confidence can consume them
             # cross-node (previously this write was lost between nodes).
-            state_updates: dict = {}
-            mean_rel = self._mean_relevance(documents)
-            shared_updates: dict = {}
-            if mean_rel is not None:
-                context.shared_state["retrieval_relevance"] = mean_rel
-                shared_updates["retrieval_relevance"] = mean_rel
-            # Bug2 Layer ④ → ⑤: publish the max rerank sigmoid probability as
-            # the shared absolute-usability signal (same ruler as the filter).
-            max_rerank_prob = self._compute_max_rerank_prob(documents)
-            shared_updates["max_rerank_prob"] = max_rerank_prob
-            if shared_updates:
-                context.shared_state.update(shared_updates)
-                state_updates["shared_state"] = shared_updates
+            shared_updates = self._retrieval_shared_updates(documents)
+            context.shared_state.update(shared_updates)
 
             return SkillResult(
                 status=SkillStatus.SUCCESS if documents else SkillStatus.PARTIAL,
                 messages=result_messages,
                 next_action="grade",
-                state_updates=state_updates,
+                state_updates={"shared_state": shared_updates},
                 metadata={
                     "doc_count": len(documents),
                     "query": query,
@@ -176,6 +164,7 @@ class RetrieveSkill(BaseSkill):
                 skill_name=self.name,
                 error=str(e),
                 messages=[AIMessage(content="检索文档时发生错误，请稍后重试。")],
+                state_updates={"shared_state": cleared_updates},
             )
 
     async def aexecute(self, context: SkillContext) -> SkillResult:
@@ -187,6 +176,8 @@ class RetrieveSkill(BaseSkill):
         """
         start = time.perf_counter()
         messages = context.messages
+        cleared_updates = self._retrieval_shared_updates([])
+        context.shared_state.update(cleared_updates)
 
         try:
             query = self._extract_query(context)
@@ -195,6 +186,7 @@ class RetrieveSkill(BaseSkill):
                     status=SkillStatus.SKIPPED,
                     skill_name=self.name,
                     error="No query found in context",
+                    state_updates={"shared_state": self._retrieval_shared_updates([])},
                 )
 
             # Try MCP client first
@@ -238,23 +230,14 @@ class RetrieveSkill(BaseSkill):
 
             # Publish mean retrieval relevance into shared_state (parity with
             # the sync path) for cross-node composite confidence.
-            state_updates: dict = {}
-            mean_rel = self._mean_relevance(documents)
-            shared_updates: dict = {}
-            if mean_rel is not None:
-                context.shared_state["retrieval_relevance"] = mean_rel
-                shared_updates["retrieval_relevance"] = mean_rel
-            # Bug2 Layer ④ → ⑤: max rerank sigmoid probability (shared ruler).
-            shared_updates["max_rerank_prob"] = self._compute_max_rerank_prob(documents)
-            if shared_updates:
-                context.shared_state.update(shared_updates)
-                state_updates["shared_state"] = shared_updates
+            shared_updates = self._retrieval_shared_updates(documents)
+            context.shared_state.update(shared_updates)
 
             return SkillResult(
                 status=SkillStatus.SUCCESS if documents else SkillStatus.PARTIAL,
                 messages=result_messages,
                 next_action="grade",
-                state_updates=state_updates,
+                state_updates={"shared_state": shared_updates},
                 metadata={
                     "doc_count": len(documents),
                     "query": query,
@@ -270,6 +253,7 @@ class RetrieveSkill(BaseSkill):
                 skill_name=self.name,
                 error=str(e),
                 messages=[AIMessage(content="检索文档时发生错误，请稍后重试。")],
+                state_updates={"shared_state": cleared_updates},
             )
 
     # ------------------------------------------------------------------
@@ -278,15 +262,35 @@ class RetrieveSkill(BaseSkill):
 
     @staticmethod
     def _mean_relevance(documents: list[Document]) -> float | None:
-        """Mean of the retrieved documents' ``score`` metadata, if available."""
-        scores = [
-            float(d.metadata.get("score"))
-            for d in documents
-            if isinstance(d.metadata.get("score"), (int, float))
-        ]
+        """Mean calibrated relevance, excluding rank-only RRF scores."""
+        from agent.skills.grade.per_doc_scoring import _get_rerank_score
+
+        scores = []
+        for document in documents:
+            from core.retrieval.scoring import probability
+
+            grade = probability(document.metadata.get("grade_score"))
+            if grade is not None:
+                scores.append(grade)
+                continue
+            rerank = _get_rerank_score(document)
+            if rerank is not None:
+                scores.append(rerank)
         if not scores:
             return None
         return sum(scores) / len(scores)
+
+    def _retrieval_shared_updates(self, documents: list[Document]) -> dict[str, Any]:
+        from core.retrieval.evidence import documents_to_evidence
+
+        return {
+            "retrieval_evidence": documents_to_evidence(documents),
+            "retrieval_relevance": self._mean_relevance(documents),
+            "relevance_scores": [],
+            "retrieved_contexts": [],
+            "sources": [],
+            "max_rerank_prob": self._compute_max_rerank_prob(documents),
+        }
 
     def _maybe_score_per_doc(
         self, query: str, documents: list[Document], context: SkillContext
@@ -342,28 +346,37 @@ class RetrieveSkill(BaseSkill):
         """
         rel_thr = self._skill_config.min_rerank_score
         prob_floor = self._skill_config.min_rerank_prob
-        reranked = [d for d in documents if d.metadata.get("rerank_applied") is True]
-        others = [d for d in documents if d.metadata.get("rerank_applied") is not True]
+        from core.retrieval.scoring import finite_real
+
+        reranked: list[tuple[Document, float]] = []
+        others = []
+        for document in documents:
+            raw_score = document.metadata.get("rerank_score")
+            score = finite_real(raw_score)
+            if document.metadata.get("rerank_applied") is True and score is not None:
+                reranked.append((document, score))
+            else:
+                others.append(document)
         if not reranked or (rel_thr <= 0 and prob_floor <= 0):
             return documents  # degraded/unconfigured: do not filter, hand to Layer ⑤
-        # rerank_applied=True but rerank_score missing = data inconsistency;
-        # treat as unavailable (-inf) rather than sigmoid(0)=0.5, honoring the
-        # hot-path "unavailable != 0" discipline (AGENTS.md §0.3).
-        scores = [
-            float(s) if isinstance(s, (int, float)) else float("-inf")
-            for s in (d.metadata.get("rerank_score") for d in reranked)
-        ]
+        scores = [score for _, score in reranked]
         lo, hi = min(scores), max(scores)
         span = hi - lo
 
         def _passes(s: float) -> bool:
-            if prob_floor > 0 and _sigmoid(s) < prob_floor:
-                return False
+            if prob_floor > 0:
+                try:
+                    if _sigmoid(s) < prob_floor:
+                        return False
+                except ValueError:
+                    return False
             if rel_thr > 0 and span >= 1e-9 and ((s - lo) / span) < rel_thr:
                 return False
             return True
 
-        kept = [d for d, s in zip(reranked, scores) if _passes(s)]
+        kept = [document for document, score in reranked if _passes(score)]
+        if not kept and others:
+            kept = [max(reranked, key=lambda item: item[1])[0]]
         return kept + others
 
     def _compute_max_rerank_prob(self, documents: list[Document]) -> float | None:
@@ -375,12 +388,15 @@ class RetrieveSkill(BaseSkill):
         Returns None when no reranked docs exist (reranker degraded) — Layer ⑤
         then skips the shunt (degradation semantics: prefer recall over refuse).
         """
-        reranked = [d for d in documents if d.metadata.get("rerank_applied") is True]
-        probs = [
-            _sigmoid(float(d.metadata["rerank_score"]))
-            for d in reranked
-            if isinstance(d.metadata.get("rerank_score"), (int, float))
-        ]
+        from core.retrieval.scoring import raw_logit_probability
+
+        probs = []
+        for document in documents:
+            if document.metadata.get("rerank_applied") is not True:
+                continue
+            probability = raw_logit_probability(document.metadata.get("rerank_score"))
+            if probability is not None:
+                probs.append(probability)
         return max(probs) if probs else None
 
     def _retrieve(
@@ -695,7 +711,7 @@ class RetrieveSkill(BaseSkill):
                     metadata={
                         "source": item.get("source", "unknown"),
                         "title": item.get("title", "unknown"),
-                        "score": item.get("score", 0.0),
+                        "score": item.get("score"),
                         # Restore parent_id so _maybe_expand_parents works over
                         # the MCP path (critic F-RB-01: server now carries it).
                         **({"parent_id": item["parent_id"]} if item.get("parent_id") else {}),

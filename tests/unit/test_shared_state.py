@@ -252,6 +252,163 @@ class TestMergeStateUpdate:
         assert update == {"rewrite_count": 1}
 
 
+class TestRequestBoundarySharedState:
+    @staticmethod
+    def _stale_state():
+        return {
+            "retrieval_evidence": [{"content": "old retrieval"}],
+            "generation_evidence": [{"content": "old generation"}],
+            "retrieval_relevance": 0.91,
+            "relevance_scores": [0.91],
+            "retrieved_contexts": ["old context"],
+            "sources": ["old.md"],
+            "relevant_memories": [{"content": "old memory"}],
+            "conversation_history": [HumanMessage(content="old history")],
+            "grounding_faithfulness": 0.88,
+            "max_rerank_prob": 0.93,
+            "filter_expr": 'source == "old.md"',
+            "query_transform": "hyde",
+            "expand_parents": True,
+            "intent": "rag_query",
+            "intent_confidence": 0.99,
+            "fallback_general_chat": True,
+        }
+
+    def test_request_defaults_overwrite_stale_checkpoint_state(self):
+        from agent.context.state import merge_shared_state
+        from agent.harness.orchestrator import _build_request_shared_state
+
+        fresh = _build_request_shared_state(
+            {
+                "intent": "rag_query",
+                "intent_confidence": 0.7,
+                "filter_expr": "",
+                "expand_parents": False,
+                # Producer-owned data must never enter a new checkpoint from callers.
+                "generation_evidence": [{"content": "unsafe", "metadata": {"bad": object()}}],
+            },
+            history=[],
+        )
+        merged = merge_shared_state(self._stale_state(), fresh)
+
+        assert merged["retrieval_evidence"] == []
+        assert merged["generation_evidence"] == []
+        assert merged["retrieval_relevance"] is None
+        assert merged["relevance_scores"] == []
+        assert merged["retrieved_contexts"] == []
+        assert merged["sources"] == []
+        assert merged["relevant_memories"] == []
+        assert merged["conversation_history"] == []
+        assert merged["grounding_faithfulness"] is None
+        assert merged["max_rerank_prob"] is None
+        assert merged["query_transform"] is None
+        assert merged["fallback_general_chat"] is False
+        assert merged["intent"] == "rag_query"
+        assert merged["intent_confidence"] == 0.7
+        assert merged["filter_expr"] == ""
+        assert merged["expand_parents"] is False
+
+    def test_same_sqlite_thread_second_request_clears_stale_state(self, tmp_path):
+        import sqlite3
+
+        from langgraph.checkpoint.sqlite import SqliteSaver
+        from langgraph.constants import END, START
+        from langgraph.graph import StateGraph
+
+        from agent.context.state import AgentState
+        from agent.harness.orchestrator import _build_request_shared_state
+
+        connection = sqlite3.connect(str(tmp_path / "request-state.db"), check_same_thread=False)
+        try:
+            workflow = StateGraph(AgentState)
+            workflow.add_node("noop", lambda _state: {})
+            workflow.add_edge(START, "noop")
+            workflow.add_edge("noop", END)
+            graph = workflow.compile(checkpointer=SqliteSaver(connection))
+            config = {"configurable": {"thread_id": "same-thread"}}
+            graph.invoke(
+                {
+                    "messages": [HumanMessage(content="first")],
+                    "rewrite_count": 0,
+                    "max_rewrites": 1,
+                    "shared_state": self._stale_state(),
+                },
+                config=config,
+            )
+
+            second = graph.invoke(
+                {
+                    "messages": [HumanMessage(content="second")],
+                    "rewrite_count": 0,
+                    "max_rewrites": 1,
+                    "shared_state": _build_request_shared_state(
+                        {"intent_confidence": 0.6}, history=[]
+                    ),
+                },
+                config=config,
+            )
+        finally:
+            connection.close()
+
+        assert second["shared_state"]["generation_evidence"] == []
+        assert second["shared_state"]["retrieval_evidence"] == []
+        assert second["shared_state"]["sources"] == []
+        assert second["shared_state"]["conversation_history"] == []
+        assert second["shared_state"]["intent_confidence"] == 0.6
+
+    def test_four_graph_entries_build_identical_request_state(self):
+        import asyncio
+
+        from agent.harness.orchestrator import AgentHarness, HarnessConfig
+
+        captured = []
+
+        class CaptureGraph:
+            def invoke(self, inputs, config=None):
+                captured.append(inputs)
+                return inputs
+
+            def stream(self, inputs, config=None, stream_mode=None):
+                captured.append(inputs)
+                yield inputs
+
+            async def ainvoke(self, inputs, config=None):
+                captured.append(inputs)
+                return inputs
+
+            async def astream(self, inputs, config=None, stream_mode=None):
+                captured.append(inputs)
+                yield inputs
+
+        harness = AgentHarness(config=HarnessConfig(use_memory=False))
+        harness._graph = CaptureGraph()
+        seed = {
+            "intent_confidence": 0.7,
+            "filter_expr": "",
+            "expand_parents": False,
+            "generation_evidence": [{"metadata": {"bad": object()}}],
+        }
+
+        harness.invoke("sync", mode="thinking", shared_state=seed, history=[])
+        list(harness.stream("stream", shared_state=seed, history=[]))
+
+        async def run_async_entries():
+            await harness.ainvoke("async", mode="thinking", shared_state=seed, history=[])
+            return [
+                event async for event in harness.astream("astream", shared_state=seed, history=[])
+            ]
+
+        asyncio.run(run_async_entries())
+
+        assert len(captured) == 4
+        expected = captured[0]["shared_state"]
+        assert all(inputs["shared_state"] == expected for inputs in captured)
+        assert expected["conversation_history"] == []
+        assert expected["filter_expr"] == ""
+        assert expected["expand_parents"] is False
+        assert expected["generation_evidence"] == []
+
+
 # ===========================================================================
 # Memory enrichment hook returns increment
 # ===========================================================================
@@ -334,6 +491,37 @@ class TestGenerateSkillPublishesSharedState:
         contexts = GenerateSkill._contexts_list(messages)
         assert contexts == ["片段1", "片段3"]
 
+    @pytest.mark.parametrize("async_path", [False, True])
+    def test_empty_evidence_clears_previous_generation_state(self, async_path):
+        import asyncio
+
+        from agent.skills.base import SkillContext
+        from agent.skills.generate.skill import GenerateSkill
+
+        previous = {
+            "retrieval_evidence": [],
+            "relevance_scores": [0.9],
+            "retrieved_contexts": ["old context"],
+            "sources": ["old.pdf"],
+            "grounding_faithfulness": 0.9,
+            "fallback_general_chat": True,
+        }
+        context = SkillContext(
+            messages=[HumanMessage(content="new question")],
+            shared_state=previous,
+        )
+        skill = GenerateSkill()
+
+        result = asyncio.run(skill.aexecute(context)) if async_path else skill.execute(context)
+
+        shared = result.state_updates["shared_state"]
+        assert shared["generation_evidence"] == []
+        assert shared["relevance_scores"] == []
+        assert shared["retrieved_contexts"] == []
+        assert shared["sources"] == []
+        assert shared["grounding_faithfulness"] is None
+        assert shared["fallback_general_chat"] is False
+
 
 # ===========================================================================
 # RetrieveSkill publishes retrieval_relevance
@@ -341,7 +529,7 @@ class TestGenerateSkillPublishesSharedState:
 
 
 class TestRetrieveSkillPublishesRelevance:
-    def test_mean_relevance_from_documents(self):
+    def test_rank_only_scores_do_not_become_confidence(self):
         from langchain_core.documents import Document
 
         from agent.skills.retrieve.skill import RetrieveSkill
@@ -350,6 +538,17 @@ class TestRetrieveSkillPublishesRelevance:
             Document(page_content="a", metadata={"score": 0.8}),
             Document(page_content="b", metadata={"score": 0.6}),
             Document(page_content="c", metadata={"source": "x"}),  # no score
+        ]
+        assert RetrieveSkill._mean_relevance(docs) is None
+
+    def test_mean_relevance_uses_reranker_probability(self):
+        from langchain_core.documents import Document
+
+        from agent.skills.retrieve.skill import RetrieveSkill
+
+        docs = [
+            Document(page_content="a", metadata={"rerank_prob": 0.8}),
+            Document(page_content="b", metadata={"rerank_prob": 0.6}),
         ]
         assert RetrieveSkill._mean_relevance(docs) == pytest.approx(0.7)
 
@@ -360,6 +559,72 @@ class TestRetrieveSkillPublishesRelevance:
 
         docs = [Document(page_content="a", metadata={})]
         assert RetrieveSkill._mean_relevance(docs) is None
+
+    @pytest.mark.parametrize("async_path", [False, True])
+    def test_empty_retrieval_clears_previous_scores(self, monkeypatch, async_path):
+        import asyncio
+
+        from agent.skills.base import SkillContext
+        from agent.skills.retrieve.skill import RetrieveSkill
+
+        context = SkillContext(
+            messages=[HumanMessage(content="new question")],
+            shared_state={
+                "retrieval_evidence": [{"content": "old"}],
+                "retrieval_relevance": 0.9,
+                "max_rerank_prob": 0.9,
+            },
+        )
+        skill = RetrieveSkill()
+        monkeypatch.setattr(skill, "_retrieve", lambda *_args, **_kwargs: [])
+
+        async def empty_async(*_args, **_kwargs):
+            return []
+
+        monkeypatch.setattr(skill, "_aretrieve", empty_async)
+        result = asyncio.run(skill.aexecute(context)) if async_path else skill.execute(context)
+
+        shared = result.state_updates["shared_state"]
+        assert shared == {
+            "retrieval_evidence": [],
+            "retrieval_relevance": None,
+            "relevance_scores": [],
+            "retrieved_contexts": [],
+            "sources": [],
+            "max_rerank_prob": None,
+        }
+
+    @pytest.mark.parametrize("async_path", [False, True])
+    def test_failed_retrieval_clears_previous_scores(self, monkeypatch, async_path):
+        import asyncio
+
+        from agent.skills.base import SkillContext
+        from agent.skills.retrieve.skill import RetrieveSkill
+
+        context = SkillContext(
+            messages=[HumanMessage(content="new question")],
+            shared_state={"retrieval_relevance": 0.9, "max_rerank_prob": 0.9},
+        )
+        skill = RetrieveSkill()
+
+        def fail(*_args, **_kwargs):
+            raise RuntimeError("boom")
+
+        async def afail(*_args, **_kwargs):
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(skill, "_retrieve", fail)
+        monkeypatch.setattr(skill, "_aretrieve", afail)
+        result = asyncio.run(skill.aexecute(context)) if async_path else skill.execute(context)
+
+        assert result.state_updates["shared_state"] == {
+            "retrieval_evidence": [],
+            "retrieval_relevance": None,
+            "relevance_scores": [],
+            "retrieved_contexts": [],
+            "sources": [],
+            "max_rerank_prob": None,
+        }
 
 
 if __name__ == "__main__":

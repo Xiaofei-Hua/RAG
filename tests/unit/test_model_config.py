@@ -32,6 +32,7 @@ def test_process_environment_overrides_dotenv():
             "EMBEDDING_MODEL": "test/embedding",
             "EMBEDDING_MODEL_PATH": "",
             "EMBEDDING_DIMENSION": "768",
+            "MILVUS_SPARSE_INDEX": "false",
             "EMBEDDING_NORMALIZE": "false",
         }
     )

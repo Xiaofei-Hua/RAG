@@ -149,6 +149,22 @@ class TestExpandReturnsParent:
         assert expanded, "expand returned empty on missing parent"
         assert expanded[0].page_content == "orphan child"
 
+    def test_expand_does_not_invent_zero_for_unavailable_child_score(self):
+        from documents.parent_store import expand_to_parents, get_parent_store, make_parent_id
+
+        source = "unknown-score.md"
+        pid = make_parent_id(source, 0)
+        get_parent_store().store(pid, content="完整父文档", source=source, title="父段")
+        child = Document(
+            page_content="child",
+            metadata={"source": source, "parent_id": pid},
+        )
+
+        expanded = expand_to_parents([child])
+
+        assert len(expanded) == 1
+        assert "score" not in expanded[0].metadata
+
 
 # ===========================================================================
 # REQ-RB-002/003 — expand conditional default in RetrieveSkill

@@ -476,7 +476,7 @@ class MarkdownParser:
             sections = sections[1:]
 
         # Process heading + content pairs
-        current_parent_id = None
+        heading_stack: list[tuple[int, str]] = []
         for i in range(0, len(sections) - 1, 2):
             heading = sections[i].strip() if i < len(sections) else ""
             body = sections[i + 1].strip() if i + 1 < len(sections) else ""
@@ -487,6 +487,9 @@ class MarkdownParser:
             title_text = re.sub(r"^#{1,6}\s+", "", heading)
             title_id = f"title_{idx}"
             level = len(heading) - len(heading.lstrip("#"))
+            while heading_stack and heading_stack[-1][0] >= level:
+                heading_stack.pop()
+            parent_id = heading_stack[-1][1] if heading_stack else None
 
             # Add title element
             documents.append(
@@ -495,17 +498,13 @@ class MarkdownParser:
                     metadata={
                         "category": "Title",
                         "element_id": title_id,
-                        "parent_id": current_parent_id if level > 1 else None,
+                        "parent_id": parent_id,
                     },
                 )
             )
             idx += 1
 
-            # Update parent for nested headings
-            if level == 1:
-                current_parent_id = title_id
-            elif level > 1:
-                current_parent_id = title_id
+            heading_stack.append((level, title_id))
 
             # Add body content
             if body:

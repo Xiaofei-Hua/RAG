@@ -114,6 +114,30 @@ class _FakeEmbeddings:
         return [self.embed_query(t) for t in texts]
 
 
+class _FakeMilvusManager:
+    """In-memory vector-store boundary for upload/delete/health browser flows."""
+
+    def add_documents(self, documents, **kwargs):
+        total = len(documents)
+        return {"inserted": total, "failed": 0, "total": total, "success_rate": 1.0}
+
+    def delete_by_filter(self, filter_expr):
+        return {"deleted_count": 1}
+
+    def health_check(self):
+        return {
+            "connected": True,
+            "embedding_compatible": True,
+            "embedding_compatibility": {
+                "compatible": True,
+                "reason": "compatible",
+            },
+        }
+
+    def close(self):
+        pass
+
+
 class _FakeRetriever:
     """Returns two canned domain-neutral docs with scores."""
 
@@ -174,8 +198,58 @@ class _FakeHarness:
                     "title": "合并冲突排查",
                     "content": "Git 合并冲突通常由同一文件的多分支改动引起",
                     "score": 0.92,
-                }
+                },
+                {
+                    "source": "zero_score_fixture",
+                    "title": "零分边界",
+                    "content": "该测试来源具有真实零分。",
+                    "score": 0.0,
+                },
+                {
+                    "source": "full_score_fixture",
+                    "title": "满分边界",
+                    "content": "该测试来源具有真实满分。",
+                    "score": 1.0,
+                },
+                {
+                    "source": "unavailable_score_fixture",
+                    "title": "不可用分数边界",
+                    "content": "该测试来源没有可用分数。",
+                    "score": None,
+                },
             ],
+            "shared_state": {
+                "generation_evidence": [
+                    {
+                        "content": "Git 合并冲突通常由同一文件的多分支改动引起",
+                        "source": "git_guide",
+                        "title": "合并冲突排查",
+                        "score": 0.92,
+                        "metadata": {"score": 0.92},
+                    },
+                    {
+                        "content": "该测试来源具有真实零分。",
+                        "source": "zero_score_fixture",
+                        "title": "零分边界",
+                        "score": 0.0,
+                        "metadata": {"score": 0.0},
+                    },
+                    {
+                        "content": "该测试来源具有真实满分。",
+                        "source": "full_score_fixture",
+                        "title": "满分边界",
+                        "score": 1.0,
+                        "metadata": {"score": 1.0},
+                    },
+                    {
+                        "content": "该测试来源没有可用分数。",
+                        "source": "unavailable_score_fixture",
+                        "title": "不可用分数边界",
+                        "score": None,
+                        "metadata": {},
+                    },
+                ]
+            },
         }
 
     def invoke(self, query, thread_id=None, **kwargs):
@@ -217,7 +291,39 @@ class _FakeHarness:
                             content=canned,
                             additional_kwargs={"reasoning": "fake", "confidence": 0.85},
                         )
-                    ]
+                    ],
+                    "shared_state": {
+                        "generation_evidence": [
+                            {
+                                "content": "Git 合并冲突通常由同一文件的多分支改动引起",
+                                "source": "git_guide",
+                                "title": "合并冲突排查",
+                                "score": 0.92,
+                                "metadata": {"score": 0.92},
+                            },
+                            {
+                                "content": "该测试来源具有真实零分。",
+                                "source": "zero_score_fixture",
+                                "title": "零分边界",
+                                "score": 0.0,
+                                "metadata": {"score": 0.0},
+                            },
+                            {
+                                "content": "该测试来源具有真实满分。",
+                                "source": "full_score_fixture",
+                                "title": "满分边界",
+                                "score": 1.0,
+                                "metadata": {"score": 1.0},
+                            },
+                            {
+                                "content": "该测试来源没有可用分数。",
+                                "source": "unavailable_score_fixture",
+                                "title": "不可用分数边界",
+                                "score": None,
+                                "metadata": {},
+                            },
+                        ]
+                    },
                 }
             },
         )
@@ -296,11 +402,11 @@ class _FakeSessionMemory:
 
         msgs = self._store.get(session_id, [])
         out = []
-        for m in msgs:
+        for m in reversed(msgs[-limit:]):
             content = getattr(m, "content", str(m))
             cls = HumanMessage if type(m).__name__ == "HumanMessage" else AIMessage
             out.append(cls(content=content, additional_kwargs={"_timestamp": self._time.time()}))
-        return out[-limit:]
+        return out
 
     async def get_session_info(self, session_id):
         msgs = self._store.get(session_id, [])
@@ -383,6 +489,12 @@ def _redirect_paths(root: str):
     _set("agent.feedback.collector", "DEFAULT_DB_PATH", os.path.join(root, "agent_memory.db"))
     _set("agent.feedback.escalation", "DEFAULT_DB_PATH", os.path.join(root, "agent_memory.db"))
     _set("documents.parent_store", "DEFAULT_DB_PATH", os.path.join(root, "parent_store.db"))
+    _set("documents.graph_store", "DEFAULT_DB_PATH", os.path.join(root, "graph_store.db"))
+    _set(
+        "documents.graph_store",
+        "DEFAULT_V1_BACKUP_PATH",
+        os.path.join(root, "graph_store_v1_backup.db"),
+    )
     _set("documents.document_registry", "DEFAULT_DB_PATH", os.path.join(root, "documents.db"))
     _set(
         "documents.embedding_registry",
@@ -424,6 +536,7 @@ def _reset_singletons():
     _reset("agent.feedback.escalation", "_escalation_manager", close="close")
     _reset("documents.parent_store", "_store", close="close")
     _reset("documents.document_registry", "_registry", close="close")
+    _reset("documents.embedding_registry", "_registry", close="close")
     _reset("agent.eval.inference_store", "_store", close="close")
     _reset("agent.eval.judge", "_judge", close="close")
     _reset("core.memory.redis_memory", "_memory_instance", close=None)
@@ -507,6 +620,11 @@ def install():
     emb_mod.get_embeddings = lambda *a, **k: fake_embeddings
     emb_mod.get_local_embeddings = lambda *a, **k: fake_embeddings
     emb_mod._instance = fake_embeddings
+
+    import documents.milvus_db as milvus_mod
+
+    fake_milvus = _FakeMilvusManager()
+    milvus_mod.get_milvus_manager = lambda *a, **k: fake_milvus
 
     from types import SimpleNamespace
 

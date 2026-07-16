@@ -70,6 +70,17 @@ def _refusal_message() -> str:
 REFUSAL_MESSAGE = _refusal_message()
 
 
+def _cleared_generation_state(*, fallback_general_chat: bool = False) -> dict[str, Any]:
+    return {
+        "generation_evidence": [],
+        "relevance_scores": [],
+        "retrieved_contexts": [],
+        "sources": [],
+        "grounding_faithfulness": None,
+        "fallback_general_chat": fallback_general_chat,
+    }
+
+
 class GenerateSkill(BaseSkill):
     """
     Skill that generates the final answer.
@@ -112,14 +123,13 @@ class GenerateSkill(BaseSkill):
         start = time.perf_counter()
         messages = context.messages
         shared_state = getattr(context, "shared_state", {}) or {}
+        shared_state.update(_cleared_generation_state())
 
         log.info("GenerateSkill: generating final answer")
 
-        # Extract question and context
         question = self._extract_question(messages)
-        ctx = self._extract_context(messages)
-        # REQ-CR-005: append compressed conversation history for multi-turn coherence.
-        ctx = self._inject_history(ctx, context)
+        prepared = self._prepare_retrieval_evidence(context, question)
+        ctx = prepared["context"]
 
         # Bug2 Layer ⑤ — A/B shunt (must run BEFORE the empty-context check so
         # it takes priority). Distinguishes a misrouted general question (low
@@ -135,7 +145,9 @@ class GenerateSkill(BaseSkill):
                 status=SkillStatus.SUCCESS,
                 messages=[AIMessage(content="")],
                 next_action=None,
-                state_updates={"shared_state": {"fallback_general_chat": True}},
+                state_updates={
+                    "shared_state": _cleared_generation_state(fallback_general_chat=True)
+                },
             )
         if shunt == "refuse":
             log.info("GenerateSkill: refusing — high-confidence query but KB missing")
@@ -148,6 +160,7 @@ class GenerateSkill(BaseSkill):
                     )
                 ],
                 next_action=None,
+                state_updates={"shared_state": _cleared_generation_state()},
                 metadata={"confidence": 0.0, "refused": True},
             )
 
@@ -162,12 +175,13 @@ class GenerateSkill(BaseSkill):
                     )
                 ],
                 next_action=None,  # Terminal node
+                state_updates={"shared_state": _cleared_generation_state()},
                 metadata={"confidence": 0.0, "refused": False},
             )
 
         # Refuse-to-answer: every retrieved doc is below the relevance floor.
         # Better to decline than to hallucinate over weak evidence.
-        if self._should_refuse(messages, has_context=True):
+        if self._should_refuse_prepared(prepared, messages):
             log.info("GenerateSkill: refusing — retrieval relevance below threshold")
             return SkillResult(
                 status=SkillStatus.PARTIAL,
@@ -178,6 +192,7 @@ class GenerateSkill(BaseSkill):
                     )
                 ],
                 next_action=None,
+                state_updates={"shared_state": _cleared_generation_state()},
                 metadata={
                     "confidence": 0.0,
                     "refused": True,
@@ -185,26 +200,19 @@ class GenerateSkill(BaseSkill):
                 },
             )
 
-        # Truncate context by token budget (token-aware, avoids mid-token cuts
-        # and model-window overflow). Falls back to legacy char truncation if
-        # the token budget is disabled.
-        ctx = self._apply_context_budget(ctx, question)
-
-        # Stash retrieval relevance for confidence calc later.
-        scores = self._extract_relevance_scores(messages)
-        if scores:
-            shared_state.setdefault("relevance_scores", scores)
+        scores = prepared["scores"]
+        shared_state["relevance_scores"] = scores
+        shared_state["fallback_general_chat"] = False
 
         # Publish retrieved contexts/sources into shared_state so the output
         # guardrail's semantic grounding (NLI) branch can see them. Without
         # this, the guardrail's hallucination ESCALATE/SANITIZE path is inert
         # (it reads shared_state["retrieved_contexts"]/["sources"]).
-        grounding_contexts = self._contexts_list(messages)
-        grounding_sources = self._extract_sources_list(messages)
-        if grounding_contexts:
-            shared_state["retrieved_contexts"] = grounding_contexts
-        if grounding_sources:
-            shared_state["sources"] = grounding_sources
+        grounding_contexts = prepared["contexts"]
+        grounding_sources = prepared["sources"]
+        shared_state["generation_evidence"] = prepared["evidence"]
+        shared_state["retrieved_contexts"] = grounding_contexts
+        shared_state["sources"] = grounding_sources
 
         # Generate with retry
         for attempt in range(self._skill_config.max_retries + 1):
@@ -213,7 +221,7 @@ class GenerateSkill(BaseSkill):
                 answer = strip_think_tags(answer)
 
                 # Grounding faithfulness (best-effort; None when judge down).
-                faith = self._grounding_faithfulness(answer, messages)
+                faith = self._grounding_faithfulness(answer, grounding_contexts)
                 # Cache the verdict so the output guardrail (which also calls
                 # check_grounding) can reuse it instead of paying for a second
                 # per-claim judge round-trip on the hot path.
@@ -270,6 +278,8 @@ class GenerateSkill(BaseSkill):
                                 "sources",
                                 "relevance_scores",
                                 "grounding_faithfulness",
+                                "generation_evidence",
+                                "fallback_general_chat",
                             )
                         }
                     },
@@ -294,14 +304,16 @@ class GenerateSkill(BaseSkill):
                         skill_name=self.name,
                         error=str(e),
                         messages=[AIMessage(content="抱歉，生成回答时遇到问题，请稍后重试。")],
+                        state_updates={"shared_state": _cleared_generation_state()},
                     )
 
         return SkillResult(
             status=SkillStatus.FAILURE,
             messages=[AIMessage(content="生成回答失败。")],
+            state_updates={"shared_state": _cleared_generation_state()},
         )
 
-    def _grounding_faithfulness(self, answer: str, messages: list[BaseMessage]) -> float | None:
+    def _grounding_faithfulness(self, answer: str, contexts: list[str]) -> float | None:
         """
         Best-effort online grounding score for the generated answer.
 
@@ -311,7 +323,6 @@ class GenerateSkill(BaseSkill):
         try:
             from agent.guardrails.grounding_guardrail import check_grounding
 
-            contexts = self._contexts_list(messages)
             if not contexts:
                 return None
             result = check_grounding(answer, contexts)
@@ -320,9 +331,7 @@ class GenerateSkill(BaseSkill):
             log.debug(f"grounding faithfulness skipped: {e}")
             return None
 
-    async def _agrounding_faithfulness(
-        self, answer: str, messages: list[BaseMessage]
-    ) -> float | None:
+    async def _agrounding_faithfulness(self, answer: str, contexts: list[str]) -> float | None:
         """
         Async grounding score: fans out per-claim entailment concurrently so an
         answer with N hard claims does not block the event loop for N sequential
@@ -331,7 +340,6 @@ class GenerateSkill(BaseSkill):
         try:
             from agent.guardrails.grounding_guardrail import acheck_grounding
 
-            contexts = self._contexts_list(messages)
             if not contexts:
                 return None
             result = await acheck_grounding(answer, contexts)
@@ -387,6 +395,58 @@ class GenerateSkill(BaseSkill):
                         sources.append(str(src))
         return sources
 
+    def _prepare_retrieval_evidence(self, context: SkillContext, question: str) -> dict[str, Any]:
+        from core.context.token_budget import estimate_tokens
+        from core.retrieval.evidence import normalize_evidence_list, prepare_evidence
+
+        shared = getattr(context, "shared_state", {}) or {}
+        if "retrieval_evidence" in shared:
+            evidence, normalization_degraded = normalize_evidence_list(
+                shared.get("retrieval_evidence")
+            )
+            if evidence is not None:
+                if not evidence:
+                    return {
+                        "context": "",
+                        "evidence": [],
+                        "contexts": [],
+                        "sources": [],
+                        "scores": [],
+                        "truncated": False,
+                        "degraded": normalization_degraded,
+                    }
+                history = self._inject_history("", context)
+                history_cost = estimate_tokens(history)
+                budget = max(256, self._skill_config.max_context_tokens - history_cost)
+                prepared = prepare_evidence(evidence, token_budget=budget)
+                prepared["degraded"] = bool(prepared.get("degraded") or normalization_degraded)
+                if history:
+                    prepared["context"] = (
+                        prepared["context"] + "\n" + history if prepared["context"] else history
+                    )
+                return prepared
+
+        legacy_context = self._inject_history(self._extract_context(context.messages), context)
+        legacy_context = self._apply_context_budget(legacy_context, question)
+        return {
+            "context": legacy_context,
+            "evidence": [],
+            "contexts": self._contexts_list(context.messages),
+            "sources": self._extract_sources_list(context.messages),
+            "scores": self._extract_relevance_scores(context.messages),
+            "truncated": False,
+            "degraded": True,
+        }
+
+    def _should_refuse_prepared(
+        self, prepared: dict[str, Any], messages: list[BaseMessage]
+    ) -> bool:
+        if prepared.get("evidence"):
+            return False
+        if prepared.get("context"):
+            return self._should_refuse(messages, has_context=True)
+        return False
+
     async def aexecute(self, context: SkillContext) -> SkillResult:
         """Generate asynchronously and publish token chunks to LangGraph streams."""
         import asyncio
@@ -396,11 +456,11 @@ class GenerateSkill(BaseSkill):
         start = time.perf_counter()
         messages = context.messages
         shared_state = getattr(context, "shared_state", {}) or {}
+        shared_state.update(_cleared_generation_state())
 
         question = self._extract_question(messages)
-        ctx = self._extract_context(messages)
-        # REQ-CR-005: append compressed conversation history for multi-turn coherence.
-        ctx = self._inject_history(ctx, context)
+        prepared = self._prepare_retrieval_evidence(context, question)
+        ctx = prepared["context"]
 
         # Bug2 Layer ⑤ — A/B shunt (parity with the sync path; see execute).
         shunt = self._should_fallback_or_refuse(context)
@@ -409,7 +469,9 @@ class GenerateSkill(BaseSkill):
             return SkillResult(
                 status=SkillStatus.SUCCESS,
                 messages=[AIMessage(content="")],
-                state_updates={"shared_state": {"fallback_general_chat": True}},
+                state_updates={
+                    "shared_state": _cleared_generation_state(fallback_general_chat=True)
+                },
             )
         if shunt == "refuse":
             log.info("GenerateSkill (async): refusing — high-confidence but KB missing")
@@ -421,6 +483,7 @@ class GenerateSkill(BaseSkill):
                         additional_kwargs={"confidence": 0.0, "refused": True},
                     )
                 ],
+                state_updates={"shared_state": _cleared_generation_state()},
                 metadata={"confidence": 0.0, "refused": True},
             )
 
@@ -433,11 +496,12 @@ class GenerateSkill(BaseSkill):
                         additional_kwargs={"confidence": 0.0, "refused": False},
                     )
                 ],
+                state_updates={"shared_state": _cleared_generation_state()},
                 metadata={"confidence": 0.0, "refused": False},
             )
 
         # Refuse-to-answer on weak retrieval evidence.
-        if self._should_refuse(messages, has_context=True):
+        if self._should_refuse_prepared(prepared, messages):
             log.info("GenerateSkill (async): refusing — relevance below threshold")
             return SkillResult(
                 status=SkillStatus.PARTIAL,
@@ -447,6 +511,7 @@ class GenerateSkill(BaseSkill):
                         additional_kwargs={"confidence": 0.0, "refused": True},
                     )
                 ],
+                state_updates={"shared_state": _cleared_generation_state()},
                 metadata={
                     "confidence": 0.0,
                     "refused": True,
@@ -454,21 +519,18 @@ class GenerateSkill(BaseSkill):
                 },
             )
 
-        ctx = self._apply_context_budget(ctx, question)
-
-        scores = self._extract_relevance_scores(messages)
-        if scores:
-            shared_state.setdefault("relevance_scores", scores)
+        scores = prepared["scores"]
+        shared_state["relevance_scores"] = scores
+        shared_state["fallback_general_chat"] = False
 
         # Publish retrieved contexts/sources into shared_state so the output
         # guardrail's semantic grounding (NLI) branch can see them (parity with
         # the sync execute path).
-        grounding_contexts = self._contexts_list(messages)
-        grounding_sources = self._extract_sources_list(messages)
-        if grounding_contexts:
-            shared_state["retrieved_contexts"] = grounding_contexts
-        if grounding_sources:
-            shared_state["sources"] = grounding_sources
+        grounding_contexts = prepared["contexts"]
+        grounding_sources = prepared["sources"]
+        shared_state["generation_evidence"] = prepared["evidence"]
+        shared_state["retrieved_contexts"] = grounding_contexts
+        shared_state["sources"] = grounding_sources
 
         writer = get_stream_writer()
         for attempt in range(self._skill_config.max_retries + 1):
@@ -485,7 +547,7 @@ class GenerateSkill(BaseSkill):
                 # Grounding + confidence (best-effort). Async path fans out
                 # per-claim entailment concurrently instead of blocking the
                 # event loop with N sequential judge round-trips.
-                faith = await self._agrounding_faithfulness(answer, messages)
+                faith = await self._agrounding_faithfulness(answer, grounding_contexts)
                 # Cache the verdict so the output guardrail can reuse it.
                 shared_state["grounding_faithfulness"] = faith
                 confidence, degraded = self._compute_confidence(shared_state, faith)
@@ -513,6 +575,8 @@ class GenerateSkill(BaseSkill):
                                 "sources",
                                 "relevance_scores",
                                 "grounding_faithfulness",
+                                "generation_evidence",
+                                "fallback_general_chat",
                             )
                         }
                     },
@@ -539,6 +603,7 @@ class GenerateSkill(BaseSkill):
                     skill_name=self.name,
                     error=str(e),
                     messages=[AIMessage(content="抱歉，生成回答时遇到问题，请稍后重试。")],
+                    state_updates={"shared_state": _cleared_generation_state()},
                 )
 
     # ------------------------------------------------------------------
@@ -893,15 +958,21 @@ class GenerateSkill(BaseSkill):
         w_g = cfg.confidence_w_grounding
         w_i = cfg.confidence_w_intent
 
-        retrieval = shared_state.get("retrieval_relevance")
-        if retrieval is None:
-            # Fallback: derive from relevance scores if present.
-            scores = shared_state.get("relevance_scores") or []
+        from core.retrieval.scoring import probability
+
+        if "relevance_scores" in shared_state:
+            scores = [
+                score
+                for value in (shared_state.get("relevance_scores") or [])
+                if (score := probability(value)) is not None
+            ]
             retrieval = (sum(scores) / len(scores)) if scores else None
+        else:
+            retrieval = probability(shared_state.get("retrieval_relevance"))
 
-        intent = shared_state.get("intent_confidence")
+        intent = probability(shared_state.get("intent_confidence"))
 
-        faith = grounding_faithfulness
+        faith = probability(grounding_faithfulness)
         degraded = faith is None
         if degraded:
             # Redistribute grounding weight to retrieval (the most reliable

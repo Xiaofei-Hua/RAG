@@ -93,6 +93,53 @@ _run_trace_ctx: contextvars.ContextVar[TraceCollector | None] = contextvars.Cont
     "agent_run_trace", default=None
 )
 
+_PRODUCER_OWNED_REQUEST_KEYS = frozenset(
+    {
+        "retrieval_evidence",
+        "generation_evidence",
+        "retrieval_relevance",
+        "relevance_scores",
+        "retrieved_contexts",
+        "sources",
+        "relevant_memories",
+        "grounding_faithfulness",
+        "max_rerank_prob",
+        "fallback_general_chat",
+        "conversation_history",
+    }
+)
+
+
+def _build_request_shared_state(
+    shared_state: dict[str, Any] | None = None,
+    history: list | None = None,
+) -> dict[str, Any]:
+    """Build a fresh request scratchpad that overwrites stale checkpoint keys."""
+    state: dict[str, Any] = {
+        "retrieval_evidence": [],
+        "generation_evidence": [],
+        "retrieval_relevance": None,
+        "relevance_scores": [],
+        "retrieved_contexts": [],
+        "sources": [],
+        "relevant_memories": [],
+        "conversation_history": [],
+        "grounding_faithfulness": None,
+        "max_rerank_prob": None,
+        "filter_expr": None,
+        "query_transform": None,
+        "expand_parents": None,
+        "intent": None,
+        "intent_confidence": None,
+        "fallback_general_chat": False,
+    }
+    for key, value in (shared_state or {}).items():
+        if key not in _PRODUCER_OWNED_REQUEST_KEYS:
+            state[key] = value
+    if history is not None:
+        state["conversation_history"] = list(history)
+    return state
+
 
 @dataclass
 class HarnessConfig:
@@ -737,10 +784,7 @@ class AgentHarness:
             "messages": [HumanMessage(content=question)],
             "rewrite_count": 0,
             "max_rewrites": max_rewrites,
-            "shared_state": {
-                **(shared_state or {}),
-                **({"conversation_history": history} if history else {}),
-            },
+            "shared_state": _build_request_shared_state(shared_state, history),
         }
 
         run_collector = self._begin_run()
@@ -759,6 +803,8 @@ class AgentHarness:
         thread_id: str | None = None,
         stream_mode: Any = "values",
         max_rewrites: int | None = None,
+        shared_state: dict[str, Any] | None = None,
+        history: list | None = None,
     ):
         """
         Stream the graph execution.
@@ -768,6 +814,8 @@ class AgentHarness:
             thread_id: Thread ID for session continuity
             stream_mode: "values" or "updates"
             max_rewrites: Max rewrite attempts
+            shared_state: Request-scoped caller controls
+            history: Conversation history; an explicit empty list clears stale history
 
         Yields:
             State updates during execution
@@ -785,6 +833,7 @@ class AgentHarness:
             "messages": [HumanMessage(content=question)],
             "rewrite_count": 0,
             "max_rewrites": max_rewrites,
+            "shared_state": _build_request_shared_state(shared_state, history),
         }
 
         run_collector = self._begin_run()
@@ -835,14 +884,11 @@ class AgentHarness:
         await self.astart()
         thread_id = thread_id or self._config.thread_id
         max_rewrites = max_rewrites or self._config.max_rewrites
-        merged_state = dict(shared_state or {})
-        if history:
-            merged_state["conversation_history"] = history
         inputs: dict[str, Any] = {
             "messages": [HumanMessage(content=question)],
             "rewrite_count": 0,
             "max_rewrites": max_rewrites,
-            "shared_state": merged_state,
+            "shared_state": _build_request_shared_state(shared_state, history),
         }
         config = {"configurable": {"thread_id": thread_id}}
 
@@ -869,14 +915,11 @@ class AgentHarness:
         await self.astart()
         thread_id = thread_id or self._config.thread_id
         max_rewrites = max_rewrites or self._config.max_rewrites
-        merged_state = dict(shared_state or {})
-        if history:
-            merged_state["conversation_history"] = history
         inputs = {
             "messages": [HumanMessage(content=question)],
             "rewrite_count": 0,
             "max_rewrites": max_rewrites,
-            "shared_state": merged_state,
+            "shared_state": _build_request_shared_state(shared_state, history),
         }
         config = {"configurable": {"thread_id": thread_id}}
 

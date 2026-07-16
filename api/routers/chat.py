@@ -22,6 +22,8 @@ from core.prompts.profile_prompts import (
     GENERAL_CHAT_SYSTEM_PROMPT,
     GENERATE_SYSTEM_PROMPT,
     INTENT_CLASSIFICATION_PROMPT,
+    PER_DOC_GRADE_HUMAN_PROMPT,
+    PER_DOC_GRADE_SYSTEM_PROMPT,
 )
 from utils.log_utils import log
 from utils.think_tag_utils import strip_think_tags
@@ -73,7 +75,7 @@ class SourceDocument(BaseModel):
     content: str
     source: str | None = None
     title: str | None = None
-    score: float = 0.0
+    score: float | None = None
     retrieval_score: float | None = None
     rerank_score: float | None = None
     rerank_applied: bool = False
@@ -177,6 +179,8 @@ def _capture(
 
 def _extract_sources(messages: list) -> list[SourceDocument]:
     """Extract source documents from graph result messages."""
+    from core.retrieval.scoring import finite_real
+
     sources = []
     seen = set()
     for msg in messages:
@@ -194,19 +198,18 @@ def _extract_sources(messages: list) -> list[SourceDocument]:
                 if isinstance(meta, dict):
                     source = meta.get("source")
                     title = meta.get("title")
-                    score = meta.get("score", 0.0)
+                    score = finite_real(meta.get("score"))
                 else:
-                    source, title, score = None, None, 0.0
+                    source, title, score = None, None, None
                 if not source:
                     source = _extract_line_value(content, "Source")
                 if not title:
                     title = _extract_line_value(content, "Title")
                 parsed_score = _extract_line_value(content, "Score")
                 if parsed_score:
-                    try:
-                        score = float(parsed_score)
-                    except ValueError:
-                        pass
+                    parsed_value = finite_real(parsed_score)
+                    if parsed_value is not None:
+                        score = parsed_value
                 sources.append(
                     SourceDocument(
                         content=content[:500],
@@ -215,6 +218,29 @@ def _extract_sources(messages: list) -> list[SourceDocument]:
                         score=score,
                     )
                 )
+    return sources
+
+
+def _extract_sources_from_evidence(evidence: list[dict]) -> list[SourceDocument]:
+    from core.retrieval.scoring import probability
+
+    sources = []
+    for item in evidence:
+        if not isinstance(item, dict):
+            continue
+        metadata = item.get("metadata") if isinstance(item.get("metadata"), dict) else {}
+        score = probability(item.get("score"))
+        sources.append(
+            SourceDocument(
+                content=str(item.get("content") or "")[:500],
+                source=item.get("source") or metadata.get("source"),
+                title=item.get("title") or metadata.get("title"),
+                score=score,
+                retrieval_score=metadata.get("retrieval_score"),
+                rerank_score=metadata.get("rerank_score"),
+                rerank_applied=bool(metadata.get("rerank_applied", False)),
+            )
+        )
     return sources
 
 
@@ -527,7 +553,12 @@ async def get_prompt_status():
     # detectable via signature drift (REQ-RG-016). Previously only the generate
     # prompt was hashed, leaving intent-prompt edits invisible to ops/audit.
     signature = hashlib.sha1(
-        (GENERATE_SYSTEM_PROMPT + INTENT_CLASSIFICATION_PROMPT).encode("utf-8")
+        (
+            GENERATE_SYSTEM_PROMPT
+            + INTENT_CLASSIFICATION_PROMPT
+            + PER_DOC_GRADE_SYSTEM_PROMPT
+            + PER_DOC_GRADE_HUMAN_PROMPT
+        ).encode("utf-8")
     ).hexdigest()[:12]
     return {
         "loaded": True,
@@ -799,7 +830,12 @@ async def chat(
             else:
                 answer = "抱歉，无法生成回答。"
 
-            sources = _extract_sources(messages)
+            generation_evidence = shared_after.get("generation_evidence")
+            sources = (
+                _extract_sources_from_evidence(generation_evidence)
+                if isinstance(generation_evidence, list)
+                else _extract_sources(messages)
+            )
             route = "rag"
             prompt_profile = _profile().prompt_profile_generate
 
@@ -1166,6 +1202,7 @@ async def chat_stream(
                 # Bug2 Layer ⑤: accumulate the fallback sentinel across node
                 # outputs (F-09: the loop previously ignored shared_state).
                 fallback_general_chat = False
+                generation_evidence = []
 
                 async for event in harness.astream(
                     request.message,
@@ -1202,6 +1239,9 @@ async def chat_stream(
                         # Bug2 Layer ⑤ sentinel accumulation (F-09).
                         if (node_output.get("shared_state") or {}).get("fallback_general_chat"):
                             fallback_general_chat = True
+                        shared_update = node_output.get("shared_state") or {}
+                        if "generation_evidence" in shared_update:
+                            generation_evidence = shared_update["generation_evidence"]
                         if node_name == "agent":
                             messages = node_output.get("messages", [])
                             if messages:
@@ -1300,7 +1340,11 @@ async def chat_stream(
                 await session_memory.save_message(session_id, HumanMessage(content=request.message))
                 await session_memory.save_message(session_id, AIMessage(content=full_response))
 
-                sources = _extract_sources(collected_messages)
+                sources = (
+                    _extract_sources_from_evidence(generation_evidence)
+                    if isinstance(generation_evidence, list)
+                    else _extract_sources(collected_messages)
+                )
                 structured_answer = _extract_structured_answer(full_response)
                 # Capture the streamed RAG inference into the eval flywheel
                 # (parity with the non-streaming chat() path). Without this,

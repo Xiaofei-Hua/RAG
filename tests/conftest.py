@@ -35,6 +35,17 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("PYTEST_RUN", "1")
 
 
+def pytest_collection_modifyitems(config, items):
+    if os.getenv("OLLAMA_FULL_TESTS", "").strip().lower() in {"1", "true", "yes", "on"}:
+        return
+    skip_backend = pytest.mark.skip(reason="requires explicit OLLAMA_FULL_TESTS=1 opt-in")
+    for item in items:
+        if item.get_closest_marker("requires_ollama") or item.get_closest_marker(
+            "requires_backend"
+        ):
+            item.add_marker(skip_backend)
+
+
 # ---------------------------------------------------------------------------
 # Session teardown: close any singleton SQLite connections left open by tests
 # that did not request the tmp_data_dir redirect (e.g. tests that touch the
@@ -58,6 +69,7 @@ def _close_sqlite_singletons_after_test():
         "agent.feedback.escalation.reset_escalation_manager",
         "documents.parent_store.reset_parent_store",
         "documents.document_registry.reset_document_registry",
+        "documents.embedding_registry.reset_embedding_registry",
         "documents.graph_store.reset_graph_store",
         "documents.graph_extractor.reset_graph_extractor",
         "core.retrieval.graph_retriever.reset_graph_retriever",
@@ -141,8 +153,16 @@ def tmp_data_dir(tmp_path, monkeypatch):
         os.path.join(root, "graph_store.db"),
     )
     monkeypatch.setattr(
+        "documents.graph_store.DEFAULT_V1_BACKUP_PATH",
+        os.path.join(root, "graph_store_v1_backup.db"),
+    )
+    monkeypatch.setattr(
         "documents.document_registry.DEFAULT_DB_PATH",
         os.path.join(root, "documents.db"),
+    )
+    monkeypatch.setattr(
+        "documents.embedding_registry.DEFAULT_DB_PATH",
+        os.path.join(root, "embedding_registry.db"),
     )
     # Redirect the session checkpoint DB to tmp and clear the process-wide
     # harness singleton so the next get_agent_harness() picks up the new path.
@@ -161,6 +181,7 @@ def tmp_data_dir(tmp_path, monkeypatch):
     import agent.feedback.escalation as esc_mod
     import agent.memory.store as mem_mod
     import documents.document_registry as dr_mod
+    import documents.embedding_registry as er_mod
     import documents.graph_store as gs_mod
     import documents.parent_store as ps_mod
 
@@ -182,6 +203,9 @@ def tmp_data_dir(tmp_path, monkeypatch):
     if dr_mod._registry is not None:
         dr_mod._registry.close()
     dr_mod._registry = None
+    if er_mod._registry is not None:
+        er_mod._registry.close()
+    er_mod._registry = None
     # Reset the inference store singleton so it picks up the new path.
     import agent.eval.inference_store as is_mod
 
@@ -330,6 +354,17 @@ def fake_harness(fake_llm, fake_retriever):
                     "score": 0.92,
                 }
             ],
+            "shared_state": {
+                "generation_evidence": [
+                    {
+                        "content": "Git 合并冲突通常由同一文件的多分支改动引起",
+                        "source": "git_guide",
+                        "title": "合并冲突排查",
+                        "score": 0.92,
+                        "metadata": {"score": 0.92},
+                    }
+                ]
+            },
         }
 
     class _FakeHarness:
@@ -374,7 +409,18 @@ def fake_harness(fake_llm, fake_retriever):
                                 content=canned_answer,
                                 additional_kwargs={"reasoning": "fake", "confidence": 0.85},
                             )
-                        ]
+                        ],
+                        "shared_state": {
+                            "generation_evidence": [
+                                {
+                                    "content": "Git 合并冲突通常由同一文件的多分支改动引起",
+                                    "source": "git_guide",
+                                    "title": "合并冲突排查",
+                                    "score": 0.92,
+                                    "metadata": {"score": 0.92},
+                                }
+                            ]
+                        },
                     }
                 },
             )
@@ -405,7 +451,7 @@ def fake_session_memory():
             msgs = self._store.get(session_id, [])
             # Return as langchain messages with a timestamp in additional_kwargs.
             out = []
-            for m in msgs:
+            for m in reversed(msgs[-limit:]):
                 content = getattr(m, "content", str(m))
                 cls = HumanMessage if type(m).__name__ == "HumanMessage" else AIMessage
                 out.append(
@@ -414,7 +460,7 @@ def fake_session_memory():
                         additional_kwargs={"_timestamp": time.time()},
                     )
                 )
-            return out[-limit:]
+            return out
 
         async def get_session_info(self, session_id):
             msgs = self._store.get(session_id, [])

@@ -18,7 +18,7 @@ export interface SourceDocument {
   content: string
   source?: string
   title?: string
-  score: number
+  score: number | null
 }
 
 export interface ChatResponse {

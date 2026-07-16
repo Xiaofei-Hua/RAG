@@ -93,11 +93,16 @@ test.describe("Chat UI", () => {
       .toContainText(/合并|冲突/, { timeout: 30_000 });
 
     const toggle = page.getByTestId("sources-toggle");
-    if (await toggle.count()) {
-      await toggle.first().click();
-      await expect(page.getByTestId("sources-panel")).toBeVisible();
-      await screenshot(page, SHOT_DIR, "sources-panel");
-    }
+    await expect(toggle.first()).toBeVisible();
+    await toggle.first().click();
+    const panel = page.getByTestId("sources-panel");
+    await expect(panel).toBeVisible();
+    await expect(panel.getByTestId("source-item")).toHaveCount(4);
+    await expect(panel.getByTestId("source-score")).toHaveCount(3);
+    await expect(panel.getByText("相关度: 100.0%")).toBeVisible();
+    await expect(panel.getByText("相关度: 92.0%")).toBeVisible();
+    await expect(panel.getByText("相关度: 0.0%")).toBeVisible();
+    await screenshot(page, SHOT_DIR, "sources-panel");
   });
 });
 

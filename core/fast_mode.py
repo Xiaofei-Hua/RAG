@@ -57,6 +57,18 @@ def _format_context(documents) -> str:
     return context
 
 
+def _prepare_documents(documents):
+    from core.retrieval.evidence import (
+        documents_to_evidence,
+        evidence_to_document,
+        prepare_evidence,
+    )
+
+    prepared = prepare_evidence(documents_to_evidence(documents), token_budget=2048)
+    kept_documents = [evidence_to_document(item) for item in prepared["evidence"]]
+    return prepared["context"], kept_documents
+
+
 def _docs_to_sources(documents) -> list[dict[str, Any]]:
     """Convert retrieved Documents to source dicts for API response."""
     sources = []
@@ -68,7 +80,7 @@ def _docs_to_sources(documents) -> list[dict[str, Any]]:
                 "content": content[:500],
                 "source": meta.get("source"),
                 "title": meta.get("title"),
-                "score": meta.get("score", 0.0),
+                "score": meta.get("score"),
                 "retrieval_score": meta.get("retrieval_score"),
                 "rerank_score": meta.get("rerank_score"),
                 "rerank_applied": bool(meta.get("rerank_applied", False)),
@@ -138,9 +150,17 @@ def fast_generate(query: str, top_k: int = 3) -> FastModeResult:
         )
 
     # --- Generate ---
-    context = _format_context(documents)
-    if len(context) > 2500:
-        context = context[:2500] + "\n...[内容已截断]"
+    context, kept_documents = _prepare_documents(documents)
+    if not kept_documents or not context.strip():
+        from core.prompts.domain_profile import get_active_profile
+
+        return FastModeResult(
+            answer=get_active_profile().empty_context_message,
+            sources=[],
+            retrieval_count=0,
+            retrieval_time_ms=retrieval_ms,
+            generation_time_ms=0,
+        )
 
     from models.llm_models import get_llm
 
@@ -156,8 +176,8 @@ def fast_generate(query: str, top_k: int = 3) -> FastModeResult:
 
     return FastModeResult(
         answer=answer,
-        sources=_docs_to_sources(documents),
-        retrieval_count=len(documents),
+        sources=_docs_to_sources(kept_documents),
+        retrieval_count=len(kept_documents),
         retrieval_time_ms=retrieval_ms,
         generation_time_ms=gen_ms,
     )
@@ -202,9 +222,19 @@ async def fast_generate_stream(query: str, top_k: int = 3) -> AsyncIterator[dict
         }
         return
 
-    context = _format_context(documents)
-    if len(context) > 2500:
-        context = context[:2500] + "\n...[内容已截断]"
+    context, kept_documents = _prepare_documents(documents)
+    if not kept_documents or not context.strip():
+        from core.prompts.domain_profile import get_active_profile
+
+        empty_msg = get_active_profile().empty_context_message
+        yield {"type": "token", "content": empty_msg}
+        yield {
+            "type": "done",
+            "full_response": empty_msg,
+            "sources": [],
+            "processing_time_ms": retrieval_ms,
+        }
+        return
 
     # --- Stream generate ---
     from models.llm_models import get_llm
@@ -227,7 +257,7 @@ async def fast_generate_stream(query: str, top_k: int = 3) -> AsyncIterator[dict
     yield {
         "type": "done",
         "full_response": full_response,
-        "sources": _docs_to_sources(documents),
+        "sources": _docs_to_sources(kept_documents),
         "processing_time_ms": retrieval_ms + gen_ms,
     }
 
@@ -250,9 +280,17 @@ async def fast_generate_async(query: str, top_k: int = 3) -> FastModeResult:
             generation_time_ms=0,
         )
 
-    context = _format_context(documents)
-    if len(context) > 2500:
-        context = context[:2500] + "\n...[内容已截断]"
+    context, kept_documents = _prepare_documents(documents)
+    if not kept_documents or not context.strip():
+        from core.prompts.domain_profile import get_active_profile
+
+        return FastModeResult(
+            answer=get_active_profile().empty_context_message,
+            sources=[],
+            retrieval_count=0,
+            retrieval_time_ms=retrieval_ms,
+            generation_time_ms=0,
+        )
 
     from models.llm_models import get_llm
 
@@ -262,8 +300,8 @@ async def fast_generate_async(query: str, top_k: int = 3) -> FastModeResult:
     generation_ms = (time.perf_counter() - t1) * 1000
     return FastModeResult(
         answer=answer,
-        sources=_docs_to_sources(documents),
-        retrieval_count=len(documents),
+        sources=_docs_to_sources(kept_documents),
+        retrieval_count=len(kept_documents),
         retrieval_time_ms=retrieval_ms,
         generation_time_ms=generation_ms,
     )

@@ -58,7 +58,7 @@ jobs:
           OPENAI_API_KEY: ollama
           LLM_MODEL: ${{ secrets.EVAL_LLM_MODEL || 'qwen3:14b' }}
         run: |
-          uv run python scripts/run_eval.py \
+          uv run --frozen python scripts/run_eval.py \
             --tag ci \
             --no-judge \
             --fail-on-regression \
@@ -71,7 +71,7 @@ jobs:
           OPENAI_API_KEY: ollama
           LLM_MODEL: ${{ secrets.EVAL_LLM_MODEL || 'qwen3:14b' }}
         run: |
-          uv run python scripts/run_eval.py \
+          uv run --frozen python scripts/run_eval.py \
             --tag nightly \
             --fail-on-regression \
             --concurrency 4

@@ -290,14 +290,19 @@ class TestEmbeddingDispatch:
     def test_bge_m3_model_returns_bgem3_adapter(self):
         """When EMBEDDING_MODEL contains 'bge-m3', get_embeddings() local branch
         returns a BGEM3Embeddings instance (has encode_hybrid_batch)."""
-        from models.embedding_models import reset_embeddings
         from models.bge_m3_embeddings import BGEM3Embeddings
+        from models.embedding_models import reset_embeddings
 
         with (
-            patch.dict(os.environ, {"EMBEDDING_PROVIDER": "local"}),
-            patch(
-                "models.embedding_models.get_embedding_model_source",
-                return_value="models/local_models/bge-m3",
+            patch.dict(
+                os.environ,
+                {
+                    "EMBEDDING_PROVIDER": "local",
+                    "EMBEDDING_MODEL": "BAAI/bge-m3",
+                    "EMBEDDING_MODEL_PATH": "models/local_models/bge-m3",
+                    "EMBEDDING_DIMENSION": "1024",
+                    "MILVUS_SPARSE_INDEX": "true",
+                },
             ),
             patch("FlagEmbedding.BGEM3FlagModel"),
         ):
@@ -317,12 +322,16 @@ class TestEmbeddingDispatch:
         from models.embedding_models import reset_embeddings
 
         with (
-            patch.dict(os.environ, {"EMBEDDING_PROVIDER": "local"}),
-            patch(
-                "models.embedding_models.get_embedding_model_source",
-                return_value="models/local_models/bge-small-zh-v1.5",
+            patch.dict(
+                os.environ,
+                {
+                    "EMBEDDING_PROVIDER": "local",
+                    "EMBEDDING_MODEL": "BAAI/bge-small-zh-v1.5",
+                    "EMBEDDING_MODEL_PATH": "",
+                    "EMBEDDING_DIMENSION": "512",
+                    "MILVUS_SPARSE_INDEX": "false",
+                },
             ),
-            patch("models.embedding_models._torch_available", return_value=True),
             patch("langchain_huggingface.HuggingFaceEmbeddings") as mock_hf,
         ):
             mock_hf.return_value = MagicMock(spec=[])

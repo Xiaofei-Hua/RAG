@@ -37,63 +37,111 @@ W_EMBED_SIM = 0.1
 # Default filter threshold: documents below this fused score are dropped.
 DEFAULT_MIN_SCORE = 0.3
 
-_PER_DOC_PROMPT = ChatPromptTemplate.from_messages(
-    [
-        (
-            "system",
-            "你是一个文档相关性评估器。判断以下单个文档片段是否与用户问题相关。"
-            '只返回 JSON: {"relevant": true} 或 {"relevant": false}。不要添加解释。',
-        ),
-        ("human", "用户问题: {question}\n\n文档片段: {doc_text}\n\n判断:"),
-    ]
-)
+
+def _per_doc_prompt() -> ChatPromptTemplate:
+    """Build from the active profile so prompt content has one source of truth."""
+    from core.prompts.domain_profile import get_active_profile
+
+    prompts = get_active_profile().prompts
+    return ChatPromptTemplate.from_messages(
+        [
+            ("system", prompts["per_doc_grade_system"]),
+            ("human", prompts["per_doc_grade_human"]),
+        ]
+    )
 
 
-def _llm_grade_document(llm, question: str, doc_text: str) -> float:
-    """Grade a single document via LLM → 1.0 (relevant) or 0.0 (not). Best-effort."""
-    try:
-        structured = llm.with_structured_output(dict, method="json_mode")
-        chain = _PER_DOC_PROMPT | structured
-        result = chain.invoke({"question": question[:300], "doc_text": doc_text[:500]})
-        val = result.get("relevant", False)
-        return 1.0 if val in (True, "true", "yes", 1) else 0.0
-    except Exception:  # noqa: BLE001 — best-effort
-        return 0.5  # neutral when LLM fails
-
-
-async def _allm_grade_document(llm, question: str, doc_text: str) -> float:
-    """Async single-document LLM grade."""
-    try:
-        structured = llm.with_structured_output(dict, method="json_mode")
-        chain = _PER_DOC_PROMPT | structured
-        result = await chain.ainvoke({"question": question[:300], "doc_text": doc_text[:500]})
-        val = result.get("relevant", False)
-        return 1.0 if val in (True, "true", "yes", 1) else 0.0
-    except Exception:  # noqa: BLE001
-        return 0.5
-
-
-def _get_rerank_score(doc: Document) -> float | None:
-    """Extract the reranker score from doc metadata (0-1 normalised)."""
-    for key in ("rerank_score", "rerank_prob", "relevance_score"):
-        val = doc.metadata.get(key)
-        if val is not None:
-            try:
-                return max(0.0, min(1.0, float(val)))
-            except (TypeError, ValueError):
-                continue
+def _parse_llm_grade(result) -> float | None:
+    """Accept only an explicit JSON boolean; malformed output is unavailable."""
+    if not isinstance(result, dict) or "relevant" not in result:
+        return None
+    value = result["relevant"]
+    if type(value) is bool:
+        return 1.0 if value else 0.0
     return None
 
 
-def _fused_score(llm_grade: float, rerank_score: float | None, embed_sim: float | None) -> float:
+def _llm_grade_document(llm, question: str, doc_text: str) -> float | None:
+    """Grade a single document via LLM → 1.0 (relevant) or 0.0 (not). Best-effort."""
+    try:
+        structured = llm.with_structured_output(dict, method="json_mode")
+        chain = _per_doc_prompt() | structured
+        from core.retrieval.evidence import render_untrusted_text
+
+        result = chain.invoke(
+            {"question": question[:300], "doc_text": render_untrusted_text(doc_text[:500])}
+        )
+        return _parse_llm_grade(result)
+    except Exception:  # noqa: BLE001 — best-effort
+        return None
+
+
+async def _allm_grade_document(llm, question: str, doc_text: str) -> float | None:
+    """Async single-document LLM grade."""
+    try:
+        structured = llm.with_structured_output(dict, method="json_mode")
+        chain = _per_doc_prompt() | structured
+        from core.retrieval.evidence import render_untrusted_text
+
+        result = await chain.ainvoke(
+            {"question": question[:300], "doc_text": render_untrusted_text(doc_text[:500])}
+        )
+        return _parse_llm_grade(result)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _get_rerank_score(doc: Document) -> float | None:
+    """Return a valid reranker signal on a common [0, 1] scale."""
+    from core.retrieval.scoring import probability, raw_logit_probability
+
+    value = probability(doc.metadata.get("rerank_prob"))
+    if value is not None:
+        return value
+    return raw_logit_probability(doc.metadata.get("rerank_score"))
+
+
+def _fused_score(
+    llm_grade: float | None,
+    rerank_score: float | None,
+    embed_sim: float | None,
+) -> float | None:
     """Fuse signals into a single [0, 1] score. Missing signals redistribute weight."""
-    signals: list[tuple[float, float]] = [(llm_grade, W_LLM_GRADE)]
+    signals: list[tuple[float, float]] = []
+    if llm_grade is not None:
+        signals.append((llm_grade, W_LLM_GRADE))
     if rerank_score is not None:
         signals.append((rerank_score, W_RERANK))
     if embed_sim is not None:
         signals.append((embed_sim, W_EMBED_SIM))
     total_w = sum(w for _, w in signals)
-    return sum(s * w for s, w in signals) / total_w if total_w > 0 else 0.0
+    return sum(s * w for s, w in signals) / total_w if total_w > 0 else None
+
+
+def _select_scored_documents(
+    scored: list[tuple[float | None, Document]], min_score: float
+) -> list[Document]:
+    passing: list[tuple[float, Document]] = []
+    evaluated: list[tuple[float, Document]] = []
+    degraded: list[Document] = []
+    for score, document in scored:
+        metadata = dict(document.metadata)
+        if score is None:
+            metadata["score_degraded"] = True
+            degraded.append(Document(page_content=document.page_content, metadata=metadata))
+            continue
+        metadata["grade_score"] = round(score, 4)
+        scored_document = Document(page_content=document.page_content, metadata=metadata)
+        evaluated.append((score, scored_document))
+        if score >= min_score:
+            passing.append((score, scored_document))
+
+    if passing:
+        passing.sort(key=lambda item: item[0], reverse=True)
+        return [document for _, document in passing] + degraded
+    if evaluated:
+        return [max(evaluated, key=lambda item: item[0])[1]] + degraded
+    return degraded
 
 
 def score_documents(
@@ -110,27 +158,19 @@ def score_documents(
     """
     if not documents:
         return documents
-    scored: list[tuple[float, Document]] = []
+    scored: list[tuple[float | None, Document]] = []
     for doc in documents:
         rerank = _get_rerank_score(doc)
-        embed_sim = doc.metadata.get("embedding_similarity")
+        embed_sim = None
         try:
             llm_grade = _llm_grade_document(llm, question, doc.page_content)
         except Exception:  # noqa: BLE001
-            llm_grade = 0.5
+            llm_grade = None
         fused = _fused_score(llm_grade, rerank, embed_sim)
-        if fused >= min_score:
-            doc.metadata["grade_score"] = round(fused, 4)
-            scored.append((fused, doc))
-    if not scored:
-        log.debug("per-doc scoring: all docs below threshold, keeping top-1")
-        # Keep at least the best doc to avoid starving generation.
-        best = max(documents, key=lambda d: _get_rerank_score(d) or 0.0)
-        best.metadata["grade_score"] = 0.0
-        return [best]
-    scored.sort(key=lambda x: x[0], reverse=True)
-    log.debug(f"per-doc scoring: {len(scored)}/{len(documents)} docs passed threshold {min_score}")
-    return [doc for _, doc in scored]
+        scored.append((fused, doc))
+    selected = _select_scored_documents(scored, min_score)
+    log.debug(f"per-doc scoring: {len(selected)}/{len(documents)} docs retained")
+    return selected
 
 
 async def ascore_documents(
@@ -143,26 +183,20 @@ async def ascore_documents(
     if not documents:
         return documents
 
-    async def _score_one(doc: Document) -> tuple[float, Document]:
+    async def _score_one(doc: Document) -> tuple[float | None, Document]:
         rerank = _get_rerank_score(doc)
-        embed_sim = doc.metadata.get("embedding_similarity")
+        embed_sim = None
         llm_grade = await _allm_grade_document(llm, question, doc.page_content)
         fused = _fused_score(llm_grade, rerank, embed_sim)
         return fused, doc
 
     results = await asyncio.gather(*[_score_one(d) for d in documents], return_exceptions=True)
-    scored: list[tuple[float, Document]] = []
-    for r in results:
-        if isinstance(r, Exception):
+    scored: list[tuple[float | None, Document]] = []
+    for document, result in zip(documents, results):
+        if isinstance(result, Exception):
+            scored.append((None, document))
             continue
-        fused, doc = r
-        if fused >= min_score:
-            doc.metadata["grade_score"] = round(fused, 4)
-            scored.append((fused, doc))
-    if not scored and documents:
-        best = max(documents, key=lambda d: _get_rerank_score(d) or 0.0)
-        best.metadata["grade_score"] = 0.0
-        return [best]
-    scored.sort(key=lambda x: x[0], reverse=True)
-    log.debug(f"per-doc scoring (async): {len(scored)}/{len(documents)} passed")
-    return [doc for _, doc in scored]
+        scored.append(result)
+    selected = _select_scored_documents(scored, min_score)
+    log.debug(f"per-doc scoring (async): {len(selected)}/{len(documents)} docs retained")
+    return selected

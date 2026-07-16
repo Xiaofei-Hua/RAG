@@ -262,7 +262,7 @@ class MCPRetrievalServer(InProcessMCPServer):
                     "content": content,
                     "source": meta.get("source", "unknown"),
                     "title": meta.get("title", "unknown"),
-                    "score": meta.get("score", 0.0),
+                    "score": meta.get("score"),
                     # parent_id MUST be carried through so the retrieve skill can
                     # expand small chunks to parent sections (small-to-big). Without
                     # this, MCP deployments silently no-op the expand (critic F-RB-01).

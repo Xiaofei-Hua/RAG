@@ -21,9 +21,8 @@ from typing import Any
 from utils.env_utils import (
     EMBEDDING_BATCH_SIZE,
     EMBEDDING_DEVICE,
-    EMBEDDING_MODEL,
-    EMBEDDING_MODEL_PATH,
     EMBEDDING_NORMALIZE,
+    resolve_embedding_settings,
 )
 from utils.log_utils import log
 
@@ -34,11 +33,12 @@ _instance: Any = None
 
 def is_embedding_model_cached() -> bool:
     """Return whether the configured local path contains a saved model."""
-    if not EMBEDDING_MODEL_PATH:
+    settings = resolve_embedding_settings()
+    if settings.provider != "local" or not settings.model_path:
         return False
     from pathlib import Path
 
-    local_path = Path(EMBEDDING_MODEL_PATH)
+    local_path = Path(settings.model_path)
     return local_path.is_dir() and any(
         (local_path / marker).is_file()
         for marker in ("modules.json", "config.json", "model.safetensors")
@@ -47,9 +47,7 @@ def is_embedding_model_cached() -> bool:
 
 def get_embedding_model_source() -> str:
     """Return the local model path when available, otherwise the model ID."""
-    if is_embedding_model_cached():
-        return EMBEDDING_MODEL_PATH
-    return EMBEDDING_MODEL
+    return resolve_embedding_settings().model_source
 
 
 # =============================================================================
@@ -104,23 +102,14 @@ def get_embeddings() -> Any:
 def _get_local_embeddings() -> Any:
     """Construct the local embedding singleton.
 
-    Dispatches on the configured model: BGE-M3 (model id/path contains 'bge-m3'
-    or 'm3') loads ``BGEM3Embeddings`` (dense+sparse+late-chunk); all others load
-    ``HuggingFaceEmbeddings`` (dense only). The ``langchain_huggingface`` import
-    is lazy + guarded so a torch-less install fails with an actionable message.
+    Dispatches on the effective configured model family. BGE-M3 loads
+    ``BGEM3Embeddings`` (dense+sparse+late-chunk) even when its cache directory
+    has an opaque name; all others load ``HuggingFaceEmbeddings`` (dense only).
+    The ``langchain_huggingface`` import is lazy + guarded so a torch-less
+    install fails with an actionable message.
     """
-    model_source = get_embedding_model_source()
-    model_lower = (model_source or "").lower()
-
-    if "bge-m3" in model_lower or model_lower.endswith("/bge-m3") or "bge_m3" in model_lower:
-        # BGE-M3: use the dedicated adapter (FlagModel + AutoModel, dense+sparse).
-        from models.bge_m3_embeddings import BGEM3Embeddings
-
-        log.info(f"Creating BGE-M3 embedding model: source={model_source}")
-        return BGEM3Embeddings(model_path=model_source)
-
     try:
-        from langchain_huggingface import HuggingFaceEmbeddings
+        import langchain_huggingface  # noqa: F401
     except ImportError as exc:
         raise ImportError(
             "Local embedding inference requires the 'local-models' extra "
@@ -128,6 +117,18 @@ def _get_local_embeddings() -> Any:
             "`uv sync --extra local-models`, or set EMBEDDING_PROVIDER=api "
             "to use the DashScope embedding API instead."
         ) from exc
+
+    settings = resolve_embedding_settings("local")
+    model_source = settings.model_source
+
+    if settings.is_bge_m3:
+        # BGE-M3: use the dedicated adapter (FlagModel + AutoModel, dense+sparse).
+        from models.bge_m3_embeddings import BGEM3Embeddings
+
+        log.info(f"Creating BGE-M3 embedding model: source={model_source}")
+        return BGEM3Embeddings(model_path=model_source)
+
+    from langchain_huggingface import HuggingFaceEmbeddings
 
     log.info(f"Creating local embedding model: source={model_source}, device={EMBEDDING_DEVICE}")
     return HuggingFaceEmbeddings(
@@ -163,14 +164,13 @@ def _get_api_embeddings() -> Any:
     from models.dashscope_embeddings import DashScopeEmbeddings
 
     base_url = os.getenv("DASHSCOPE_BASE_URL", "https://dashscope.aliyuncs.com").rstrip("/")
-    model = os.getenv("EMBEDDING_MODEL", "BAAI/bge-small-zh-v1.5")
-    dimension = int(os.getenv("EMBEDDING_DIMENSION", "512"))
+    settings = resolve_embedding_settings("api")
 
     return DashScopeEmbeddings(
         api_key=api_key,
         base_url=base_url,
-        model=model,
-        dimension=dimension,
+        model=settings.model,
+        dimension=settings.dimension,
     )
 
 

@@ -38,6 +38,10 @@ data/eval/candidates/*
 # (FileNotFoundError). They must be tracked despite the blanket data/* ignore.
 !data/profiles/
 !data/benchmark/
+data/benchmark/baselines/*
+!data/benchmark/baselines/
+!data/benchmark/baselines/benchmark_cmrc2018_baseline.json
+!data/benchmark/baselines/benchmark_hotpotqa_baseline.json
 data/inferences.db
 
 # Logs
@@ -80,3 +84,4 @@ deploy_ollama.sh
 
 # Claude Code
 .claude/
+.zcode/

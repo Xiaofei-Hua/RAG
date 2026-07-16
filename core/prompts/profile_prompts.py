@@ -24,6 +24,8 @@ __all__ = [
     "REWRITE_PROMPT",
     "GRADE_SYSTEM_PROMPT",
     "GRADE_HUMAN_PROMPT",
+    "PER_DOC_GRADE_SYSTEM_PROMPT",
+    "PER_DOC_GRADE_HUMAN_PROMPT",
     "INTENT_CLASSIFICATION_PROMPT",
     "AGENT_SYSTEM_PROMPT",
     "RETRIEVER_TOOL_NAME",
@@ -61,6 +63,8 @@ GENERATE_HUMAN_PROMPT = _profile.prompts["generate_human"]
 REWRITE_PROMPT = _profile.prompts["rewrite"]
 GRADE_SYSTEM_PROMPT = _profile.prompts["grade_system"]
 GRADE_HUMAN_PROMPT = _profile.prompts["grade_human"]
+PER_DOC_GRADE_SYSTEM_PROMPT = _profile.prompts["per_doc_grade_system"]
+PER_DOC_GRADE_HUMAN_PROMPT = _profile.prompts["per_doc_grade_human"]
 INTENT_CLASSIFICATION_PROMPT = _profile.prompts["intent"]
 AGENT_SYSTEM_PROMPT = _profile.prompts["agent_system"]
 RETRIEVER_TOOL_DESCRIPTION = _profile.retriever_tool_description

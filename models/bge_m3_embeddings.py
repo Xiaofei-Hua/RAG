@@ -324,9 +324,9 @@ def get_bge_m3_embeddings(
         with _instance_lock:
             if _instance is None:
                 if model_path is None:
-                    from utils.env_utils import EMBEDDING_MODEL_PATH
+                    from utils.env_utils import resolve_embedding_settings
 
-                    model_path = EMBEDDING_MODEL_PATH
+                    model_path = resolve_embedding_settings("local").model_source
                 _instance = BGEM3Embeddings(model_path=model_path, **kwargs)
     return _instance
 

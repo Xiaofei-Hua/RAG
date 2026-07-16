@@ -91,7 +91,8 @@ class TestRagBranch:
         body = resp.json()
         assert body["metadata"]["route"] == "rag"
         assert "合并" in body["response"]
-        assert len(body["sources"]) > 0
+        assert [source["source"] for source in body["sources"]] == ["git_guide"]
+        assert [source["title"] for source in body["sources"]] == ["合并冲突排查"]
 
     def test_rag_response_has_confidence_metadata(self, client):
         """P0: confidence is computed and surfaced in metadata."""
@@ -228,6 +229,8 @@ class TestChatHistory:
         assert resp.status_code == 200
         body = resp.json()
         assert body["session_id"] == sid
+        assert [message["role"] for message in body["messages"]] == ["user", "assistant"]
+        assert body["messages"][0]["content"] == "你好"
 
 
 if __name__ == "__main__":

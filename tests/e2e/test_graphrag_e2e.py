@@ -108,6 +108,8 @@ class TestGateOff:
 class TestIngestionFlow:
     def test_extract_populates_graph_store(self, monkeypatch, isolated_graph, fake_embeddings):
         """_extract_graph_if_enabled (enabled) writes entities via the extractor."""
+        from types import SimpleNamespace
+
         import api.routers.documents as docs_mod
 
         monkeypatch.setattr(docs_mod, "GRAPH_RAG_ENABLED", True)
@@ -122,8 +124,10 @@ class TestIngestionFlow:
         fake_extractor.extract.return_value = (ents, rels)
         monkeypatch.setattr("documents.graph_extractor.get_graph_extractor", lambda: fake_extractor)
         monkeypatch.setattr("models.embedding_models.get_embeddings", lambda: fake_embeddings)
-        monkeypatch.setattr("utils.env_utils.EMBEDDING_MODEL", "fake-bge")
-        monkeypatch.setattr("utils.env_utils.EMBEDDING_DIMENSION", 16)
+        monkeypatch.setattr(
+            "utils.env_utils.resolve_embedding_settings",
+            lambda: SimpleNamespace(model_source="fake-bge", dimension=16),
+        )
 
         docs_mod._extract_graph_if_enabled(
             [Document(page_content="液压泵属于发动机系统")],
