@@ -43,6 +43,8 @@ agent/
 | `relevance_scores` | `retrieve` / `grade` | `generate`（置信度、refuse 判定） | 逐文档相关性分 |
 | `retrieved_contexts` | `retrieve` / `generate` | `generate` / output guardrail（grounding NLI） | 扁平化的检索文本；来源现含 graph 命中（`HybridRetriever` 三路 RRF 融合，`GRAPH_RAG_ENABLED` 开启时） |
 | `sources` | `retrieve` / `generate` | output guardrail（来源核对） | 来源名列表 |
+| `retrieval_evidence` | `retrieve` | `generate` | sanitizer 后的原始结构化证据；strict-msgpack 基础类型，失败/空召回时写 `[]` 清旧值 |
+| `generation_evidence` | `generate` | chat API / grounding / 来源展示 | token budget 实际保留并送入模型的 evidence kept-set；终止/拒答路径写 `[]` 清旧值 |
 | `relevant_memories` | memory before-hook（agent 前） | `retrieve`（注入记忆文档） | 长期记忆条目 |
 | `grounding_faithfulness` | `generate`（计算后缓存） | output guardrail（复用，避免二次 judge） | 忠实度分数或 `None` |
 | `intent_confidence` | `intent` | `generate`（置信度） | 意图置信度 |

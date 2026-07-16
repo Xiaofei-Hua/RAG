@@ -7,6 +7,41 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Fixed — RAG core correctness (`rag-core-correctness`)
+
+- Structured `retrieval_evidence` and token-budgeted `generation_evidence` now keep
+  thinking, fast, grounding, confidence and REST sources aligned; untrusted evidence
+  is bounded, sanitized and safely delimited in generate and grade prompts.
+- Markdown heading parsing now restores the nearest legal parent across heading-level
+  rises, drops and skips; Graph relations use `(id, source)` identity with transactional
+  v1→v2 migration so identical relations from different sources coexist. Before the
+  first migration, SQLite backup creates a v1 rollback image; with the service stopped,
+  restore it using `scripts/restore_graph_v1_backup.py` (v2 observation-window writes
+  are intentionally absent after rollback).
+- Raw reranker logits now use a stable sigmoid while unavailable relevance signals stay
+  `None` and reweight surviving signals instead of injecting synthetic zero/neutral scores.
+- Request-scoped `shared_state` is reset symmetrically for sync/async invoke and stream;
+  explicit empty history clears checkpoint history, and callers cannot inject producer-owned
+  evidence, source, score or memory keys into a new request.
+- Evidence consumers now rebuild bounded strict-msgpack-safe copies before checkpoint or
+  generation, so nested unsupported values degrade locally instead of escaping the hot path.
+- `[breaking]` Effective embedding defaults are provider-aware: local uses BGE-M3/1024
+  with native sparse enabled; API-only remains DashScope `text-embedding-v3`/512.
+  Custom local models no longer inherit the BGE-M3 path/dimension/sparse defaults: dimension
+  is mandatory, native sparse is rejected, and registry/health/migration record the actual
+  loaded model source.
+  Existing collections without a matching model/dimension/sparse registry record are
+  blocked for reads and writes and reported degraded. Rebuild into a new collection with
+  `scripts/migrate_embedding_collection.py`, validate, then switch `COLLECTION_NAME`;
+  retain the old collection and its explicit embedding settings for rollback.
+- Runtime health and startup logs expose a secret-free configuration fingerprint;
+  `MILVUS_DB_URI` now takes precedence over the legacy `MILVUS_URI`.
+- Retrieval benchmarks now run three repetitions, report median/worst quality plus warm
+  P50/P95, and fail closed against schema/config/dataset/corpus/embedding-validated baselines
+  tracked in `data/benchmark/baselines/`; only `--update-baseline` can replace a baseline.
+- REST source scores preserve nullable/true-zero semantics, while the UI displays the closed
+  probability interval `[0,1]` as `0.0%` through `100.0%` and hides unavailable scores.
+
 ### Added — GraphRAG retrieval leg (`graphrag`)
 
 A knowledge-graph retrieval leg (LightRAG-inspired) joins dense + sparse as the

@@ -100,9 +100,9 @@ LLM_TEMPERATURE=0.0
 LLM_MAX_TOKENS=4096
 
 # Embedding（默认模型；可替换，换模型/维度后须重建 collection）
-EMBEDDING_MODEL=BAAI/bge-small-zh-v1.5
-EMBEDDING_MODEL_PATH=models/local_models/bge-small-zh-v1.5
-EMBEDDING_DIMENSION=512
+EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_MODEL_PATH=models/local_models/bge-m3
+EMBEDDING_DIMENSION=1024
 EMBEDDING_DEVICE=auto
 
 # 领域 profile（默认 general 领域无关；嵌入航空航天示例设 aviation_phm）
@@ -331,11 +331,12 @@ location /rag/ {
 | `EMBEDDING_PROVIDER` | `auto` | Embedding 提供方：`auto`（torch 可导入则 `local` 否则 `api`）/ `local`（本地 BGE，需 `--extra local-models`）/ `api`（DashScope `text-embedding-v3`，零 torch）。详见 `docs/specs/api-only-deploy/` |
 | `DASHSCOPE_API_KEY` | _（空）_ | DashScope API Key；`EMBEDDING_PROVIDER=api` 时必填（运行时注入，勿入库）。见 §API-only 部署 |
 | `DASHSCOPE_BASE_URL` | `https://dashscope.aliyuncs.com` | DashScope 服务端点（可覆盖为内网网关） |
-| `EMBEDDING_MODEL` | `BAAI/bge-small-zh-v1.5` | 本地模式为 Hugging Face 模型 ID；API 模式为 DashScope 模型名（如 `text-embedding-v3`） |
-| `EMBEDDING_MODEL_PATH` | `models/local_models/bge-small-zh-v1.5` | Embedding 本地缓存路径 |
-| `EMBEDDING_DIMENSION` | `512` | Embedding 输出向量维度 |
+| `EMBEDDING_MODEL` | provider-aware | 本地默认 `BAAI/bge-m3`；API 默认 DashScope `text-embedding-v3`；显式配置始终优先 |
+| `EMBEDDING_MODEL_PATH` | provider-aware | 本地默认 `models/local_models/bge-m3`；API 模式为空 |
+| `EMBEDDING_DIMENSION` | provider-aware | 本地默认 `1024`；API 默认 `512` |
 | `EMBEDDING_DEVICE` | `auto` | Embedding 运行设备；`auto` 自动探测（CUDA 可用且 wheel 含本机 sm_xx 时用 `cuda`，否则 `cpu`），也可显式设 `cpu`/`cuda` |
 | `EMBEDDING_NORMALIZE` | `true` | 是否归一化 Embedding 向量 |
+| `MILVUS_SPARSE_INDEX` | model-aware | 仅本地 BGE-M3 默认 `true`；API 或其它模型必须为 `false` |
 | `DOMAIN_PROFILE` | `general` | 领域 profile（`data/profiles/<name>.yaml`）；默认领域无关，可选示例 `aviation_phm` |
 | `EMBEDDING_BATCH_SIZE` | `8` | Embedding 编码批大小 |
 | `RERANKER_ENABLED` | `true` | 是否在 RRF 融合后启用 Cross-Encoder 重排序（默认开启；设 `false` 关闭） |
@@ -403,16 +404,25 @@ EMBEDDING_DIMENSION=1024
 - `EMBEDDING_MODEL` 是下载来源或 Hugging Face 模型 ID。
 - `EMBEDDING_MODEL_PATH` 是本地缓存路径。路径内存在已保存模型时优先加载本地模型。
 - `EMBEDDING_DIMENSION` 必须与模型实际输出维度一致。
+- 显式选择非 BGE-M3 本地模型时，系统不会继承 BGE-M3 的默认缓存路径或维度；
+  未显式给出 `EMBEDDING_DIMENSION` 会直接报配置错误，避免静默建立错误向量空间。
+- Milvus native sparse 只支持本地 BGE-M3。API embedding 或其它本地模型必须设置
+  `MILVUS_SPARSE_INDEX=false`；显式启用会在启动阶段 fail fast。
+- Collection registry 记录实际加载的模型来源、维度与 sparse capability，任一变化都必须迁移。
 
-更换 Embedding 模型或维度后，旧向量与新模型不兼容，必须重建 collection
-并重新导入知识库文档：
+切换 embedding 模型、维度或 sparse capability 时，已有 collection 会被兼容性门禁阻断，
+不会继续混用不同向量空间。用 parent store 中的可信正文重建到一个**新** collection：
 
 ```bash
-uv run python documents/milvus_db.py --action create --drop
+uv run --frozen python scripts/migrate_embedding_collection.py \
+  --target-collection rag_knowledge_base_m3 \
+  --sample-query "用于抽样验证的知识库问题"
 ```
 
-然后重新启动服务并上传文档。使用 `./run.sh` 或 `deploy.sh` 时，脚本会按照
-当前 `.env` 自动下载配置的 Embedding 模型到本地路径。
+验证输出后显式切换 `COLLECTION_NAME`；旧 collection 与对应 embedding 配置应保留用于回滚。
+不要原地 drop 旧 collection；迁移命令会校验 indexed source 覆盖、写入完整性、目标 schema
+和抽样非零召回，失败时清理不完整目标。使用 `./run.sh` 或 `deploy.sh` 时，脚本会按照当前
+`.env` 下载配置的本地 Embedding 模型。
 
 ### API-only 部署（DashScope，零 torch）
 
@@ -597,6 +607,37 @@ uv run python scripts/load_test.py \
 Thinking 模式可通过 `--mode thinking` 测试。
 
 更多测试说明见 [tests/README.md](tests/README.md)。
+
+### 检索 benchmark 与版本化回归门禁
+
+`scripts/run_benchmark.py` 默认执行三轮真实检索，报告 hit rate、context precision/recall 的
+中位数与最差值，并在排除首个冷查询后报告 warm P50/P95。回归门禁读取版本控制中的
+`data/benchmark/baselines/`；基线缺失、损坏、数据集/语料摘要、运行参数或 embedding identity
+不匹配时均 fail closed，不会自动创建基线。
+
+```bash
+# 读取已提交基线并执行门禁
+uv run --frozen python scripts/run_benchmark.py \
+  --dataset data/benchmark/benchmark_cmrc2018.yaml \
+  --top-k 4 --repeats 3 --fail-on-regression
+
+# 只有明确评审本次指标后才更新候选基线；不能与 --fail-on-regression 同时使用
+uv run --frozen python scripts/run_benchmark.py \
+  --dataset data/benchmark/benchmark_cmrc2018.yaml \
+  --top-k 4 --repeats 3 --update-baseline
+```
+
+2026-07-16 在隔离 Milvus/registry、local BGE-M3/1024、native sparse、reranker 开启、
+GraphRAG 关闭的固定配置下实测：
+
+| 数据集 | cases × runs | Hit median/worst | Precision median/worst | Recall median/worst | Warm P50/P95 |
+|--------|--------------|------------------|------------------------|---------------------|--------------|
+| builtin general | 8 × 3 | 100% / 100% | 0.250 / 0.250 | 1.000 / 1.000 | 74.5 / 98.7 ms |
+| CMRC2018 | 30 × 3 | 100% / 100% | 0.250 / 0.250 | 1.000 / 1.000 | 154.0 / 179.2 ms |
+| HotpotQA | 30 × 3 | 100% / 100% | 0.458 / 0.458 | 0.917 / 0.917 | 168.2 / 199.7 ms |
+
+CMRC2018 与 HotpotQA 的提交基线是回归契约；`answer_overlap` 受近似索引同分排序影响，
+仅作 advisory，不参与质量门禁。
 
 ## 链路测评与反馈回流（评测飞轮）
 
