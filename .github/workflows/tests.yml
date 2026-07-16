@@ -56,8 +56,9 @@ jobs:
         with:
           # Pin a Python version for the venv; uv installs it if missing.
           python-version: "3.13"
-          # --frozen: never rewrite uv.lock in CI (AGENTS.md §5). --extra dev
-          # adds pytest + coverage + mypy (the single dev extra). Base deps
+          # --frozen: never rewrite uv.lock in CI (AGENTS.md §5). The locked
+          # dev profile adds pytest/coverage/mypy plus the benchmark extra used
+          # by public-IR evaluator tests. Base deps
           # include loguru/pymilvus/milvus-lite; torch stays out (it lives only
           # in the local-models extra), so the gate runs torch-less.
           version: "0.11.8"

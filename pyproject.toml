@@ -96,6 +96,10 @@ doc = [
     "pdfminer-six>=20231228",
     "beautifulsoup4>=4.12.0",
 ]
+benchmark = [
+    "ir-datasets>=0.6.1,<0.7",
+    "ir-measures>=0.4.1,<0.5",
+]
 
 [tool.uv]
 package = false

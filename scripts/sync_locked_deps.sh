@@ -15,7 +15,7 @@ fi
 profile="$1"
 case "$profile" in
   dev)
-    runtime_profile_args=(--extra dev --group ci-build)
+    runtime_profile_args=(--extra dev --extra benchmark --group ci-build)
     ;;
   api-only)
     runtime_profile_args=(--no-dev --extra api-only --group ci-build)

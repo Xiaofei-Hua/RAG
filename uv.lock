@@ -1919,6 +1919,18 @@ wheels = [
 ]
 
 [[package]]
+name = "ir-measures"
+version = "0.4.3"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
+dependencies = [
+    { name = "pytrec-eval-terrier" },
+]
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/81/b4/d931aa71a73353cf0b8446b3d7ce9ed789e7fe595778d7e061e86faea28d/ir_measures-0.4.3.tar.gz", hash = "sha256:869a6019efefb02dda8b77ca0f68d6d57b01fe34998a46c76425b9fbb396e827" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/76/62/15199767ad9f1e3f793dec253ba6f662cb36e7197fc647bc844a6ecb99bf/ir_measures-0.4.3-py3-none-any.whl", hash = "sha256:3d8b3b5283e4a77df85f9f6c8a1c2c99a7421b78fa014ef97f2ddab3037d3dcf" },
+]
+
+[[package]]
 name = "jieba"
 version = "0.42.1"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
@@ -4955,6 +4967,41 @@ wheels = [
 ]
 
 [[package]]
+name = "pytrec-eval-terrier"
+version = "0.5.10"
+source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
+dependencies = [
+    { name = "numpy" },
+    { name = "scipy", version = "1.15.3", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version < '3.11'" },
+    { name = "scipy", version = "1.17.1", source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }, marker = "python_full_version >= '3.11'" },
+]
+sdist = { url = "https://mirrors.aliyun.com/pypi/packages/04/96/4925a95e4865a647bc74d3bb052243d12a3c8e8a34909d7d097b5a4d08c5/pytrec_eval_terrier-0.5.10.tar.gz", hash = "sha256:eaaf20580d17b5575a233e04dab8a4cbcc01a7e45be8cf547c07f0a2bb3e7eb9" }
+wheels = [
+    { url = "https://mirrors.aliyun.com/pypi/packages/bf/a6/09a081ea7cf76c680b5fa8367836cba5a019d1de5be295081992a0addfc1/pytrec_eval_terrier-0.5.10-cp310-cp310-macosx_10_9_universal2.whl", hash = "sha256:5e574b2d4285d42e3bdc7ca0d9724d46c3bce06d3ee5d6c20e90fdea19761a2f" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/e3/b5/f18b1ad8936a38a7b1d51913189cd53d477d513cd48b79c7cb9bb7dc980f/pytrec_eval_terrier-0.5.10-cp310-cp310-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:e69c78878379e3e5e280ecf91e9c3bd882f637763d2378655bb0f121e62efbd4" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/c5/1a/2d6a268d2327c38547b4e4a0f815fd51b4a93ab3ee5639260e82def444bb/pytrec_eval_terrier-0.5.10-cp310-cp310-musllinux_1_2_x86_64.whl", hash = "sha256:04266dd7869276ae025399df69bf050bba26043b37426cd482fb9bcaa2b78ffa" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/44/d2/283bb904ee40d0a1bb6858e018fca63043632ac0426e4c5badd5548cc753/pytrec_eval_terrier-0.5.10-cp310-cp310-win_amd64.whl", hash = "sha256:bb0bb4495f10a0bff95f97a8c17df67c967d611c9fc1a5db13e143e7888b102e" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/18/de/7659555355381e57a73e7ba31437dc31d3df146b5cc3fb66eb032683e84e/pytrec_eval_terrier-0.5.10-cp311-cp311-macosx_10_9_universal2.whl", hash = "sha256:1036735d4a12d1c92eea38a14a071168a292f8696099e90742c2c701479f010b" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/d3/d7/1cbc2d3936eec51b57e1146840eb3ccd8a9fb2debc519d7aa748f13dd724/pytrec_eval_terrier-0.5.10-cp311-cp311-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:b36a2fbdccc7669c4b8aba1f6de2a661e6f2f77c10f05855eda55dda60fc88f5" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/7a/a2/84c93f0a260d0dabca007a02b206981d235c7f4b4c569ec746b5ef6d965b/pytrec_eval_terrier-0.5.10-cp311-cp311-musllinux_1_2_x86_64.whl", hash = "sha256:9e4ca19110f24922d7435cf9ef9951a61f0b575488b6a1db86081d82b88dd621" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/4e/ee/3a20da0523228f54d8b89b9a11d7ec402625086cc3167fb940e36a9e2d5b/pytrec_eval_terrier-0.5.10-cp311-cp311-win_amd64.whl", hash = "sha256:d36e9a8966560ed10bc5aeb30c5c29a53d3fe8e4ccb6ff6bb026bffb21be3fe3" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/d3/ca/f0edd9df08c08c96d2f088c298cfb824c3ee816302ac1f911ecb1bfdd681/pytrec_eval_terrier-0.5.10-cp312-cp312-macosx_10_13_universal2.whl", hash = "sha256:e28c3c14728713cdbad165964e2d1aba96b0fc7445a5a13168b398e9bd3bbd08" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/73/55/e02a14b0d3ac520849f66391f03c6783b3383fd23a19372d07a2280b815e/pytrec_eval_terrier-0.5.10-cp312-cp312-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:689ee541d72c27d14ae15cd1f11d2cb86cf9bdc880f5e8af9c5dbbdd47663d4d" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/76/9c/9020b700199b09ebdfc6dbadae81641a49555c4ee21dedbe2aa98af601b5/pytrec_eval_terrier-0.5.10-cp312-cp312-musllinux_1_2_x86_64.whl", hash = "sha256:3f02118dadd3c09b71462bb26e405e49bd10fe0c60bcc169fcd31454a4256dc2" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/39/9e/6e7c2b89f52e1cebeef6c3bb47272f5bd69766ddbc6e9e5445da0c876899/pytrec_eval_terrier-0.5.10-cp312-cp312-win_amd64.whl", hash = "sha256:202e48fe24948453fe45dcd73261f9865f99cb2ff4c8a3255ac2ab4c993a64ba" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/93/21/71a0dee7e2cd368237432af6bf6051ffde03370730dc1666cd39494c82a7/pytrec_eval_terrier-0.5.10-cp313-cp313-macosx_10_13_universal2.whl", hash = "sha256:fcf96c33446c16de8db78e829c5279f7404ceaaf6b502bb5a6a3669b06051601" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/5c/8c/2494edf20d726bdd3ee0a20dc5ed84351c6cc6ccc17b11b474e315808762/pytrec_eval_terrier-0.5.10-cp313-cp313-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:8455485f1faf6759f1be11b12c904d1c749ba5db7e2b6f414aa56e19533ce069" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/cf/51/7611546afb55548e65db35354a63b90d5fd5ea593fc64e5993088bf61415/pytrec_eval_terrier-0.5.10-cp313-cp313-musllinux_1_2_x86_64.whl", hash = "sha256:e7cc9666305281b0ca1873761dc71cd3f0863e6d759f00a12fd363aa2d558d6f" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/74/b3/20941b4dbe3b267271ed1ef80aa93b348da674aecb5d6aca8f311c4738b0/pytrec_eval_terrier-0.5.10-cp313-cp313-win_amd64.whl", hash = "sha256:9440bd4a78ee0bc5db6821d7483e962a6c494303fd26598f84f00d54cc64cdd7" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/f0/34/e3d0f75286151d97537309b3f311e1269b0194e3823038fc39054e84c3b4/pytrec_eval_terrier-0.5.10-cp314-cp314-macosx_10_15_universal2.whl", hash = "sha256:70bc61b8d02e61a37ed97c088282bb0a124b58e7141cc52756512750efabacbb" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/1c/72/2c1f9fd44ed7a5657654a712e5255019d5d23ba2b3d53848da1838bfb8df/pytrec_eval_terrier-0.5.10-cp314-cp314-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:d52d94803c32cadbff7fe5195b0d0d68d27393092f64207fe8250a4485d1f8d7" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/66/9d/7e440de7b37dd31cd78eefe2ec1bf3e5f49db42b17b34dc8d6006ee03fc5/pytrec_eval_terrier-0.5.10-cp314-cp314-musllinux_1_2_x86_64.whl", hash = "sha256:77950d0ce9bd960af40efede6850e7b6519400e7fda3f9313e0d0d02c247e4e2" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/ef/94/5639d7c346935a75540c1f1798be277c161b561001f2a91ef303e3d85f10/pytrec_eval_terrier-0.5.10-cp314-cp314-win_amd64.whl", hash = "sha256:c69681fec350fa94af45dd7ef8f53f605e89f752583c814f713d7d2329435cfc" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/f4/a7/9080fe3f971397ea4447e3bda0c350225c944047ede7927c9a1f788af000/pytrec_eval_terrier-0.5.10-cp314-cp314t-manylinux_2_24_x86_64.manylinux_2_28_x86_64.whl", hash = "sha256:876740f3d58625058d34aaa1939be31bf253ecacd85d0d8b1089db5dd57ab127" },
+    { url = "https://mirrors.aliyun.com/pypi/packages/ad/c9/5bf9d58cb275559211ba4af905c5a4d95f78c4b973f4186f8b22d8c0b073/pytrec_eval_terrier-0.5.10-cp314-cp314t-musllinux_1_2_x86_64.whl", hash = "sha256:2ca4e624e5f2589ae75c1034ff1f38e9fc81de86314193508ac423e7ca56769c" },
+]
+
+[[package]]
 name = "pytz"
 version = "2026.1.post1"
 source = { registry = "https://mirrors.aliyun.com/pypi/simple/" }
@@ -5052,6 +5099,10 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+benchmark = [
+    { name = "ir-datasets" },
+    { name = "ir-measures" },
+]
 dev = [
     { name = "coverage" },
     { name = "mypy" },
@@ -5100,6 +5151,8 @@ requires-dist = [
     { name = "flagembedding", marker = "extra == 'local-models'", specifier = ">=1.4.0" },
     { name = "gradio", marker = "extra == 'ui'", specifier = ">=4.0.0" },
     { name = "httpx", specifier = ">=0.25.0" },
+    { name = "ir-datasets", marker = "extra == 'benchmark'", specifier = ">=0.6.1,<0.7" },
+    { name = "ir-measures", marker = "extra == 'benchmark'", specifier = ">=0.4.1,<0.5" },
     { name = "jieba", specifier = ">=0.42.1" },
     { name = "langchain", specifier = ">=1.0.0,<2.0.0" },
     { name = "langchain-community", specifier = ">=0.3.0,<2.0.0" },
@@ -5146,7 +5199,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
     { name = "websockets", specifier = ">=12.0" },
 ]
-provides-extras = ["dev", "redis", "ui", "local-models", "api-only", "ocr", "doc"]
+provides-extras = ["dev", "redis", "ui", "local-models", "api-only", "ocr", "doc", "benchmark"]
 
 [package.metadata.requires-dev]
 ci-build = [{ name = "setuptools", specifier = "==81.0.0" }]

@@ -34,6 +34,21 @@ class TestMarkdownHeadingStack:
         assert titles["D"]["parent_id"] == titles["A"]["element_id"]
         assert titles["E"]["parent_id"] is None
 
+    def test_small_document_does_not_initialize_embeddings(self, tmp_path, monkeypatch):
+        import documents.markdown_parser as markdown_parser
+
+        path = tmp_path / "small.md"
+        path.write_text("# Heading\n\nSmall body.", encoding="utf-8")
+
+        def unexpected_embedding_load():
+            raise AssertionError("small documents must not initialize embeddings")
+
+        monkeypatch.setattr(markdown_parser, "_get_local_embeddings", unexpected_embedding_load)
+
+        documents = markdown_parser.MarkdownParser().parse_markdown_to_documents(path)
+
+        assert [document.page_content for document in documents] == ["Heading\n\nSmall body."]
+
 
 class TestStructuredEvidence:
     def test_sanitizes_metadata_and_escapes_delimiter(self):
@@ -342,6 +357,8 @@ class TestStructuredEvidence:
 
     def test_fast_sync_async_stream_share_kept_sources(self, monkeypatch):
         import core.fast_mode as fast_mode
+
+        monkeypatch.setenv("RETRIEVAL_WORKFLOW_ENABLED", "false")
 
         docs = [
             Document(
@@ -1068,17 +1085,23 @@ class TestEmbeddingCollectionMigration:
             "api.routers.documents._split_documents",
             lambda documents: documents,
         )
-        result = migration.rebuild_collection("target-v2", ["sample"])
+        result = migration.rebuild_collection(
+            "target-v2",
+            ["sample"],
+            contextual_index=True,
+        )
 
         assert calls["config"].collection_name == "target-v2"
         assert calls["config"].dense_dim == dimension
         assert calls["config"].enable_sparse is sparse_enabled
+        assert calls["config"].contextual_index is True
         assert calls["drop_if_exists"] is False
         assert result["embedding_provider"] == provider
         assert result["embedding_model"] == model
         assert result["embedding_model_source"] == model
         assert result["embedding_dimension"] == dimension
         assert result["target_collection"] == "target-v2"
+        assert result["contextual_index"] is True
         assert result["sample_hits"] == {"sample": 1}
         assert calls["closed"] is True
 
@@ -1503,6 +1526,7 @@ class TestBenchmarkLifecycle:
         summary = _latency_summary([900.0, 10.0, 20.0, 30.0, 40.0])
 
         assert summary == {
+            "first_query_ms": 900.0,
             "cold_ms": 900.0,
             "warm_p50_ms": 25.0,
             "warm_p95_ms": 40.0,
@@ -1585,6 +1609,7 @@ class TestBenchmarkLifecycle:
         ingest_manager = SimpleNamespace(close=lambda: None)
         retriever = SimpleNamespace(close=lambda: None, _dense_manager=None)
         monkeypatch.setattr(run_benchmark, "_ingest_corpus", lambda _corpus: (1, ingest_manager))
+        monkeypatch.setattr(run_benchmark, "_active_store_snapshot", lambda *_args: {})
         monkeypatch.setattr(run_benchmark, "_owned_hybrid_retriever", lambda: retriever)
         monkeypatch.setattr(run_benchmark, "_close_embedding_registry", lambda: None)
 
@@ -1657,6 +1682,7 @@ class TestBenchmarkLifecycle:
             lambda _path: {"gold": {"text": "answer", "source": "doc"}},
         )
         monkeypatch.setattr(run_benchmark, "_ingest_corpus", lambda _corpus: (1, ingest_manager))
+        monkeypatch.setattr(run_benchmark, "_active_store_snapshot", lambda *_args: {})
 
         async def retrieve(*_args, **_kwargs):
             if fail_retrieval:

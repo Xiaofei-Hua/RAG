@@ -122,7 +122,7 @@ def _locked_version(package: str) -> str:
 
 
 def test_dependency_profiles_and_lock_placement() -> None:
-    dev = _export("--extra", "dev", "--group", "ci-build")
+    dev = _export("--extra", "dev", "--extra", "benchmark", "--group", "ci-build")
     api_only = _export("--no-dev", "--extra", "api-only", "--group", "ci-build")
     local_models = _export("--no-dev", "--extra", "local-models")
     ci_build = _export("--only-group", "ci-build")
@@ -149,13 +149,14 @@ def test_dependency_profiles_and_lock_placement() -> None:
 
     assert _locked_version("flagembedding") == "1.4.0"
     assert _locked_version("ir-datasets") == "0.6.1"
+    assert _locked_version("ir-measures") == "0.4.3"
     assert _locked_version("sentencepiece") == "0.2.1"
     assert _locked_version("setuptools") == "81.0.0"
 
 
 def test_exported_runtime_and_build_requirements_are_hashed_and_host_free() -> None:
     exports = (
-        _export("--extra", "dev", "--group", "ci-build"),
+        _export("--extra", "dev", "--extra", "benchmark", "--group", "ci-build"),
         _export("--no-dev", "--extra", "api-only", "--group", "ci-build"),
         _export("--only-group", "ci-build"),
     )
@@ -440,6 +441,7 @@ def _mini_project(path: Path, runtime_requirement: str) -> None:
                 "",
                 "[project.optional-dependencies]",
                 "dev = []",
+                "benchmark = []",
                 "api-only = []",
                 "",
                 "[dependency-groups]",
