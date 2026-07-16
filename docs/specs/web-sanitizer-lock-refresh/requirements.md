@@ -18,7 +18,10 @@ GHSA-cmwh-pvxp-8882 覆盖 `<=3.4.10`：攻击者可利用持久化配置污染�
 - **REQ-WSR-004**: WHEN Playwright 验证聊天渲染，THE test SHALL 注入同时包含安全 Markdown 与恶意
   HTML 的 assistant 输出，THE rendered DOM SHALL 保留允许内容，
   SHALL 移除脚本、事件属性与危险 URL，SHALL NOT 执行恶意标记；WHEN Markdown parser 或 sanitizer
-  抛异常，THE UI SHALL HTML-escape 原文并 fail closed，AND SHALL 保存供人工检查的正常/降级过程截图。
+  抛异常，THE UI SHALL HTML-escape 原文并 fail closed，AND SHALL 保存供人工检查的正常/降级过程截图；
+  WHEN CI 执行 Playwright，THE workflow SHALL 始终上传过程截图和失败上下文，AND SHALL 保留失败
+  trace；WHEN 删除测试会话，THE test SHALL 使用完整 ID、验证 exact successful DELETE，并确认自有
+  sentinel 未被连带删除。
 - **REQ-WSR-005**: WHEN 构建生产 Docker 前端，THE web-builder SHALL 使用根 workspace
   `package-lock.json` 与 `npm ci --workspace web`，SHALL 固定 Node 20.20.2/npm 10.8.2，AND SHALL
   在 builder 中断言实际安装的 DOMPurify 为安全版本；THE Docker workflow SHALL 对所有 main/PR
@@ -32,7 +35,7 @@ GHSA-cmwh-pvxp-8882 覆盖 `<=3.4.10`：攻击者可利用持久化配置污染�
 
 ## Invariants
 
-- 不改变前端 API、DOMPurify 调用配置、Vue 组件或用户可见行为。
+- 不改变前端 API、DOMPurify 调用配置或用户可见行为；允许增加非视觉 `data-session-id` 测试契约。
 - 不因安全公告抬高 manifest 最低版本；现有 semver 范围继续允许兼容更新。
 - 根 workspace lock 是本地、Playwright 与生产 Docker 前端安装的共同事实来源。
 - 不提交过程截图、`node_modules/` 或一次性脚本。

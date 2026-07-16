@@ -21,6 +21,8 @@
 - [x] [REQ-CIR-001/005/010/011] handcrafted wheel/sdist/simple-index tests：absolute target + decoy、
   hostile second server、bad runtime/build hash、undeclared build dependency zero-request、timeout。
 - [x] [REQ-CIR-007/012] Docker all-change trigger、probe fail-closed、cold dispatch 不请求 self-hosted。
+- [x] [REQ-CIR-007] delivery 红证据：跨 worker 首项误选远程 4/4 失败；缺完整 session ID 时
+  targeted Playwright 红；mass-delete mutation 准确红在 sentinel；artifact/trace contracts 先红。
 
 ## Implementation
 
@@ -33,6 +35,8 @@
 - [x] [REQ-CIR-002/004/005/007/009] 更新 Docker workflow/Dockerfile：pin、国内默认 ARG、CI official
   index、cold no-cache、600/1200/1800 秒 gates、runtime no-sync。
 - [x] [REQ-CIR-008] 更新 CHANGELOG migration。
+- [x] [REQ-CIR-007] 会话卡暴露完整 `data-session-id`；open/delete 使用请求拥有的 ID；删除断言
+  exact successful DELETE + target 消失 + sentinel 保留；Playwright artifact/trace 始终留存。
 
 ## Local Verification
 
@@ -40,18 +44,20 @@
 - [x] `uv lock --check` 与 lock semantic diff audit。
 - [x] 干净候选 + torch-less venv：unit+perf 853 passed / 4 deselected；E2E 87 passed /
   2 skipped；branch coverage 68%（gate 60%）。
-- [x] web build + Playwright：21 passed；人工查看关键截图。
+- [x] web build + Playwright：21 passed；24 contracts；mass-delete mutation 红→绿；人工查看关键截图。
 - [x] classic Docker cold build：106s；dependency sync 40s；478101058 bytes；zero-torch/import/profile 通过。
 - [x] Ruff、format、import、禁用注释审计、scoped `git diff --check` 最终复跑。
 
 ## Remote Verification and Delivery
 
-- [ ] commit/push `main`，监控 Lockfile、Unit/E2E、Playwright、Docker 首轮 warm checks。
-- [ ] 同一 SHA/workflow/runner label+arch+image version/Python/uv 对 Unit/E2E、Playwright、Docker
-  各运行 3 次 `cold-cache=true`；记录 image metadata、dependency/full-build median/max；若 image
-  version 变化则分组或重采样。
-- [ ] 回填 review/tracking 的 commit、测试、run URL/attempt/cache/秒数并关闭所有 Critical/High；
-  push 最终文档并确认最终 required checks。
+- [x] commit/push `main`；最终代码 SHA `b0a559b` 的 Lockfile、Unit/E2E、Playwright、Docker warm
+  checks 全绿。
+- [x] 最终 SHA 对 Unit/E2E、Playwright、Docker 各运行 5 次 `cold-cache=true`；按
+  `ImageVersion` 分组后每类选 3 个同镜像样本，记录 arch/OS/Python/uv/Node/npm/cache 与
+  dependency/full-build median/max；未宣称 P95。
+- [x] 下载 Playwright artifact `8369549208`，确认 24 PNG 与 sessions 四张截图，目检
+  opened/delete/sanitizer 正常；Critic/Defender residual Critical/High/Medium 均为 0。
+- [x] 回填 tracking、run URL、artifact digest 与量化指标；最终文档提交后确认 required checks。
 
 ## Evidence Before Fix
 

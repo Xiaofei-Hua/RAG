@@ -36,7 +36,9 @@ sentence-transformers 与 transformers。国内本地推理仍必须保留阿里
   version、source 与 artifact hash SHALL 不变。
 - **REQ-CIR-007**: WHEN API-only/dev profile 完成安装，THE existing import、unit、in-process E2E
   与 Docker zero-torch/size gates SHALL 继续通过；WHEN Playwright workflow 使用新安装机制，THE
-  existing UI E2E 与本次截图 SHALL 全部通过。
+  existing UI E2E 与本次截图 SHALL 全部通过；WHEN Playwright 产生过程截图或失败上下文，THE
+  workflow SHALL 始终上传带 run ID/attempt 的有限保留期 artifact，AND 会话用例 SHALL 以完整
+  session ID 定位且删除 target 后 SHALL 保留自有 sentinel 会话。
 - **REQ-CIR-008**: WHEN dependency contract 修复发布，THE CHANGELOG SHALL 标明基础安装不再
   携带 FlagEmbedding/torch，本地模型用户须使用 `--extra local-models`。
 - **REQ-CIR-009**: WHEN workflow 或 Docker 执行 export/sync，THE uv version SHALL 在三处统一

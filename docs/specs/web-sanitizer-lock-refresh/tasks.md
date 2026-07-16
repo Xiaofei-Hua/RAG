@@ -13,6 +13,8 @@
 - [x] [REQ-WSR-004] 新增恶意 assistant HTML Playwright 契约；安全 DOM/执行断言永久固化。
 - [x] [REQ-WSR-004] implementation critic 红证据：sanitizer throw 时危险 `<img>` 留在 DOM；
   修复为 escaped plain-text fallback，并增加降级态 Playwright 截图。
+- [x] [REQ-WSR-003/004] delivery 红证据：跨 worker 会话误选远程 4/4 失败；缺完整 ID 时
+  Playwright 红；mass-delete mutation 红在 sentinel；artifact/trace contracts 先红。
 
 ## Implementation
 
@@ -23,12 +25,15 @@
   Docker workflow 对所有 main/PR 变更运行，package-list probe fail closed。
 - [x] [REQ-WSR-004] Playwright route 注入恶意 HTML，增加安全契约和过程截图。
 - [x] [REQ-WSR-001/003/005] 在 CHANGELOG 记录 sanitizer 与 reproducible web-builder 修复。
+- [x] [REQ-WSR-003/004] 会话 card 暴露完整 ID，删除用例验证 exact successful DELETE 与 sentinel；
+  workflow always 上传 screenshots/test-results，失败 trace 使用 `retain-on-failure`。
 
 ## Verification
 
 - [x] [REQ-WSR-003/006] 受控 registry 下 `npm audit --omit=dev`：0 vulnerabilities。
 - [x] [REQ-WSR-003] production build 通过；ESLint 0 errors / 14 既有 warnings。
-- [x] [REQ-WSR-003/004] Playwright：21 passed；人工检查 sanitizer 正常/异常、source/session 截图通过。
+- [x] [REQ-WSR-003/004] Playwright：21 passed；24 contracts；人工检查 sanitizer 正常/异常、
+  source/session 截图通过；远程 artifact `8369549208` 含 24 PNG。
 - [x] [REQ-WSR-003/005] cold classic Docker：web-builder 29s、full image 106s、DOMPurify
   3.4.12、478101058 bytes、zero-torch/import/profile files 全通过。
 - [x] [REQ-WSR-001/002/006] scoped diff/whitespace/lock provenance/tuple 审计通过。
@@ -37,7 +42,7 @@
 
 ## Delivery
 
-- [ ] 精确暂存并随当前 main 交付；不纳入并行检索前沿改动。
+- [x] 精确提交 `31fcabb` / `b4c0f56` / `b0a559b` 并推送 main；未纳入并行检索前沿改动。
 
 ## Red→Green Evidence
 

@@ -33,4 +33,11 @@ Implementation critic 的 4 High / 3 Medium 均有对应修复、设计更新和
 - **Residual implementation Critical: 0**
 - **Residual implementation High: 0**
 - **Residual Medium from these seven findings: 0**
-- **Delivery remains pending** only for commit SHA/tracking fields and required same-commit remote CI metrics/results.
+- **At review time, delivery remained pending** only for commit SHA/tracking fields and required
+  same-commit remote CI metrics/results; the post-review section records their later closure.
+
+## Post-review Delivery Closure
+
+Delivery pending 项已在最终代码 SHA `b0a559b` 关闭：warm checks 全绿、三类 workflow 各 5 次 cold
+全部成功并按 runner image 分组，artifact `8369549208` 已下载目检。最终 Critic/Defender delivery
+复审均为 Residual Critical/High/Medium = 0；详见 `delivery-evidence.md` 与 tracking。

@@ -74,12 +74,14 @@ workflow paths 必须令测试失败。记录红日志后才更新 lock/Docker/w
 | Docker unit | root workspace lock + exact Node builder + `npm ci` + installed-version gate；workflow paths 完整 |
 | Security | 受控 registry 下 `npm audit --omit=dev` 为 0 vulnerabilities |
 | Frontend | `npm run build --workspace web`；`npm run lint --workspace web` |
-| Browser E2E | 恶意 assistant payload：保留 safe Markdown/link，移除 script/img/onerror/javascript URL，执行标记未设置；强制 sanitizer throw 时 escaped fallback、无危险 DOM/执行；保存正常与降级截图；全套回归 |
+| Browser E2E | 恶意 assistant payload：保留 safe Markdown/link，移除 script/img/onerror/javascript URL，执行标记未设置；强制 sanitizer throw 时 escaped fallback、无危险 DOM/执行；session 用完整 ID 与 target/sentinel 删除不变量；保存截图并 always 上传 screenshots/test-results；失败 trace retained；全套回归 |
 | Docker E2E | cold web-builder/full API-only build；builder DOMPurify 安全版本；最终镜像 size/zero-torch/import |
 
 本变更不改 Python、后端、RAG 热路径、`shared_state` 或持久化，不需要新增进程内 E2E。
 
 过程截图是 reviewer-inspected evidence，不宣称为 `toHaveScreenshot()` 基线；安全性由 DOM/执行断言门禁。
+CI artifact 名包含 run ID/attempt、保留 14 天且缺文件 fail closed；`trace: retain-on-failure` 与零 retry
+配置匹配。会话卡的完整 `data-session-id` 是非视觉测试身份，不改变用户可见标题。
 
 ## 6. Rollback
 

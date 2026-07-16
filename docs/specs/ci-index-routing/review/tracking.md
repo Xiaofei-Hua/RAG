@@ -4,27 +4,31 @@
 
 | 发现 ID | 严重性 | 对应 REQ | 辩护者决策 | design 修订 | 修复 commit | 验证测试 | 回归测试固化 | 状态 |
 |---|---|---|---|---|---|---|---|---|
-| F-01 | Critical | REQ-CIR-001/002/005 | accepted | v2 §1/§3/§4/§6 | pending | local dual-host canary passed; remote pending | `tests/unit/test_ci_dependency_routing.py` | open |
-| F-02 | Critical | REQ-CIR-003/006/007 | accepted | v2 §2/§5/§6 | pending | exports exclude local stack; Docker zero-torch/size/import passed | `tests/unit/test_ci_dependency_routing.py` + Docker workflow | open |
-| F-03 | High | REQ-CIR-004/005/007 | accepted | v2 §4/§6 | pending | hash/wiring/local timing passed; remote pending | `tests/unit/test_ci_dependency_routing.py` | open |
-| N-01 | High | REQ-CIR-001/005 | accepted | v2.1 §3/§5/§6 | pending | absolute target + decoy passed; Docker gate now uses explicit `/app/venv` | `tests/unit/test_ci_dependency_routing.py` | open |
-| N-02 | High | REQ-CIR-005/011 | accepted | v2.1 §3/§7 | pending | hostile/target dual server passed | `tests/unit/test_ci_dependency_routing.py` | open |
-| N-03 | High | REQ-CIR-004/005 | accepted | v2.1 §4/§6 | pending | pending same-SHA cold runs | workflow dispatch evidence | open |
-| N-04 | High | REQ-CIR-009 | accepted | v2.1 §4 | pending | every setup-uv + Docker pinned 0.11.8 | `tests/unit/test_ci_dependency_routing.py` | open |
-| N-05 | High | REQ-CIR-006 | accepted | v2.1 §2 | pending | non-root package version/source/hash audit passed | lock audit + `tests/unit/test_ci_dependency_routing.py` | open |
-| N-06 | High | REQ-CIR-010 | defended-with-alternative | v2.1 §2/§3 | pending | hashed ci-build + undeclared backend zero-request + cold install passed | `tests/unit/test_ci_dependency_routing.py` | open |
-| N-07 | High | REQ-CIR-004 | accepted | v2.1 §4/§5 | pending | 1200s gate simulation passed; local cold full build 106s; remote pending | `tests/unit/test_ci_dependency_routing.py` | open |
-| N-08 | High | REQ-CIR-005 | accepted | v2.2 §6 | pending | pending runner class/image metadata | remote dispatch evidence | open |
-| CI-IMP-H-01 | High | REQ-CIR-007 | accepted | v2.3 §4/§6 | pending | Docker workflow has no incomplete positive path filter | `test_web_sanitizer_lock_refresh.py::test_docker_workflow_runs_for_all_changes_and_checks_the_target_venv` | open |
-| CI-IMP-H-02 | High | REQ-CIR-007 | accepted | v2.3 §5 | pending | package-list probe and grep status are separated; remote image gate pending | `test_ci_dependency_routing.py::test_workflow_docker_and_installer_contracts` | open |
-| CI-IMP-H-03 | High | REQ-CIR-012 | accepted | v2.3 §4 | pending | cold dispatch defaults to hosted-only | `test_ci_dependency_routing.py::test_workflow_docker_and_installer_contracts` | open |
-| CI-IMP-M-02 | Medium | REQ-CIR-005 | accepted | v2.3 §6 | pending | independent runtime artifact tamper rejected; target package unavailable | `test_ci_dependency_routing.py::test_installer_rejects_tampered_runtime_hash` | open |
+| F-01 | Critical | REQ-CIR-001/002/005 | accepted | v2 §1/§3/§4/§6 | `31fcabb` | dual-host canary + final same-SHA hosted runs | `tests/unit/test_ci_dependency_routing.py` | closed |
+| F-02 | Critical | REQ-CIR-003/006/007 | accepted | v2 §2/§5/§6 | `31fcabb` | exports exclude local stack；Docker zero-torch/size/import | contracts + Docker workflow | closed |
+| F-03 | High | REQ-CIR-004/005/007 | accepted | v2 §4/§6 | `31fcabb` | hash/wiring/timing + grouped cold evidence | contracts + [delivery evidence](delivery-evidence.md) | closed |
+| N-01 | High | REQ-CIR-001/005 | accepted | v2.1 §3/§5/§6 | `31fcabb` | absolute target + decoy；explicit `/app/venv` | `tests/unit/test_ci_dependency_routing.py` | closed |
+| N-02 | High | REQ-CIR-005/011 | accepted | v2.1 §3/§7 | `31fcabb` | hostile/target dual server passed | `tests/unit/test_ci_dependency_routing.py` | closed |
+| N-03 | High | REQ-CIR-004/005 | accepted | v2.1 §4/§6 | `31fcabb` | final SHA 每类 5 cold，按 ImageVersion 取 3 样本组 | [delivery evidence](delivery-evidence.md) | closed |
+| N-04 | High | REQ-CIR-009 | accepted | v2.1 §4 | `31fcabb` | hosted/Docker uv 0.11.8 | `tests/unit/test_ci_dependency_routing.py` | closed |
+| N-05 | High | REQ-CIR-006 | accepted | v2.1 §2 | `31fcabb` | non-root package version/source/hash audit | lock audit + contracts | closed |
+| N-06 | High | REQ-CIR-010 | defended-with-alternative | v2.1 §2/§3 | `31fcabb` | hashed build allowlist + no-build-isolation + zero hostile requests | `tests/unit/test_ci_dependency_routing.py` | closed |
+| N-07 | High | REQ-CIR-004 | accepted | v2.1 §4/§5 | `31fcabb` | gate simulation；cold Docker max 213s < 1200s | contracts + [delivery evidence](delivery-evidence.md) | closed |
+| N-08 | High | REQ-CIR-005 | accepted | v2.2 §6 | `31fcabb` | arch/OS/ImageVersion/Python/uv/cache 全量记录并分组 | [delivery evidence](delivery-evidence.md) | closed |
+| CI-IMP-H-01 | High | REQ-CIR-007 | accepted | v2.3 §4/§6 | `31fcabb` | Docker 对所有 main/PR 变化运行 | `test_docker_workflow_runs_for_all_changes_and_checks_the_target_venv` | closed |
+| CI-IMP-H-02 | High | REQ-CIR-007 | accepted | v2.3 §5 | `31fcabb` | probe fail closed；final image gates green | workflow contract + Docker runs | closed |
+| CI-IMP-H-03 | High | REQ-CIR-012 | accepted | v2.3 §4 | `31fcabb` | default cold dispatch hosted-only；nightly skipped | workflow contract + final runs | closed |
+| CI-IMP-M-02 | Medium | REQ-CIR-005 | accepted | v2.3 §6 | `31fcabb` | runtime/build tamper 均因 hash 拒绝 | `test_installer_rejects_tampered_runtime_hash` | closed |
+| DLV-H-01 | High | REQ-CIR-007 | accepted | delivery review | `b0a559b` | mass-delete mutation red；target/sentinel + exact successful DELETE | `tests/e2e_ui/sessions.spec.ts` | closed |
+| DLV-M-01 | Medium | REQ-CIR-007 | accepted | delivery review | `b0a559b` | full `data-session-id`；21/21 local/remote | session Playwright cases | closed |
+| DLV-M-02 | Medium | REQ-CIR-007 | accepted | delivery review | `b0a559b` | remote artifact `8369549208` 下载并目检 24 PNG | workflow artifact/trace contracts | closed |
 
 ## 合并门禁
 
-- F-01/F-02/F-03 与 N-01..N-08 均须填入修复 commit、验证/永久回归测试及适用的 remote
-  evidence 后才可 closed；N-06 必须实际预装 hashed allowlist 并关闭 build isolation。
-- 当前全部阻塞合并与最终交付。
+- 实现 commit：`31fcabb`；会话隔离修复：`b4c0f56`；最终交付代码 SHA：`b0a559b`。
+- 所有 Critical/High 均已填入修复 commit、验证、永久回归与适用远程证据并关闭。
+- Critic / Defender 最终结论均为 Residual Critical/High/Medium = 0；正式数据见
+  [delivery-evidence.md](delivery-evidence.md)。
 
 ## Evidence Before Fix
 

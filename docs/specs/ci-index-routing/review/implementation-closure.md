@@ -108,5 +108,12 @@ WSR-IMP-M-01 与 CI-IMP-M-02 已修复。WSR-IMP-M-02 仍保留 Rollup lock meta
 ## Final Decision
 
 就本轮指定的 implementation-critic findings 而言，**Residual Critical = 0，Residual High = 0**，
-实现修复门禁通过。提交后仍须把 commit SHA 与适用的远端 workflow URL/runner/image/cache/timing
-证据回填 tracking，才能把仓库治理矩阵中的形式化 `open` 状态改为 `closed`。
+实现修复门禁通过。在本复审时，提交后仍须把 commit SHA 与适用的远端 workflow
+URL/runner/image/cache/timing 证据回填 tracking；下方 post-review 章节记录其后续关闭结果。
+
+## Post-review Delivery Closure
+
+上述提交后待办已完成。实现 commit 为 `31fcabb`，最终交付代码 SHA 为 `b0a559b`；final warm 四项
+与每类 5 次 cold dispatch 全部成功，按 `ImageVersion` 分组后形成每类 3 个同镜像样本。远程
+Playwright artifact `8369549208` 已下载并目检。正式 run URL、median/max、artifact digest 与
+加速下界见 `delivery-evidence.md`；tracking 中所有 Critical/High/Medium 均为 `closed`。

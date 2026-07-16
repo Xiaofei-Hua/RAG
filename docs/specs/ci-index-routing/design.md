@@ -90,7 +90,9 @@ profile mapping：
   job 内 `uv run --frozen --no-sync`。
 - hosted cold-cache dispatch 默认 `run_backend_nightly=false`；只有显式输入为 true 时才请求
   self-hosted real-backend job，避免性能采样 workflow 永久排队。
-- `.github/workflows/e2e-ui.yml`：同一 dev contract、20 分钟与 Playwright 全套。
+- `.github/workflows/e2e-ui.yml`：同一 dev contract、20 分钟与 Playwright 全套；`if: always()` 上传
+  screenshots/test-results，artifact 名带 run ID/attempt、保留 14 天；失败 trace 使用
+  `retain-on-failure`。
 - 两个 Python workflow 的 `workflow_dispatch` 增 `cold-cache` boolean；cold 模式关闭 setup-uv
   cache 并设置 `UV_NO_CACHE=1`。正常 push/PR 保留 warm cache。
 - `.github/workflows/docker-api-only.yml`：30 分钟；官方 PyPI build arg；600 秒 sync；不设置正向
@@ -127,9 +129,9 @@ zero-torch Critical。国内紧急构建不传 build arg即可；canonical sourc
 |---|---|
 | Unit | actual frozen exports: dev/API-only exclude, local-models retain, ci-build only setuptools; every block hashed/no URL; manifest/lock source; pinned uv/wiring; absolute target + decoy; dual HTTP servers under hostile env; bad runtime/build hash; handcrafted sdist with undeclared backend dependency makes zero package requests; invalid URL; timeout TERM/KILL; Docker 1200s/trigger/package-probe gates; cold dispatch excludes self-hosted by default |
 | In-process E2E | new dev installer environment runs existing `tests/e2e/`, proving torch-less closure starts FastAPI and completes mocked RAG |
-| UI E2E | new installer runs existing Playwright suite and produces current-run screenshots; no UI baseline change |
+| UI E2E | new installer runs Playwright；session card 用完整 ID，删除验证 exact response + target/sentinel 双侧不变量；current-run screenshots/test-results 上传 artifact；无 UI baseline change |
 | Docker | API-only build; `/app/venv/bin/python` imports FastAPI; image `<4 GB`; no FlagEmbedding/torch/ST/transformers/langchain-huggingface |
-| Remote | same commit SHA/workflow/runner label+arch+image version/Python/uv: 3 cold dispatches per Python/Docker workflow; hosted physical VM identity may differ；record `ImageOS`/`ImageVersion` and resample if image changes; report cold median/max separately; retain one normal warm push sample; parse dependency/full-build seconds; never call 3 samples P95 |
+| Remote | same commit SHA/workflow/runner label+arch+image version/Python/uv: each workflow obtains at least 3 matching cold samples, resampling when hosted image rolls；hosted physical VM identity may differ；record `ImageOS`/`ImageVersion`；report cold median/max separately；retain one normal warm push sample；parse dependency/full-build seconds；never label small samples P95 |
 
 红绿证据、implementation SHA、run URLs、cold/warm 标识与秒数写入 tracking 后才能关闭 findings。
 
