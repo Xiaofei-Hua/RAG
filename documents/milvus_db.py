@@ -115,9 +115,25 @@ class MilvusConfig:
     # returned only text/source/title and the rich chunk metadata was lost.
     extra_output_fields: tuple = (
         "page",
+        "chunk_id",
         "content_type",
         "file_hash",
         "parent_id",
+        "title_path",
+        "display_text",
+        "index_text",
+        "contextual_index_version",
+        "revision",
+        "effective_date",
+        "status",
+        "authority",
+        "document_family",
+    )
+
+    # Contextual index changes vector/sparse contents and therefore must be used
+    # only with a new collection. Dynamic fields keep legacy schemas readable.
+    contextual_index: bool = field(
+        default_factory=lambda: _env_bool("CONTEXTUAL_INDEX_ENABLED", False)
     )
 
     # Native sparse vector (docs/specs/retrieval-backend-modernization, F-02).
@@ -582,11 +598,24 @@ class MilvusManager:
                 # _late_chunk_dense vector (from markdown_parser), use it instead
                 # of re-embedding — it carries global section context. Sparse is
                 # still computed per-chunk (F-05: lexical BoW needs per-doc TF).
-                texts = [doc.page_content for doc in batch]
+                if self.config.contextual_index:
+                    from core.retrieval.contextual_text import contextualize_document
+
+                    indexed_batch = [contextualize_document(doc) for doc in batch]
+                else:
+                    indexed_batch = batch
+                texts = [
+                    doc.metadata.get("index_text", doc.page_content)
+                    if isinstance(doc.metadata.get("index_text", doc.page_content), str)
+                    else doc.page_content
+                    for doc in indexed_batch
+                ]
                 sparse_vecs: list[dict[int, float]] | None = None
                 emb_fn = self.embedding_function
-                late_dense = [doc.metadata.get("_late_chunk_dense") for doc in batch]
-                has_late = any(v is not None for v in late_dense)
+                late_dense = [doc.metadata.get("_late_chunk_dense") for doc in indexed_batch]
+                has_late = (not self.config.contextual_index) and any(
+                    v is not None for v in late_dense
+                )
 
                 if self.config.enable_sparse and hasattr(emb_fn, "encode_hybrid_batch"):
                     hybrid = emb_fn.encode_hybrid_batch(texts)
@@ -612,9 +641,11 @@ class MilvusManager:
 
                 # Prepare data for insertion
                 data = []
-                for idx, (doc, emb) in enumerate(zip(batch, embeddings)):
+                for idx, (doc, emb) in enumerate(zip(indexed_batch, embeddings)):
                     row = {
-                        "text": doc.page_content[: self.config.max_text_length],
+                        "text": str(doc.metadata.get("display_text", doc.page_content))[
+                            : self.config.max_text_length
+                        ],
                         "dense": emb,
                         "source": doc.metadata.get("source", "")[: self.config.max_metadata_length],
                         "title": doc.metadata.get("title", "")[: self.config.max_metadata_length],
@@ -674,29 +705,26 @@ class MilvusManager:
         Memory-efficient search with explicit cleanup.
         """
         log.debug(f"Searching: '{query[:50]}...' (top_k={top_k})")
+        self._ensure_collection_loaded()
+        self._assert_collection_compatible()
+        query_embedding = self.embedding_function.embed_query(query)
+        return self.search_by_vector(query_embedding, top_k=top_k, filter_expr=filter_expr)
 
+    @retry_on_failure()
+    def search_by_vector(
+        self,
+        query_embedding: list[float],
+        top_k: int = 10,
+        filter_expr: str | None = None,
+    ) -> list[SearchResult]:
+        """Dense search using a request-local precomputed query vector."""
         try:
             self._ensure_collection_loaded()
-
             self._assert_collection_compatible()
-
-            # Generate query embedding
-            query_embedding = self.embedding_function.embed_query(query)
-
-            # Build search params. AUTOINDEX auto-tunes; for HNSW/IVF we merge
-            # configured ef/nprobe (from MILVUS_SEARCH_PARAMS) with metric.
             search_params = {"metric_type": "IP"}
             if self.config.search_params:
                 search_params.update(self.config.search_params)
-
-            # Request the base fields plus any known dynamic metadata fields so
-            # the rich chunk metadata (page, content_type, ...) is returned.
-            # Missing dynamic fields are tolerated: a field absent from a hit's
-            # entity simply defaults to "" below.
-            output_fields = ["text", "source", "title"] + [
-                f for f in self.config.extra_output_fields
-            ]
-
+            output_fields = ["text", "source", "title", *self.config.extra_output_fields]
             try:
                 results = self.client.search(
                     collection_name=self.config.collection_name,
@@ -708,12 +736,8 @@ class MilvusManager:
                     filter=filter_expr,
                 )
             except Exception as field_err:
-                # Some Milvus versions reject output_fields that were never
-                # created (e.g. a legacy collection without 'page'). Fall back
-                # to the base fields only.
                 log.debug(
-                    f"search with extra output_fields failed ({field_err}); "
-                    f"retrying with base fields"
+                    f"search with extra output_fields failed ({field_err}); retrying with base fields"
                 )
                 results = self.client.search(
                     collection_name=self.config.collection_name,
@@ -724,37 +748,43 @@ class MilvusManager:
                     output_fields=["text", "source", "title"],
                     filter=filter_expr,
                 )
+            search_results = self._convert_search_results(results)
+            log.debug(f"Found {len(search_results)} results")
+            return search_results
+        except Exception as e:
+            log.error(f"Vector search failed: {e}")
+            raise MilvusOperationError(f"Vector search failed: {e}") from e
 
-            # Clean up embedding
-            del query_embedding
-
-            # Convert results
-            search_results = []
-            if results and len(results) > 0:
-                for hit in results[0]:
-                    entity = hit.get("entity", {})
-                    metadata = {
-                        "source": entity.get("source", ""),
-                        "title": entity.get("title", ""),
-                    }
-                    # Surface extra dynamic fields when present.
-                    for fld in self.config.extra_output_fields:
-                        if fld in entity and entity[fld] not in (None, ""):
-                            metadata[fld] = entity[fld]
-                    result = SearchResult(
+    def _convert_search_results(self, results: Any) -> list[SearchResult]:
+        search_results = []
+        if results and len(results) > 0:
+            ordered_hits = sorted(
+                results[0],
+                key=lambda hit: (
+                    -float(hit.get("distance", 0.0)),
+                    str((hit.get("entity", {}) or {}).get("chunk_id", "")),
+                    str(hit.get("id", "")),
+                ),
+            )
+            for hit in ordered_hits:
+                entity = hit.get("entity", {})
+                metadata = {
+                    "source": entity.get("source", ""),
+                    "title": entity.get("title", ""),
+                }
+                for field_name in self.config.extra_output_fields:
+                    if field_name in entity and entity[field_name] not in (None, ""):
+                        metadata[field_name] = entity[field_name]
+                display_text = entity.get("display_text") or entity.get("text", "")
+                search_results.append(
+                    SearchResult(
                         id=hit.get("id", 0),
-                        text=entity.get("text", ""),
+                        text=display_text,
                         score=hit.get("distance", 0.0),
                         metadata=metadata,
                     )
-                    search_results.append(result)
-
-            log.debug(f"Found {len(search_results)} results")
-            return search_results
-
-        except Exception as e:
-            log.error(f"Search failed: {e}")
-            raise MilvusOperationError(f"Search failed: {e}") from e
+                )
+        return search_results
 
     def sparse_search(
         self,
@@ -803,25 +833,7 @@ class MilvusManager:
                     filter=filter_expr,
                 )
 
-            search_results = []
-            if results and len(results) > 0:
-                for hit in results[0]:
-                    entity = hit.get("entity", {})
-                    metadata = {
-                        "source": entity.get("source", ""),
-                        "title": entity.get("title", ""),
-                    }
-                    for fld in self.config.extra_output_fields:
-                        if fld in entity and entity[fld] not in (None, ""):
-                            metadata[fld] = entity[fld]
-                    search_results.append(
-                        SearchResult(
-                            id=hit.get("id", 0),
-                            text=entity.get("text", ""),
-                            score=hit.get("distance", 0.0),
-                            metadata=metadata,
-                        )
-                    )
+            search_results = self._convert_search_results(results)
             log.debug(f"Sparse search found {len(search_results)} results")
             return search_results
         except Exception as e:

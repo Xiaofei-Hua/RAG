@@ -128,6 +128,9 @@ class GenerateSkill(BaseSkill):
         log.info("GenerateSkill: generating final answer")
 
         question = self._extract_question(messages)
+        workflow_terminal = self._workflow_terminal_result(context)
+        if workflow_terminal is not None:
+            return workflow_terminal
         prepared = self._prepare_retrieval_evidence(context, question)
         ctx = prepared["context"]
 
@@ -395,6 +398,38 @@ class GenerateSkill(BaseSkill):
                         sources.append(str(src))
         return sources
 
+    @staticmethod
+    def _workflow_terminal_result(context: SkillContext) -> SkillResult | None:
+        shared_state = getattr(context, "shared_state", {}) or {}
+        diagnostics = shared_state.get("retrieval_diagnostics")
+        if not isinstance(diagnostics, dict) or diagnostics.get("should_generate") is not False:
+            return None
+        state = str(diagnostics.get("state", "empty"))
+        if state == "conflict":
+            content = "检索到的资料存在无法自动消解的版本冲突，请指定适用版本或权威来源后重试。"
+        elif state == "weak":
+            gaps = diagnostics.get("uncovered_facets")
+            suffix = f"（缺少：{'、'.join(gaps)}）" if isinstance(gaps, list) and gaps else ""
+            content = f"现有资料不足以可靠回答该问题，请补充更具体的范围或相关文档。{suffix}"
+        else:
+            content = REFUSAL_MESSAGE
+        return SkillResult(
+            status=SkillStatus.PARTIAL,
+            messages=[
+                AIMessage(
+                    content=content,
+                    additional_kwargs={
+                        "confidence": 0.0,
+                        "refused": True,
+                        "retrieval_state": state,
+                    },
+                )
+            ],
+            next_action=None,
+            state_updates={"shared_state": _cleared_generation_state()},
+            metadata={"confidence": 0.0, "refused": True, "retrieval_state": state},
+        )
+
     def _prepare_retrieval_evidence(self, context: SkillContext, question: str) -> dict[str, Any]:
         from core.context.token_budget import estimate_tokens
         from core.retrieval.evidence import normalize_evidence_list, prepare_evidence
@@ -459,6 +494,9 @@ class GenerateSkill(BaseSkill):
         shared_state.update(_cleared_generation_state())
 
         question = self._extract_question(messages)
+        workflow_terminal = self._workflow_terminal_result(context)
+        if workflow_terminal is not None:
+            return workflow_terminal
         prepared = self._prepare_retrieval_evidence(context, question)
         ctx = prepared["context"]
 

@@ -123,10 +123,13 @@ def _get_local_embeddings() -> Any:
 
     if settings.is_bge_m3:
         # BGE-M3: use the dedicated adapter (FlagModel + AutoModel, dense+sparse).
-        from models.bge_m3_embeddings import BGEM3Embeddings
+        from models.bge_m3_embeddings import (
+            BGEM3Embeddings,
+            set_bge_m3_embeddings_instance,
+        )
 
         log.info(f"Creating BGE-M3 embedding model: source={model_source}")
-        return BGEM3Embeddings(model_path=model_source)
+        return set_bge_m3_embeddings_instance(BGEM3Embeddings(model_path=model_source))
 
     from langchain_huggingface import HuggingFaceEmbeddings
 
@@ -184,10 +187,17 @@ def get_local_embeddings() -> Any:
     return get_embeddings()
 
 
-def reset_embeddings() -> None:
+def reset_embeddings(*, reset_bge: bool = True) -> None:
     """Reset the singleton so changed configuration can be applied in tests."""
     global _instance
     _instance = None
+    if reset_bge:
+        try:
+            from models.bge_m3_embeddings import reset_bge_m3_embeddings
+
+            reset_bge_m3_embeddings(reset_outer=False)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

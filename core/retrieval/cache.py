@@ -22,6 +22,7 @@ existing callers get caching for free.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import threading
 from collections import OrderedDict
@@ -33,9 +34,11 @@ __all__ = [
     "LRUCache",
     "cached_embedding_function",
     "cache_key",
+    "embedding_fingerprint",
     "get_retrieval_cache",
     "get_retrieval_cache_version",
     "bump_retrieval_cache_version",
+    "reset_embedding_cache",
 ]
 
 
@@ -133,8 +136,58 @@ def bump_retrieval_cache_version() -> None:
 
 def cache_key(*parts: Any) -> str:
     """Build a stable cache key from arbitrary parts."""
-    raw = "|".join(str(p) for p in parts)
+    namespace = os.getenv("RETRIEVAL_CACHE_NAMESPACE", "default")
+    raw = "|".join([namespace, *(str(p) for p in parts)])
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()
+
+
+def embedding_fingerprint(base: Any) -> str:
+    """Stable non-secret identity for query-vector cache namespacing."""
+    target = getattr(base, "base", base)
+    config = getattr(target, "config", None)
+    values = {
+        "class": f"{type(target).__module__}.{type(target).__qualname__}",
+        "model": _known_attr(target, config, "model_path", "model_name", "model", "model_id"),
+        "revision": _known_attr(target, config, "revision", "model_revision"),
+        "dimension": _known_attr(target, config, "dimension", "dense_dim", "embedding_dimension"),
+        "normalize": _known_attr(
+            target,
+            config,
+            "normalize_embeddings",
+            "normalize",
+            "embedding_normalize",
+        ),
+        "query_prefix": _known_attr(
+            target,
+            config,
+            "query_instruction",
+            "query_prefix",
+            "prompt_name",
+        ),
+    }
+    raw = json.dumps(values, ensure_ascii=True, sort_keys=True, default=str)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:24]
+
+
+def _known_attr(target: Any, config: Any, *names: str) -> Any:
+    for owner in (target, config):
+        if owner is None:
+            continue
+        for name in names:
+            value = getattr(owner, name, None)
+            if value not in (None, ""):
+                return value
+    encode_kwargs = getattr(target, "encode_kwargs", None)
+    if isinstance(encode_kwargs, dict):
+        for name in names:
+            if name in encode_kwargs:
+                return encode_kwargs[name]
+    return None
+
+
+def reset_embedding_cache() -> None:
+    """Clear only query-vector entries (tests/provider reconfiguration)."""
+    _embedding_cache.clear()
 
 
 class CachedEmbeddingFunction:
@@ -148,9 +201,10 @@ class CachedEmbeddingFunction:
 
     def __init__(self, base):
         self._base = base
+        self._fingerprint = embedding_fingerprint(base)
 
     def embed_query(self, text: str):
-        key = cache_key(text)
+        key = cache_key(self._fingerprint, text)
         cached = _embedding_cache.get(key)
         if cached is not None:
             return cached

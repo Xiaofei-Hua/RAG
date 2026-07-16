@@ -85,6 +85,7 @@ class RetrieveSkill(BaseSkill):
         self._skill_config = config or RetrieveSkillConfig()
         self._mcp_client = mcp_client
         self._retriever = None
+        self._workflow = None
 
     @property
     def retriever(self):
@@ -94,6 +95,14 @@ class RetrieveSkill(BaseSkill):
 
             self._retriever = get_hybrid_retriever()
         return self._retriever
+
+    @property
+    def workflow(self):
+        if self._workflow is None:
+            from core.retrieval.workflow import RetrievalWorkflow
+
+            self._workflow = RetrievalWorkflow(retriever=self.retriever)
+        return self._workflow
 
     def execute(self, context: SkillContext) -> SkillResult:
         """
@@ -119,8 +128,19 @@ class RetrieveSkill(BaseSkill):
 
             # Retrieve documents (optional metadata filter + transform from shared_state)
             filter_expr = self._extract_filter(context)
-            transform = self._decide_transform(context, query)
-            documents = self._retrieve(query, filter_expr=filter_expr, transform=transform)
+            from core.retrieval.workflow import retrieval_workflow_enabled
+
+            workflow_result = None
+            if retrieval_workflow_enabled():
+                workflow_result = self.workflow.retrieve(
+                    query,
+                    filter_expr=filter_expr,
+                    final_k=self._skill_config.top_k,
+                )
+                documents = workflow_result.documents
+            else:
+                transform = self._decide_transform(context, query)
+                documents = self._retrieve(query, filter_expr=filter_expr, transform=transform)
             documents = self._maybe_expand_parents(context, documents)
             documents = self._inject_memories(context, documents)
             # Bug2 Layer ④: drop docs below the rerank relevance floor (cuts
@@ -141,7 +161,10 @@ class RetrieveSkill(BaseSkill):
             # Publish mean retrieval relevance + per-doc scores into shared_state
             # so the generate node's composite confidence can consume them
             # cross-node (previously this write was lost between nodes).
-            shared_updates = self._retrieval_shared_updates(documents)
+            shared_updates = self._retrieval_shared_updates(
+                documents,
+                workflow_result.diagnostics if workflow_result is not None else None,
+            )
             context.shared_state.update(shared_updates)
 
             return SkillResult(
@@ -153,6 +176,11 @@ class RetrieveSkill(BaseSkill):
                     "doc_count": len(documents),
                     "query": query,
                     "retrieval_time_ms": elapsed,
+                    **(
+                        {"retrieval_diagnostics": workflow_result.diagnostics}
+                        if workflow_result is not None
+                        else {}
+                    ),
                 },
             )
 
@@ -192,7 +220,11 @@ class RetrieveSkill(BaseSkill):
             # Try MCP client first
             filter_expr = self._extract_filter(context)
             transform = self._decide_transform(context, query)
-            if self._mcp_client is not None:
+            from core.retrieval.workflow import retrieval_workflow_enabled
+
+            workflow_result = None
+            workflow_diagnostics = None
+            if retrieval_workflow_enabled() and self._mcp_client is not None:
                 try:
                     raw_results = await self._mcp_client.call_tool(
                         "rag_retrieve",
@@ -202,6 +234,35 @@ class RetrieveSkill(BaseSkill):
                             # Forward filtering + query transform so the MCP
                             # path matches the direct-retrieval path. Previously
                             # these were dropped, causing a correctness divergence.
+                            "filter_expr": filter_expr,
+                            "transform": transform,
+                        },
+                    )
+                    documents, workflow_diagnostics = self._raw_workflow_documents(raw_results)
+                except Exception as e:
+                    log.warning(f"MCP retrieval failed, falling back to direct: {e}")
+                    workflow_result = await self.workflow.aretrieve(
+                        query,
+                        filter_expr=filter_expr,
+                        final_k=self._skill_config.top_k,
+                    )
+                    documents = workflow_result.documents
+                    workflow_diagnostics = workflow_result.diagnostics
+            elif retrieval_workflow_enabled():
+                workflow_result = await self.workflow.aretrieve(
+                    query,
+                    filter_expr=filter_expr,
+                    final_k=self._skill_config.top_k,
+                )
+                documents = workflow_result.documents
+                workflow_diagnostics = workflow_result.diagnostics
+            elif self._mcp_client is not None:
+                try:
+                    raw_results = await self._mcp_client.call_tool(
+                        "rag_retrieve",
+                        {
+                            "query": query,
+                            "top_k": self._skill_config.top_k,
                             "filter_expr": filter_expr,
                             "transform": transform,
                         },
@@ -230,7 +291,7 @@ class RetrieveSkill(BaseSkill):
 
             # Publish mean retrieval relevance into shared_state (parity with
             # the sync path) for cross-node composite confidence.
-            shared_updates = self._retrieval_shared_updates(documents)
+            shared_updates = self._retrieval_shared_updates(documents, workflow_diagnostics)
             context.shared_state.update(shared_updates)
 
             return SkillResult(
@@ -242,6 +303,11 @@ class RetrieveSkill(BaseSkill):
                     "doc_count": len(documents),
                     "query": query,
                     "retrieval_time_ms": elapsed,
+                    **(
+                        {"retrieval_diagnostics": workflow_diagnostics}
+                        if workflow_diagnostics is not None
+                        else {}
+                    ),
                 },
             )
 
@@ -280,10 +346,14 @@ class RetrieveSkill(BaseSkill):
             return None
         return sum(scores) / len(scores)
 
-    def _retrieval_shared_updates(self, documents: list[Document]) -> dict[str, Any]:
+    def _retrieval_shared_updates(
+        self,
+        documents: list[Document],
+        diagnostics: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         from core.retrieval.evidence import documents_to_evidence
 
-        return {
+        updates = {
             "retrieval_evidence": documents_to_evidence(documents),
             "retrieval_relevance": self._mean_relevance(documents),
             "relevance_scores": [],
@@ -291,6 +361,9 @@ class RetrieveSkill(BaseSkill):
             "sources": [],
             "max_rerank_prob": self._compute_max_rerank_prob(documents),
         }
+        if diagnostics is not None:
+            updates["retrieval_diagnostics"] = diagnostics
+        return updates
 
     def _maybe_score_per_doc(
         self, query: str, documents: list[Document], context: SkillContext
@@ -721,6 +794,17 @@ class RetrieveSkill(BaseSkill):
             elif isinstance(item, Document):
                 documents.append(item)
         return documents
+
+    @classmethod
+    def _raw_workflow_documents(
+        cls,
+        raw_results: Any,
+    ) -> tuple[list[Document], dict[str, Any] | None]:
+        if isinstance(raw_results, dict):
+            documents = cls._raw_to_documents(raw_results.get("documents", []))
+            diagnostics = raw_results.get("diagnostics")
+            return documents, diagnostics if isinstance(diagnostics, dict) else None
+        return cls._raw_to_documents(raw_results if isinstance(raw_results, list) else []), None
 
     def health_check(self) -> dict[str, Any]:
         """Check if retriever is healthy."""

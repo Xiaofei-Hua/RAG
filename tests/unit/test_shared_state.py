@@ -567,6 +567,8 @@ class TestRetrieveSkillPublishesRelevance:
         from agent.skills.base import SkillContext
         from agent.skills.retrieve.skill import RetrieveSkill
 
+        monkeypatch.setenv("RETRIEVAL_WORKFLOW_ENABLED", "false")
+
         context = SkillContext(
             messages=[HumanMessage(content="new question")],
             shared_state={
@@ -600,6 +602,8 @@ class TestRetrieveSkillPublishesRelevance:
 
         from agent.skills.base import SkillContext
         from agent.skills.retrieve.skill import RetrieveSkill
+
+        monkeypatch.setenv("RETRIEVAL_WORKFLOW_ENABLED", "false")
 
         context = SkillContext(
             messages=[HumanMessage(content="new question")],

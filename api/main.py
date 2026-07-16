@@ -136,6 +136,13 @@ async def lifespan(app: FastAPI):
 
     await get_agent_harness().aclose()
 
+    try:
+        from core.retrieval.workflow import reset_retrieval_workflow
+
+        reset_retrieval_workflow()
+    except Exception as e:
+        log.debug(f"Retrieval workflow close skipped: {e}")
+
     # Release the hybrid retriever's parallel-retrieval thread pool (F11 —
     # previously a class-level executor with no closer, leaking for the process
     # lifetime; it is now instance-scoped and shut down here).
@@ -195,6 +202,18 @@ async def lifespan(app: FastAPI):
         reset_embedding_registry()
     except Exception as e:  # noqa: BLE001
         log.debug(f"Embedding registry close skipped: {e}")
+    try:
+        from core.retrieval.raptor_store import reset_raptor_store
+
+        reset_raptor_store()
+    except Exception as e:
+        log.debug(f"RAPTOR store close skipped: {e}")
+    try:
+        from core.retrieval.visual_retriever import reset_visual_retriever
+
+        reset_visual_retriever()
+    except Exception as e:
+        log.debug(f"Visual retriever close skipped: {e}")
 
     log.info("Shutdown complete")
 

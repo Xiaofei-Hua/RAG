@@ -315,8 +315,9 @@ class MarkdownParser:
     ) -> None:
         self.cfg = config
         self.log = logger
-        # Use local BGE embeddings by default (no remote API dependency)
-        self._embeddings = embeddings or _get_local_embeddings()
+        # Small documents never enter semantic splitting, so defer the embedding
+        # dependency until a large document actually needs it.
+        self._embeddings = embeddings
         self._loader_cls = loader_cls
         self._splitter_cls = splitter_cls
 
@@ -330,6 +331,7 @@ class MarkdownParser:
 
         # Lazy init: SemanticChunker construction can trigger spaCy downloads
         self._semantic_splitter: Any | None = None
+        self._semantic_splitter_attempted = False
 
         self._fallback_splitter: Any | None = None  # lazy init
         self.last_stats: ParserStats = ParserStats()
@@ -339,8 +341,11 @@ class MarkdownParser:
     @property
     def semantic_splitter(self):
         """Get semantic splitter (lazy initialization to defer spaCy download)."""
-        if self._semantic_splitter is None:
+        if not self._semantic_splitter_attempted:
+            self._semantic_splitter_attempted = True
             try:
+                if self._embeddings is None:
+                    self._embeddings = _get_local_embeddings()
                 self._semantic_splitter = self._splitter_cls(
                     self._embeddings,
                     breakpoint_threshold_type=self.cfg.semantic_breakpoint_threshold_type,

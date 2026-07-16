@@ -51,8 +51,10 @@ __all__ = [
 
 # Module-level path so tests/conftest.py can redirect it to tmp_path
 # (AGENTS.md §6/§10 persistence contract).
-DEFAULT_DB_PATH = "./data/graph_store.db"
-DEFAULT_V1_BACKUP_PATH = "./data/graph_store_v1_backup.db"
+DEFAULT_DB_PATH = os.getenv("GRAPH_STORE_DB_PATH", "./data/graph_store.db")
+DEFAULT_V1_BACKUP_PATH = os.getenv(
+    "GRAPH_STORE_BACKUP_PATH", "./data/graph_store_v1_backup.db"
+)
 
 # F-03: cap LLM-generated descriptions so an injected payload cannot smuggle a
 # long instruction into the store. The retrieval context returns original chunk
@@ -591,7 +593,11 @@ class GraphStore:
             row = cur.fetchone()
             return row["value"] if row else None
 
-    def neighbors(self, entity_ids: list[str]) -> list[tuple[str, str, float]]:
+    def neighbors(
+        self,
+        entity_ids: list[str],
+        allowed_sources: set[str] | frozenset[str] | None = None,
+    ) -> list[tuple[str, str, float]]:
         """1-hop adjacency: ``(neighbor_id, relation_type, weight)`` per seed.
 
         Used by the high-level retrieval leg (F-08). Returns de-duplicated
@@ -602,17 +608,25 @@ class GraphStore:
         if not entity_ids:
             return []
         placeholders = ",".join("?" for _ in entity_ids)
+        source_clause = ""
+        source_params: tuple[str, ...] = ()
+        if allowed_sources is not None:
+            if not allowed_sources:
+                return []
+            source_placeholders = ",".join("?" for _ in allowed_sources)
+            source_clause = f" AND source IN ({source_placeholders})"
+            source_params = tuple(sorted(allowed_sources))
         out: dict[str, tuple[str, float]] = {}
         with self._lock:
             cur = self._conn.execute(
                 f"""
                 SELECT tgt_entity AS nb, relation_type, weight
-                FROM relations WHERE src_entity IN ({placeholders})
+                FROM relations WHERE src_entity IN ({placeholders}){source_clause}
                 UNION ALL
                 SELECT src_entity AS nb, relation_type, weight
-                FROM relations WHERE tgt_entity IN ({placeholders})
+                FROM relations WHERE tgt_entity IN ({placeholders}){source_clause}
                 """,
-                (*entity_ids, *entity_ids),
+                (*entity_ids, *source_params, *entity_ids, *source_params),
             )
             for r in cur.fetchall():
                 nb = r["nb"]
@@ -621,7 +635,44 @@ class GraphStore:
                     out[nb] = (r["relation_type"], w)
         return [(nb, rt, w) for nb, (rt, w) in out.items()]
 
-    def chunks_for_entity(self, entity_id: str) -> list[tuple[str, str, str]]:
+    def source_graph(
+        self,
+        allowed_sources: set[str] | frozenset[str] | None = None,
+    ) -> dict[str, dict[str, float]]:
+        """Load a source-filtered weighted adjacency snapshot for bounded PPR."""
+        with self._lock:
+            if allowed_sources is not None and not allowed_sources:
+                return {}
+            params: tuple[str, ...] = ()
+            source_clause = ""
+            if allowed_sources is not None:
+                placeholders = ",".join("?" for _ in allowed_sources)
+                source_clause = f" WHERE source IN ({placeholders})"
+                params = tuple(sorted(allowed_sources))
+            entity_rows = self._conn.execute(
+                f"SELECT DISTINCT id FROM entities{source_clause}",
+                params,
+            ).fetchall()
+            adjacency: dict[str, dict[str, float]] = {row["id"]: {} for row in entity_rows}
+            relation_rows = self._conn.execute(
+                f"SELECT src_entity, tgt_entity, weight FROM relations{source_clause}",
+                params,
+            ).fetchall()
+            for row in relation_rows:
+                source = row["src_entity"]
+                target = row["tgt_entity"]
+                if source not in adjacency or target not in adjacency:
+                    continue
+                weight = max(0.0, float(row["weight"] or 1.0))
+                adjacency[source][target] = max(adjacency[source].get(target, 0.0), weight)
+                adjacency[target][source] = max(adjacency[target].get(source, 0.0), weight)
+        return adjacency
+
+    def chunks_for_entity(
+        self,
+        entity_id: str,
+        allowed_sources: set[str] | frozenset[str] | None = None,
+    ) -> list[tuple[str, str, str]]:
         """All ``(source, chunk_text, parent_id)`` rows for an entity id.
 
         A concept surfaced across manuals yields one row per source so the
@@ -630,10 +681,20 @@ class GraphStore:
         """
         out: list[tuple[str, str, str]] = []
         with self._lock:
-            cur = self._conn.execute(
-                "SELECT source, chunk_text, parent_id FROM entity_chunks WHERE entity_id = ?",
-                (entity_id,),
-            )
+            if allowed_sources is None:
+                cur = self._conn.execute(
+                    "SELECT source, chunk_text, parent_id FROM entity_chunks WHERE entity_id = ?",
+                    (entity_id,),
+                )
+            elif allowed_sources:
+                placeholders = ",".join("?" for _ in allowed_sources)
+                cur = self._conn.execute(
+                    "SELECT source, chunk_text, parent_id FROM entity_chunks "
+                    f"WHERE entity_id = ? AND source IN ({placeholders})",
+                    (entity_id, *sorted(allowed_sources)),
+                )
+            else:
+                return []
             for r in cur.fetchall():
                 out.append((r["source"], r["chunk_text"] or "", r["parent_id"] or ""))
         return out

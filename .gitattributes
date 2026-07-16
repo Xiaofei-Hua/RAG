@@ -16,3 +16,5 @@
 
 # Preserve this tracked CRLF file and let whitespace checks accept CR-at-EOL.
 api/main.py whitespace=cr-at-eol
+core/retrieval/bm25_retriever.py whitespace=cr-at-eol
+core/retrieval/hybrid_retriever.py whitespace=cr-at-eol

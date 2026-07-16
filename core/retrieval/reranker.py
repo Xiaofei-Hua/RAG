@@ -183,7 +183,15 @@ class Reranker:
             return self._fallback_documents(documents, top_k, self._load_error)
 
         try:
-            pairs = [(query, doc.page_content) for doc in documents]
+            pairs = [
+                (
+                    query,
+                    doc.metadata.get("index_text", doc.page_content)
+                    if isinstance(doc.metadata.get("index_text", doc.page_content), str)
+                    else doc.page_content,
+                )
+                for doc in documents
+            ]
             scores = self._model.predict(
                 pairs,
                 batch_size=self.config.batch_size,

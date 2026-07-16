@@ -113,6 +113,9 @@ class GraphRetriever:
         query: str,
         top_k: int = 5,
         filter_expr: str | None = None,
+        query_dense: list[float] | np.ndarray | None = None,
+        use_ppr: bool = False,
+        facets: tuple[str, ...] = (),
     ) -> list:
         """Run dual-level retrieval; return ``list[RetrievalResult]``.
 
@@ -121,24 +124,124 @@ class GraphRetriever:
         matching source(s) (F-01).
         """
         try:
+            from core.retrieval.filter_scope import FilterCapability, FilterScope
+
+            scope = FilterScope.parse(filter_expr)
+            if not scope.supports(FilterCapability.SOURCE_SET):
+                self._degraded = True
+                return []
+            allowed_sources = set(scope.sources) if scope.sources else None
             self._ensure_loaded()
+            if use_ppr:
+                return self._ppr_results(
+                    query,
+                    top_k,
+                    allowed_sources,
+                    query_dense=query_dense,
+                    facets=facets,
+                )
             if self._matrix is None or len(self._entity_ids) == 0:
                 return []  # empty graph is a valid, non-degraded empty result
 
-            q_emb = np.asarray(self.embedding.embed_query(query), dtype=np.float32)
-            low_docs = self._low_level(q_emb, top_k)
-            high_docs = self._high_level(query, q_emb, top_k)
+            q_emb = np.asarray(
+                query_dense if query_dense is not None else self.embedding.embed_query(query),
+                dtype=np.float32,
+            )
+            low_docs = self._low_level(q_emb, top_k, allowed_sources)
+            high_docs = self._high_level(query, q_emb, top_k, allowed_sources)
             fused = self._fuse_low_high(low_docs, high_docs, top_k)
-
-            if filter_expr:
-                allowed = _parse_filter_sources(filter_expr)
-                if allowed is not None:
-                    fused = [d for d in fused if d.metadata.get("source") in allowed]
             return self._to_results(fused)
         except Exception as exc:  # noqa: BLE001 — degrade, never raise
             log.warning(f"graph retrieve degraded: {exc}")
             self._degraded = True
             return []
+
+    def _ppr_results(
+        self,
+        query: str,
+        top_k: int,
+        allowed_sources: set[str] | None,
+        *,
+        query_dense: list[float] | np.ndarray | None,
+        facets: tuple[str, ...],
+    ) -> list:
+        from core.retrieval.graph_ppr import bounded_shortest_paths, personalized_pagerank
+
+        adjacency = self.store.source_graph(allowed_sources=allowed_sources)
+        if not adjacency:
+            return []
+        scoped_ids = sorted(adjacency)
+        seeds = self._keyword_seeds(query, scoped_ids)
+        for facet in facets:
+            seeds |= self._keyword_seeds(facet, scoped_ids)
+        matrix, ids, sources = self._matrix_snapshot()
+        if matrix is not None and query_dense is not None:
+            indices = [
+                index
+                for index, entity_id in enumerate(ids)
+                if entity_id in adjacency
+                and (allowed_sources is None or sources[index] in allowed_sources)
+            ]
+            if indices:
+                scoped_matrix = matrix[indices]
+                semantic_ids = [ids[index] for index in indices]
+                seeds |= self._semantic_seeds(
+                    np.asarray(query_dense, dtype=np.float32),
+                    semantic_ids,
+                    scoped_matrix,
+                    min(top_k, 3),
+                )
+        seeds &= set(adjacency)
+        if not seeds:
+            return []
+        ppr = personalized_pagerank(
+            adjacency,
+            seeds,
+            max_iterations=100,
+            tolerance=1e-6,
+            max_nodes=5000,
+        )
+        paths = bounded_shortest_paths(
+            adjacency,
+            seeds,
+            max_depth=3,
+            max_paths=max(2, top_k),
+        )
+        path_for: dict[str, list[str]] = {}
+        for path in paths:
+            for entity_id in path:
+                path_for.setdefault(entity_id, path)
+        ordered = sorted(ppr.scores.items(), key=lambda item: (-item[1], item[0]))
+        documents: list[Document] = []
+        seen: set[tuple[str, str]] = set()
+        for entity_id, score in ordered:
+            for source, text, parent_id in self.store.chunks_for_entity(
+                entity_id,
+                allowed_sources=allowed_sources,
+            ):
+                if not text or (source, text) in seen:
+                    continue
+                seen.add((source, text))
+                documents.append(
+                    Document(
+                        page_content=text,
+                        metadata={
+                            "source": source,
+                            "parent_id": parent_id,
+                            "retrieval_source": "graph",
+                            "graph_mode": "ppr",
+                            "graph_path": path_for.get(entity_id, []),
+                            "entity_id": entity_id,
+                            "ppr_score": score,
+                            "ppr_converged": ppr.converged,
+                            "ppr_iterations": ppr.iterations,
+                            "score": score,
+                        },
+                    )
+                )
+                if len(documents) >= top_k:
+                    return self._to_results(documents)
+        return self._to_results(documents)
 
     def add_documents(self, docs: list[Document]) -> None:
         """Reload the matrix from the store after ingestion writes (F-02 COW)."""
@@ -276,6 +379,7 @@ class GraphRetriever:
         self,
         q_emb: np.ndarray,
         top_k: int,
+        allowed_sources: set[str] | None = None,
     ) -> list[tuple[Document, float]]:
         matrix, ids, _sources = self._matrix_snapshot()
         if matrix is None or not ids:
@@ -284,7 +388,14 @@ class GraphRetriever:
         norms = np.linalg.norm(matrix, axis=1, keepdims=True) + 1e-9
         scores = (matrix / norms) @ q  # cosine (n,)
 
-        order = np.argsort(-scores)[: top_k * 2]
+        candidate_indices = [
+            index
+            for index, source in enumerate(_sources)
+            if allowed_sources is None or source in allowed_sources
+        ]
+        order = sorted(candidate_indices, key=lambda index: float(scores[index]), reverse=True)[
+            : top_k * 2
+        ]
         # Source-scoped chunk lookup (F-01): the same concept across two manuals
         # is two rows with distinct chunks; key by (entity_id, source).
         lookup_keys = [(ids[i], _sources_row(_sources, ids, i)) for i in order]
@@ -319,29 +430,43 @@ class GraphRetriever:
         query: str,
         q_emb: np.ndarray,
         top_k: int,
+        allowed_sources: set[str] | None = None,
     ) -> list[tuple[Document, float]]:
-        matrix, ids, _ = self._matrix_snapshot()
+        matrix, ids, sources = self._matrix_snapshot()
         if matrix is None or not ids:
             return []
 
+        indices = [
+            index
+            for index, source in enumerate(sources)
+            if allowed_sources is None or source in allowed_sources
+        ]
+        if not indices:
+            return []
+        scoped_matrix = matrix[indices]
+        scoped_ids = [ids[index] for index in indices]
+
         # F-08: seed = low-level semantic hits ∪ query-keyword entity-name hits,
         # so an empty low-level still seeds high-level via name matching.
-        seed_ids = self._semantic_seeds(q_emb, ids, matrix, top_k)
-        seed_ids |= self._keyword_seeds(query, ids)
+        seed_ids = self._semantic_seeds(q_emb, scoped_ids, scoped_matrix, top_k)
+        seed_ids |= self._keyword_seeds(query, scoped_ids)
         if not seed_ids:
             return []
 
-        neighbors = self.store.neighbors(list(seed_ids))
+        neighbors = self.store.neighbors(list(seed_ids), allowed_sources=allowed_sources)
         if not neighbors:
             return []
         # Seed score lookup: cosine of each seed.
-        seed_score = self._seed_score_map(q_emb, ids, matrix)
+        seed_score = self._seed_score_map(q_emb, scoped_ids, scoped_matrix)
 
         out: list[tuple[Document, float]] = []
         for nb_id, _rtype, weight in neighbors:
             # Fan out to every source the neighbour appears in — F-01 filtering
             # at the Document level keeps only allowed sources.
-            for src, text, parent_id in self.store.chunks_for_entity(nb_id):
+            for src, text, parent_id in self.store.chunks_for_entity(
+                nb_id,
+                allowed_sources=allowed_sources,
+            ):
                 if not text:
                     continue
                 base = self._best_seed_score(nb_id, neighbors, seed_score)

@@ -41,6 +41,55 @@ class FastModeResult:
     retrieval_count: int
     retrieval_time_ms: float
     generation_time_ms: float
+    retrieval_diagnostics: dict[str, Any] | None = None
+
+
+def _terminal_message(state: str) -> str:
+    if state == "conflict":
+        return "检索到的资料存在无法自动消解的版本冲突，请指定适用版本或权威来源后重试。"
+    if state == "weak":
+        return "现有资料不足以可靠回答该问题，请补充更具体的范围、标识符或相关文档。"
+    from core.prompts.domain_profile import get_active_profile
+
+    return get_active_profile().empty_context_message
+
+
+def _retrieve_sync(query: str, top_k: int, filter_expr: str | None = None):
+    from core.retrieval.workflow import get_retrieval_workflow, retrieval_workflow_enabled
+
+    if retrieval_workflow_enabled():
+        result = get_retrieval_workflow().retrieve(
+            query,
+            final_k=top_k,
+            filter_expr=filter_expr,
+        )
+        return result.documents, result
+    from core.retrieval.hybrid_retriever import get_hybrid_retriever
+
+    return get_hybrid_retriever().retrieve(
+        query,
+        top_k=top_k,
+        filter_expr=filter_expr,
+    ), None
+
+
+async def _retrieve_async(query: str, top_k: int, filter_expr: str | None = None):
+    from core.retrieval.workflow import get_retrieval_workflow, retrieval_workflow_enabled
+
+    if retrieval_workflow_enabled():
+        result = await get_retrieval_workflow().aretrieve(
+            query,
+            final_k=top_k,
+            filter_expr=filter_expr,
+        )
+        return result.documents, result
+    from core.retrieval.hybrid_retriever import get_hybrid_retriever
+
+    return await get_hybrid_retriever().aretrieve(
+        query,
+        top_k=top_k,
+        filter_expr=filter_expr,
+    ), None
 
 
 def _format_context(documents) -> str:
@@ -116,7 +165,12 @@ _stream_prompt = ChatPromptTemplate.from_messages(
 )
 
 
-def fast_generate(query: str, top_k: int = 3) -> FastModeResult:
+def fast_generate(
+    query: str,
+    top_k: int = 3,
+    *,
+    filter_expr: str | None = None,
+) -> FastModeResult:
     """
     Fast mode: direct retrieve + generate (synchronous).
     Uses /no_think to suppress Qwen3 reasoning for lower latency.
@@ -130,13 +184,20 @@ def fast_generate(query: str, top_k: int = 3) -> FastModeResult:
     """
     # --- Retrieve ---
     t0 = time.perf_counter()
-    from core.retrieval.hybrid_retriever import get_hybrid_retriever
-
-    retriever = get_hybrid_retriever()
-    documents = retriever.retrieve(query, top_k=top_k)
+    documents, workflow_result = _retrieve_sync(query, top_k, filter_expr)
     retrieval_ms = (time.perf_counter() - t0) * 1000
 
     log.info(f"Fast mode retrieval: {len(documents)} docs, {retrieval_ms:.0f}ms")
+
+    if workflow_result is not None and not workflow_result.should_generate:
+        return FastModeResult(
+            answer=_terminal_message(workflow_result.state.value),
+            sources=_docs_to_sources(documents),
+            retrieval_count=len(documents),
+            retrieval_time_ms=retrieval_ms,
+            generation_time_ms=0,
+            retrieval_diagnostics=workflow_result.diagnostics,
+        )
 
     if not documents:
         from core.prompts.domain_profile import get_active_profile
@@ -180,10 +241,18 @@ def fast_generate(query: str, top_k: int = 3) -> FastModeResult:
         retrieval_count=len(kept_documents),
         retrieval_time_ms=retrieval_ms,
         generation_time_ms=gen_ms,
+        retrieval_diagnostics=(
+            workflow_result.diagnostics if workflow_result is not None else None
+        ),
     )
 
 
-async def fast_generate_stream(query: str, top_k: int = 3) -> AsyncIterator[dict[str, Any]]:
+async def fast_generate_stream(
+    query: str,
+    top_k: int = 3,
+    *,
+    filter_expr: str | None = None,
+) -> AsyncIterator[dict[str, Any]]:
     """
     Fast mode: direct retrieve + streaming generate.
 
@@ -199,13 +268,22 @@ async def fast_generate_stream(query: str, top_k: int = 3) -> AsyncIterator[dict
     """
     # --- Retrieve ---
     t0 = time.perf_counter()
-    from core.retrieval.hybrid_retriever import get_hybrid_retriever
-
-    retriever = get_hybrid_retriever()
-    documents = await retriever.aretrieve(query, top_k=top_k)
+    documents, workflow_result = await _retrieve_async(query, top_k, filter_expr)
     retrieval_ms = (time.perf_counter() - t0) * 1000
 
     log.info(f"Fast mode retrieval: {len(documents)} docs, {retrieval_ms:.0f}ms")
+
+    if workflow_result is not None and not workflow_result.should_generate:
+        terminal = _terminal_message(workflow_result.state.value)
+        yield {"type": "token", "content": terminal}
+        yield {
+            "type": "done",
+            "full_response": terminal,
+            "sources": _docs_to_sources(documents),
+            "processing_time_ms": retrieval_ms,
+            "retrieval_diagnostics": workflow_result.diagnostics,
+        }
+        return
 
     if not documents:
         from core.prompts.domain_profile import get_active_profile
@@ -259,16 +337,33 @@ async def fast_generate_stream(query: str, top_k: int = 3) -> AsyncIterator[dict
         "full_response": full_response,
         "sources": _docs_to_sources(kept_documents),
         "processing_time_ms": retrieval_ms + gen_ms,
+        **(
+            {"retrieval_diagnostics": workflow_result.diagnostics}
+            if workflow_result is not None
+            else {}
+        ),
     }
 
 
-async def fast_generate_async(query: str, top_k: int = 3) -> FastModeResult:
+async def fast_generate_async(
+    query: str,
+    top_k: int = 3,
+    *,
+    filter_expr: str | None = None,
+) -> FastModeResult:
     """Native async fast mode for non-streaming API calls."""
     t0 = time.perf_counter()
-    from core.retrieval.hybrid_retriever import get_hybrid_retriever
-
-    documents = await get_hybrid_retriever().aretrieve(query, top_k=top_k)
+    documents, workflow_result = await _retrieve_async(query, top_k, filter_expr)
     retrieval_ms = (time.perf_counter() - t0) * 1000
+    if workflow_result is not None and not workflow_result.should_generate:
+        return FastModeResult(
+            answer=_terminal_message(workflow_result.state.value),
+            sources=_docs_to_sources(documents),
+            retrieval_count=len(documents),
+            retrieval_time_ms=retrieval_ms,
+            generation_time_ms=0,
+            retrieval_diagnostics=workflow_result.diagnostics,
+        )
     if not documents:
         from core.prompts.domain_profile import get_active_profile
 
@@ -304,4 +399,7 @@ async def fast_generate_async(query: str, top_k: int = 3) -> FastModeResult:
         retrieval_count=len(kept_documents),
         retrieval_time_ms=retrieval_ms,
         generation_time_ms=generation_ms,
+        retrieval_diagnostics=(
+            workflow_result.diagnostics if workflow_result is not None else None
+        ),
     )

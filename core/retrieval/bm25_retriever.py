@@ -89,7 +89,8 @@ class BM25Retriever:
         with self._lock:
             for doc in documents:
                 self._documents.append(doc)
-                tokens = self._tokenize(doc.page_content)
+                index_text = doc.metadata.get("index_text", doc.page_content)
+                tokens = self._tokenize(index_text if isinstance(index_text, str) else doc.page_content)
                 self._doc_tokens.append(tokens)
                 self._doc_lengths.append(len(tokens))
 
@@ -184,6 +185,7 @@ class BM25Retriever:
         self,
         query: str,
         top_k: int | None = None,
+        allowed_sources: set[str] | frozenset[str] | None = None,
     ) -> list[RetrievalResult]:
         """
         Retrieve documents using BM25 scoring.
@@ -191,6 +193,7 @@ class BM25Retriever:
         Args:
             query: Search query
             top_k: Number of results
+            allowed_sources: Optional source set applied before BM25 scoring.
 
         Returns:
             List of retrieval results
@@ -221,6 +224,10 @@ class BM25Retriever:
         # Calculate BM25 scores for each document
         scores = []
         for doc_idx, tokens in enumerate(doc_tokens):
+            if allowed_sources is not None:
+                source = str(documents[doc_idx].metadata.get("source", ""))
+                if source not in allowed_sources:
+                    continue
             score = self._bm25_score(query_tokens, tokens, doc_idx, doc_lengths, idf, avgdl)
             if score > 0:
                 scores.append((doc_idx, score))

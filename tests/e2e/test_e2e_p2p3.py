@@ -166,15 +166,25 @@ class TestTimeDecayE2E:
 
         from langchain_core.documents import Document
 
-        from core.retrieval.hybrid_retriever import HybridRetriever
+        from core.retrieval.hybrid_retriever import HybridRetriever, HybridRetrieverConfig
 
-        retriever = HybridRetriever.__new__(HybridRetriever)  # bypass init
+        retriever = HybridRetriever(
+            config=HybridRetrieverConfig(
+                enable_dense=False,
+                enable_sparse=False,
+                enable_time_decay=True,
+                enable_parallel=False,
+            )
+        )
         now = time.time()
         docs = [
             Document(page_content="fresh", metadata={"score": 1.0, "created_at": now}),
             Document(page_content="old", metadata={"score": 1.0, "created_at": now - 365 * 86400}),
         ]
-        out = retriever._time_decay(docs)
+        try:
+            out = retriever._time_decay(docs)
+        finally:
+            retriever.close()
         assert len(out) == 2
         # Fresh doc keeps full score; old doc decays.
         fresh = next(d for d in out if "fresh" in d.page_content)

@@ -347,6 +347,17 @@ location /rag/ {
 | `RERANKER_CANDIDATE_TOP_K` | `10` | Dense 与 BM25 各自送入 RRF 的候选数 |
 | `RERANKER_TOP_K` | `5` | 调用方未指定 `top_k` 时的最终默认结果数 |
 | `RERANKER_BATCH_SIZE` | `8` | 重排序批大小 |
+| `RETRIEVAL_WORKFLOW_ENABLED` | `true` | 统一 Fast/Thinking/MCP 的自适应计划、纠正重试与终止语义；设 `false` 回滚旧检索路径 |
+| `RETRIEVAL_CANDIDATE_FUNNEL_ENABLED` | `false` | 独立 candidate/rerank/selection/final 预算实验；控制实验未过质量门禁，默认关闭 |
+| `CONTEXTUAL_INDEX_ENABLED` | `false` | 使用 bounded `index_text` + 原始 `display_text`；只允许在新 collection 上开启 |
+| `COLBERT_RERANK_ENABLED` | `false` | BGE-M3 token MaxSim 重排，OOM/不可用时保留 Cross-Encoder/RRF 顺序 |
+| `RAPTOR_ENABLED` | `false` | 全局摘要层级检索；摘要命中会回溯到原始 chunk，不把摘要当唯一证据 |
+| `RAPTOR_DB_PATH` | `data/raptor.db` | RAPTOR building/ready/retired 代际 SQLite 路径 |
+| `GRAPH_PPR_ENABLED` | `false` | 多跳问题的 bounded Personalized PageRank 与短路径检索 |
+| `COLPALI_ENABLED` | `false` | PDF 全页面视觉定位；模型缺失/OOM 时回退 OCR/文本 |
+| `COLPALI_MODEL_PATH` | `models/local_models/colpali` | 显式离线准备的 ColPali 本地目录；运行时绝不下载 |
+| `VISUAL_INDEX_PATH` | `data/visual_index.db` | 视觉页面 building/ready 代际索引路径 |
+| `RETRIEVAL_CACHE_NAMESPACE` | `default` | 检索与 query-vector 内存缓存命名空间，隔离实验/模型配置 |
 | `OTEL_ENABLED` | `false` | 是否启用 OpenTelemetry tracing |
 | `OTEL_SERVICE_NAME` | `rag-platform` | Trace 中的服务名 |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | 空 | OTLP/HTTP trace 接收地址 |
@@ -423,6 +434,16 @@ uv run --frozen python scripts/migrate_embedding_collection.py \
 不要原地 drop 旧 collection；迁移命令会校验 indexed source 覆盖、写入完整性、目标 schema
 和抽样非零召回，失败时清理不完整目标。使用 `./run.sh` 或 `deploy.sh` 时，脚本会按照当前
 `.env` 下载配置的本地 Embedding 模型。
+
+若要实验 contextual index，必须创建另一个新 collection，并显式加
+`--contextual-index`；不要原地改写当前 collection：
+
+```bash
+uv run --frozen python scripts/migrate_embedding_collection.py \
+  --target-collection rag_knowledge_base_context_v1 \
+  --contextual-index \
+  --sample-query "用于抽样验证的知识库问题"
+```
 
 ### API-only 部署（DashScope，零 torch）
 
@@ -627,17 +648,39 @@ uv run --frozen python scripts/run_benchmark.py \
   --top-k 4 --repeats 3 --update-baseline
 ```
 
-2026-07-16 在隔离 Milvus/registry、local BGE-M3/1024、native sparse、reranker 开启、
-GraphRAG 关闭的固定配置下实测：
+2026-07-16 使用独立进程/库/collection/registry/cache 的 AB 与 BA 配对实验：
 
-| 数据集 | cases × runs | Hit median/worst | Precision median/worst | Recall median/worst | Warm P50/P95 |
-|--------|--------------|------------------|------------------------|---------------------|--------------|
-| builtin general | 8 × 3 | 100% / 100% | 0.250 / 0.250 | 1.000 / 1.000 | 74.5 / 98.7 ms |
-| CMRC2018 | 30 × 3 | 100% / 100% | 0.250 / 0.250 | 1.000 / 1.000 | 154.0 / 179.2 ms |
-| HotpotQA | 30 × 3 | 100% / 100% | 0.458 / 0.458 | 0.917 / 0.917 | 168.2 / 199.7 ms |
+| 数据集 | Recall control→workflow | MRR control→workflow | nDCG control→workflow | Warm P95 ms control→workflow | Query forwards control→workflow |
+|--------|-------------------------|----------------------|-----------------------|-------------------------------|---------------------------------|
+| builtin general | 1.000→1.000 | 1.000→1.000 | 1.000→1.000 | 107.9→70.8 | 56→24 |
+| CMRC2018 | 1.000→1.000 | 0.911→0.961 | 0.934→0.971 | 196.9→155.4 | 210→90 |
+| HotpotQA | 0.917→0.917 | 1.000→1.000 | 0.915→0.919 | 216.9→165.7 | 210→90 |
+| MS MARCO | 0.800→0.800 | 0.578→0.597 | 0.634→0.648 | 164.3→110.8 | 210→90 |
 
-CMRC2018 与 HotpotQA 的提交基线是回归契约；`answer_overlap` 受近似索引同分排序影响，
-仅作 advisory，不参与质量门禁。
+AB/BA 的主质量指标完全一致，四个数据集均通过质量损失 `≤0.02`、P95 增幅
+`≤25%` 的 promotion gate，因此共享 `RetrievalWorkflow` 默认开启。主模型权重没有变化；
+收益来自一次查询表示复用、问题类型计划、authority/reranker 排序保护、filter fail-closed
+和一致的证据选择/拒答边界。
+
+完整隔离实验：
+
+```bash
+uv run --frozen python scripts/run_paired_benchmark.py \
+  --dataset data/benchmark/builtin_general.yaml \
+  --dataset data/benchmark/benchmark_cmrc2018.yaml \
+  --dataset data/benchmark/benchmark_hotpotqa.yaml \
+  --dataset data/benchmark/benchmark_msmarco.yaml \
+  --output-dir /tmp/rfo-stage2-abba --top-k 4 --repeats 3
+
+uv run --frozen python scripts/run_frontier_benchmark.py \
+  --fixture data/benchmark/frontier_specialized.yaml \
+  --repeats 5 --output-json /tmp/rfo-frontier.json
+```
+
+ColBERT、RAPTOR、Graph PPR 与 ColPali 的 deterministic microbenchmark 已通过算法闭环，
+但使用 synthetic token encoder，不具备真实模型 promotion 资格，仍默认关闭。ColPali 需由操作员
+显式执行 `uv run --frozen python scripts/download_colpali.py` 准备本地资产。详见
+`docs/specs/retrieval-frontier-optimization/benchmark-results.md`。
 
 ## 链路测评与反馈回流（评测飞轮）
 

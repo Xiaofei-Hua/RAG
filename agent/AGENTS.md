@@ -51,6 +51,7 @@ agent/
 | `filter_expr` | 调用方（如 chat router） | `retrieve` | Milvus 过滤表达式 |
 | `query_transform` | 调用方 | `retrieve` | `hyde` / `multi_query` |
 | `expand_parents` | 调用方 | `retrieve` | 是否展开到父文档 |
+| `retrieval_diagnostics` | `retrieve`（整键唯一生产者） | `generate` | 脱敏后的 plan/state/retry/degradation/counts；Fast/MCP 仅以返回 metadata 暴露，不写 graph state |
 
 > `merge_shared_state` 是**浅合并**。同一键被两个生产者写入时**后者整键覆盖**（不会拼接列表）。
 > **违规修复**：新增生产者时，要么用新键，要么确保语义是「整键覆盖」；若出现覆盖冲突，改用带命名空间的独立键。

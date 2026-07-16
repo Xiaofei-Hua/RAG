@@ -50,6 +50,7 @@ def mmr_rerank(
     top_k: int = 4,
     lambda_: float = DEFAULT_LAMBDA,
     fetch_k: int | None = None,
+    query_vector: list[float] | np.ndarray | None = None,
 ) -> list[Document]:
     """
     Re-rank documents with Maximal Marginal Relevance.
@@ -62,6 +63,8 @@ def mmr_rerank(
         lambda_: relevance/diversity trade-off (0..1).
         fetch_k: pool size to consider before selecting top_k (defaults to
             min(len(documents), 4*top_k)).
+        query_vector: request-local precomputed query vector. When present MMR
+            embeds only documents and never repeats query encoding.
 
     Returns:
         A diversity-ordered list of at most ``top_k`` documents.
@@ -88,7 +91,11 @@ def mmr_rerank(
     try:
         doc_texts = [d.page_content for d in pool]
         doc_vecs = np.asarray(emb.embed_documents(doc_texts), dtype=np.float32)
-        q_vec = np.asarray(emb.embed_query(query), dtype=np.float32)
+        q_vec = (
+            np.asarray(query_vector, dtype=np.float32)
+            if query_vector is not None
+            else np.asarray(emb.embed_query(query), dtype=np.float32)
+        )
     except Exception as e:  # noqa: BLE001
         log.debug(f"MMR embedding failed, returning relevance order: {e}")
         return pool[:top_k]

@@ -502,6 +502,103 @@ def _remove_graph_if_enabled(source: str) -> None:
         log.warning(f"GraphRAG cleanup failed for {source}: {e}")
 
 
+def _build_raptor_if_enabled(documents: list[Document], source: str, file_hash: str) -> None:
+    """Build an additive ready RAPTOR generation; failures never block ingestion."""
+    from core.retrieval.raptor_store import raptor_enabled
+
+    if not raptor_enabled():
+        return
+    try:
+        from core.retrieval.cache import bump_retrieval_cache_version, embedding_fingerprint
+        from core.retrieval.raptor_store import get_raptor_store
+        from models.embedding_models import get_embeddings
+
+        embedding = None
+        embedding_identity = "lexical"
+        try:
+            embedding = get_embeddings()
+            embedding_identity = embedding_fingerprint(embedding)
+        except Exception as embedding_exc:
+            log.warning(
+                f"RAPTOR embeddings unavailable for {source}; lexical summaries retained: "
+                f"{type(embedding_exc).__name__}"
+            )
+        get_raptor_store().build_source(
+            source,
+            documents,
+            content_hash=file_hash,
+            embedding_fingerprint=embedding_identity,
+            embedding=embedding,
+        )
+        bump_retrieval_cache_version()
+    except Exception as exc:  # optional ingestion path
+        log.warning(f"RAPTOR build skipped for {source}: {exc}")
+
+
+def _remove_raptor_if_present(source: str) -> None:
+    """Remove RAPTOR visibility for a deleted source without forcing store creation."""
+    try:
+        from core.retrieval.raptor_store import RAPTOR_DB_PATH, get_raptor_store, raptor_enabled
+
+        if not raptor_enabled() and not os.path.isfile(RAPTOR_DB_PATH):
+            return
+        if get_raptor_store().remove_by_source(source):
+            from core.retrieval.cache import bump_retrieval_cache_version
+
+            bump_retrieval_cache_version()
+    except Exception as exc:
+        log.warning(f"RAPTOR cleanup failed for {source}: {exc}")
+
+
+def _build_visual_if_enabled(
+    documents: list[Document],
+    file_path: str,
+    source: str,
+    file_hash: str,
+) -> None:
+    """Render and index every PDF page as an optional atomic generation."""
+    from core.retrieval.visual_retriever import visual_enabled
+
+    if not visual_enabled():
+        return
+    try:
+        from core.retrieval.cache import bump_retrieval_cache_version
+        from core.retrieval.visual_retriever import get_visual_retriever
+
+        page_text: dict[int, list[str]] = {}
+        for document in documents:
+            page = (document.metadata or {}).get("page")
+            if isinstance(page, int) and document.page_content.strip():
+                page_text.setdefault(page, []).append(document.page_content.strip())
+        get_visual_retriever().index_pdf(
+            source,
+            file_path,
+            file_hash,
+            ocr_text_by_page={page: "\n".join(texts) for page, texts in page_text.items()},
+        )
+        bump_retrieval_cache_version()
+    except Exception as exc:
+        log.warning(f"visual page indexing skipped for {source}: {exc}")
+
+
+def _remove_visual_if_present(source: str) -> None:
+    try:
+        from core.retrieval.visual_retriever import (
+            VISUAL_INDEX_PATH,
+            get_visual_retriever,
+            visual_enabled,
+        )
+
+        if not visual_enabled() and not os.path.isfile(VISUAL_INDEX_PATH):
+            return
+        if get_visual_retriever().remove_by_source(source):
+            from core.retrieval.cache import bump_retrieval_cache_version
+
+            bump_retrieval_cache_version()
+    except Exception as exc:
+        log.warning(f"visual page cleanup failed for {source}: {exc}")
+
+
 def _process_document(doc_id: str, file_path: str, filename: str, file_hash: str):
     """Process and index a document (background task)."""
     registry = get_document_registry()
@@ -541,9 +638,19 @@ def _process_document(doc_id: str, file_path: str, filename: str, file_hash: str
                     documents.append(Document(page_content=para, metadata={"source": filename}))
             documents = _split_documents(documents)
 
-        # Attach file_hash to every chunk's metadata
+        # Normalize the source after parsing. MarkdownParser sees the temporary
+        # upload path (which is prefixed with doc_id); exposing that value would
+        # break source filters and later deletion by the registry filename.
         for doc in documents:
+            doc.metadata["source"] = filename
             doc.metadata["file_hash"] = file_hash
+
+        # Contextual indexing is opt-in and must target an isolated/new
+        # collection. Prepare once so Milvus dense/native-sparse and BM25 use
+        # the same index_text while page_content remains original display text.
+        from core.retrieval.contextual_text import contextualize_documents_if_enabled
+
+        documents = contextualize_documents_if_enabled(documents)
 
         # Index into Milvus
         from documents.milvus_db import get_milvus_manager
@@ -568,6 +675,9 @@ def _process_document(doc_id: str, file_path: str, filename: str, file_hash: str
         # GraphRAG extraction (docs/specs/graphrag). Opt-in via GRAPH_RAG_ENABLED;
         # failure never blocks main ingestion — the doc is already in Milvus/BM25.
         _extract_graph_if_enabled(documents, filename, file_hash)
+        _build_raptor_if_enabled(documents, filename, file_hash)
+        if ext == ".pdf":
+            _build_visual_if_enabled(documents, file_path, filename, file_hash)
 
         # Update registry
         registry.update_status(doc_id, "indexed", result.get("inserted", 0))
@@ -646,6 +756,8 @@ async def delete_document(doc_id: str):
     # deleted doc's entities/relations do not linger in the graph leg. The
     # cache was already bumped above; this only touches the graph store.
     _remove_graph_if_enabled(doc["filename"])
+    _remove_raptor_if_present(doc["filename"])
+    _remove_visual_if_present(doc["filename"])
 
     registry.delete(doc_id)
     return {"status": "success", "message": f"Document {doc_id} deleted"}
@@ -700,10 +812,15 @@ def _reindex_all():
             for doc in documents:
                 doc.metadata["file_hash"] = file_hash
 
+            from core.retrieval.contextual_text import contextualize_documents_if_enabled
+
+            documents = contextualize_documents_if_enabled(documents)
+
             # Insert into Milvus
             result = manager.add_documents(documents)
             inserted = result.get("inserted", 0)
             total_inserted += inserted
+            _build_raptor_if_enabled(documents, filename, file_hash)
 
             # Update registry
             doc_id = str(uuid.uuid4())[:8]

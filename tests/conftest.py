@@ -73,6 +73,9 @@ def _close_sqlite_singletons_after_test():
         "documents.graph_store.reset_graph_store",
         "documents.graph_extractor.reset_graph_extractor",
         "core.retrieval.graph_retriever.reset_graph_retriever",
+        "core.retrieval.workflow.reset_retrieval_workflow",
+        "core.retrieval.raptor_store.reset_raptor_store",
+        "core.retrieval.visual_retriever.reset_visual_retriever",
     ):
         try:
             mod_name, fn_name = _reset.rsplit(".", 1)
@@ -163,6 +166,18 @@ def tmp_data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "documents.embedding_registry.DEFAULT_DB_PATH",
         os.path.join(root, "embedding_registry.db"),
+    )
+    monkeypatch.setattr(
+        "core.retrieval.raptor_store.RAPTOR_DB_PATH",
+        os.path.join(root, "raptor.db"),
+    )
+    monkeypatch.setattr(
+        "core.retrieval.visual_retriever.VISUAL_INDEX_PATH",
+        os.path.join(root, "visual_index.db"),
+    )
+    monkeypatch.setattr(
+        "core.retrieval.visual_retriever.PDF_ASSET_DIR",
+        os.path.join(root, "visual_assets"),
     )
     # Redirect the session checkpoint DB to tmp and clear the process-wide
     # harness singleton so the next get_agent_harness() picks up the new path.

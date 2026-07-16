@@ -148,7 +148,7 @@ class MCPRetrievalServer(InProcessMCPServer):
         top_k: int | None = None,
         filter_expr: str | None = None,
         transform: str | None = None,
-    ) -> list[dict[str, Any]]:
+    ) -> Any:
         """
         Hybrid retrieval using dense + BM25 via HybridRetriever.
 
@@ -160,6 +160,27 @@ class MCPRetrievalServer(InProcessMCPServer):
 
         start = time.perf_counter()
         try:
+            from core.retrieval.workflow import (
+                get_retrieval_workflow,
+                retrieval_workflow_enabled,
+            )
+
+            if retrieval_workflow_enabled():
+                workflow_result = get_retrieval_workflow().retrieve(
+                    query,
+                    filter_expr=filter_expr,
+                    final_k=top_k,
+                )
+                elapsed_ms = (time.perf_counter() - start) * 1000
+                log.info(
+                    f"MCP workflow retrieval: {len(workflow_result.documents)} docs, "
+                    f"{elapsed_ms:.0f}ms, state={workflow_result.state.value}"
+                )
+                return {
+                    "documents": self._format_documents(workflow_result.documents),
+                    "diagnostics": workflow_result.diagnostics,
+                }
+
             from core.retrieval.hybrid_retriever import get_hybrid_retriever
 
             retriever = get_hybrid_retriever()
@@ -181,7 +202,7 @@ class MCPRetrievalServer(InProcessMCPServer):
             log.info(
                 f"MCP rag_retrieve: {len(documents)} docs, "
                 f"{elapsed_ms:.0f}ms, query='{query[:50]}...'"
-                f"{f', filter={filter_expr}' if filter_expr else ''}"
+                f"{', filtered=true' if filter_expr else ''}"
                 f"{f', transform={transform}' if transform else ''}"
             )
             return self._format_documents(documents)

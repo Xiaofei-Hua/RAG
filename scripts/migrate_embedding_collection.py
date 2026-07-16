@@ -20,6 +20,7 @@ def rebuild_collection(
     sample_queries: list[str] | None = None,
     *,
     skip_recall_check: bool = False,
+    contextual_index: bool = False,
 ) -> dict:
     from langchain_core.documents import Document
 
@@ -86,6 +87,7 @@ def rebuild_collection(
             collection_name=target,
             dense_dim=settings.dimension,
             enable_sparse=settings.sparse_enabled,
+            contextual_index=contextual_index,
         )
     )
     target_created = False
@@ -124,6 +126,7 @@ def rebuild_collection(
             "sample_hits": samples,
             "recall_check_skipped": not queries,
             "indexed_sources": len(indexed_sources),
+            "contextual_index": contextual_index,
         }
     finally:
         if target_created and not migration_verified:
@@ -150,6 +153,11 @@ def main() -> int:
         action="store_true",
         help="Explicitly accept migration risk and allow no sample query.",
     )
+    parser.add_argument(
+        "--contextual-index",
+        action="store_true",
+        help="Build bounded display_text/index_text fields in the new collection.",
+    )
     args = parser.parse_args()
     try:
         print(
@@ -157,6 +165,7 @@ def main() -> int:
                 args.target_collection,
                 args.sample_query,
                 skip_recall_check=args.skip_recall_check,
+                contextual_index=args.contextual_index,
             )
         )
     except Exception as exc:

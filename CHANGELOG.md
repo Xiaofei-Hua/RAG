@@ -7,6 +7,24 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Added — Retrieval frontier optimization (`retrieval-frontier-optimization`)
+
+- `[breaking]` The shared adaptive/corrective `RetrievalWorkflow` is now default-on across
+  Fast, Thinking and MCP retrieval after isolated four-dataset AB/BA benchmarks passed the
+  quality and warm-P95 promotion gate. Set `RETRIEVAL_WORKFLOW_ENABLED=false` to restore the
+  legacy path without deleting indexes.
+- Added independent candidate/rerank/selection/final budgets, request-local BGE-M3 query
+  representation reuse, facet-aware parent backfill, typed fail-closed filters, structured
+  authority/version ordering and weak/conflict/empty terminal semantics. Unavailable relevance
+  remains `None`, never a synthetic zero.
+- Added reversible, default-off ColBERT MaxSim, transactionally published RAPTOR generations,
+  source-filtered bounded Graph PPR/short paths and all-page hash-addressed ColPali indexing with
+  OCR/text fallback. Runtime never downloads optional visual models.
+- Added contextual `index_text`/`display_text` migration into a new collection, isolated AB/BA
+  benchmark orchestration with corpus/store hash verification, and specialized frontier
+  microbenchmarks. Static enlarged funnels/contextual indexing and all frontier channels remain
+  default-off because their real-model/domain promotion gates have not been met.
+
 ### Fixed — CI dependency routing (`ci-index-routing`)
 
 - GitHub-hosted backend, Playwright and API-only Docker jobs now install a frozen, hashed

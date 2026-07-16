@@ -41,6 +41,7 @@ from utils.log_utils import log
 __all__ = [
     "BGEM3Embeddings",
     "get_bge_m3_embeddings",
+    "set_bge_m3_embeddings_instance",
     "reset_bge_m3_embeddings",
     "is_bge_m3_cached",
 ]
@@ -91,6 +92,8 @@ class BGEM3Embeddings(Embeddings):
         self._tokenizer: Any = None
         self._auto_load_attempted = False
         self._flag_load_attempted = False
+        self._query_forward_count = 0
+        self._query_count_lock = threading.Lock()
 
         # F-06: 摄入期 late chunking 信号量（进程级串行，避免多 8K 前向叠加 OOM）
         self._late_chunk_semaphore = threading.Semaphore(
@@ -176,6 +179,8 @@ class BGEM3Embeddings(Embeddings):
 
     def embed_query(self, text: str) -> list[float]:
         """Dense embedding for a single query (LangChain Embeddings interface)."""
+        with self._query_count_lock:
+            self._query_forward_count += 1
         dense, _sparse = self.encode_hybrid(text)
         return dense
 
@@ -197,6 +202,39 @@ class BGEM3Embeddings(Embeddings):
         """
         batch = self.encode_hybrid_batch([text])
         return batch[0]
+
+    def encode_query_representation(
+        self,
+        text: str,
+        *,
+        return_colbert: bool = False,
+    ) -> dict[str, Any]:
+        """One atomic BGE-M3 forward for dense/sparse/optional ColBERT query heads."""
+        model = self._ensure_flag_model()
+        with self._query_count_lock:
+            self._query_forward_count += 1
+        out = model.encode(
+            [text],
+            batch_size=1,
+            return_dense=True,
+            return_sparse=True,
+            return_colbert_vecs=return_colbert,
+            max_length=self.max_length,
+        )
+        dense = out["dense_vecs"][0].tolist()
+        sparse = {int(key): float(value) for key, value in out["lexical_weights"][0].items()}
+        colbert = None
+        if return_colbert:
+            vectors = out.get("colbert_vecs")
+            if vectors is not None and len(vectors):
+                first = vectors[0]
+                colbert = first.tolist() if hasattr(first, "tolist") else first
+        return {"dense": dense, "sparse": sparse, "colbert": colbert}
+
+    @property
+    def query_forward_count(self) -> int:
+        with self._query_count_lock:
+            return self._query_forward_count
 
     def encode_hybrid_batch(
         self, texts: Sequence[str]
@@ -220,6 +258,37 @@ class BGEM3Embeddings(Embeddings):
             # F-01/sparse 兼容: FlagModel 返回 str key，Milvus 需要 int key
             sparse = {int(k): float(v) for k, v in sparse_list[i].items()}
             results.append((dense, sparse))
+        return results
+
+    def encode_colbert_documents(
+        self,
+        texts: Sequence[str],
+        *,
+        max_tokens: int = 512,
+        batch_size: int | None = None,
+    ) -> list[list[list[float]]]:
+        """Encode bounded document token vectors for late interaction."""
+        if not texts:
+            return []
+        model = self._ensure_flag_model()
+        effective_batch = max(1, min(batch_size or self.batch_size, len(texts)))
+        results: list[list[list[float]]] = []
+        for start in range(0, len(texts), effective_batch):
+            batch = list(texts[start : start + effective_batch])
+            out = model.encode(
+                batch,
+                batch_size=min(effective_batch, len(batch)),
+                return_dense=True,
+                return_sparse=True,
+                return_colbert_vecs=True,
+                max_length=min(self.max_length, max(8, int(max_tokens) + 2)),
+            )
+            vectors = out.get("colbert_vecs")
+            if vectors is None or len(vectors) != len(batch):
+                raise RuntimeError("BGE-M3 did not return ColBERT document vectors")
+            for value in vectors:
+                matrix = value.tolist() if hasattr(value, "tolist") else value
+                results.append(matrix[: max(1, int(max_tokens))])
         return results
 
     # ------------------------------------------------------------------
@@ -331,18 +400,27 @@ def get_bge_m3_embeddings(
     return _instance
 
 
-def reset_bge_m3_embeddings() -> None:
+def set_bge_m3_embeddings_instance(instance: Any) -> Any:
+    """Register the adapter created by the outer embedding factory as the shared instance."""
+    global _instance
+    with _instance_lock:
+        _instance = instance
+    return instance
+
+
+def reset_bge_m3_embeddings(*, reset_outer: bool = True) -> None:
     """重置单例。F-07: 同时清 ``embedding_models._instance`` 以保证两者一致。"""
     global _instance
     with _instance_lock:
         _instance = None
     # 互清：确保 get_embeddings() 下次重新分派
-    try:
-        from models.embedding_models import reset_embeddings as _reset_outer
+    if reset_outer:
+        try:
+            from models.embedding_models import reset_embeddings as _reset_outer
 
-        _reset_outer()
-    except Exception:  # noqa: BLE001
-        pass
+            _reset_outer(reset_bge=False)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
