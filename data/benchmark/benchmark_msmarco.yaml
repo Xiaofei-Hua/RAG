@@ -73,19 +73,6 @@ cases:
   - msmarco
   - en
   source: public
-- id: msmarco_5
-  query: is the atlanta airport the busiest in the world
-  expected_keywords: []
-  expected_intent: rag_query
-  expected_min_sources: 1
-  difficulty: medium
-  expected_context_ids:
-  - 0434a18adcfa
-  reference_answer: No Answer Present.
-  tags:
-  - msmarco
-  - en
-  source: public
 - id: msmarco_6
   query: nyu tuition cost
   expected_keywords: []
@@ -138,19 +125,6 @@ cases:
   - msmarco
   - en
   source: public
-- id: msmarco_10
-  query: what direction does phloem flow
-  expected_keywords: []
-  expected_intent: rag_query
-  expected_min_sources: 1
-  difficulty: medium
-  expected_context_ids:
-  - ada37837a0f3
-  reference_answer: No Answer Present.
-  tags:
-  - msmarco
-  - en
-  source: public
 - id: msmarco_11
   query: what is ce certified
   expected_keywords: []
@@ -161,58 +135,6 @@ cases:
   - db38c6709286
   reference_answer: An abbreviation of Conformite Conformité, europeenne Européenne
     Meaning. european conformity.
-  tags:
-  - msmarco
-  - en
-  source: public
-- id: msmarco_12
-  query: artin chicken mcdonalds calories
-  expected_keywords: []
-  expected_intent: rag_query
-  expected_min_sources: 1
-  difficulty: medium
-  expected_context_ids:
-  - 579af2a7e53d
-  reference_answer: No Answer Present.
-  tags:
-  - msmarco
-  - en
-  source: public
-- id: msmarco_13
-  query: is panglao island safe
-  expected_keywords: []
-  expected_intent: rag_query
-  expected_min_sources: 1
-  difficulty: medium
-  expected_context_ids:
-  - e08ef8c04c24
-  reference_answer: No Answer Present.
-  tags:
-  - msmarco
-  - en
-  source: public
-- id: msmarco_14
-  query: what is calomel powder used for?
-  expected_keywords: []
-  expected_intent: rag_query
-  expected_min_sources: 1
-  difficulty: medium
-  expected_context_ids:
-  - c67341f42bd2
-  reference_answer: No Answer Present.
-  tags:
-  - msmarco
-  - en
-  source: public
-- id: msmarco_15
-  query: sum of squares of even numbers formula
-  expected_keywords: []
-  expected_intent: rag_query
-  expected_min_sources: 1
-  difficulty: medium
-  expected_context_ids:
-  - 02a96a4ae47b
-  reference_answer: No Answer Present.
   tags:
   - msmarco
   - en
@@ -231,19 +153,6 @@ cases:
   - msmarco
   - en
   source: public
-- id: msmarco_17
-  query: what is happening in montreal in august?
-  expected_keywords: []
-  expected_intent: rag_query
-  expected_min_sources: 1
-  difficulty: medium
-  expected_context_ids:
-  - ac8da650b73f
-  reference_answer: No Answer Present.
-  tags:
-  - msmarco
-  - en
-  source: public
 - id: msmarco_18
   query: what county is dewitt michigan in?
   expected_keywords: []
@@ -253,19 +162,6 @@ cases:
   expected_context_ids:
   - 5c4387f645ba
   reference_answer: DeWitt is located in Clinton County, Michigan, United States.
-  tags:
-  - msmarco
-  - en
-  source: public
-- id: msmarco_19
-  query: how to create msn email address
-  expected_keywords: []
-  expected_intent: rag_query
-  expected_min_sources: 1
-  difficulty: medium
-  expected_context_ids:
-  - 30aff22409ea
-  reference_answer: No Answer Present.
   tags:
   - msmarco
   - en
@@ -294,19 +190,6 @@ cases:
   - 24da69327334
   reference_answer: It allows passengers to check-in to a flight automatically up
     to 36 hours prior to the flight's scheduled departure time.
-  tags:
-  - msmarco
-  - en
-  source: public
-- id: msmarco_22
-  query: excel if as an array function
-  expected_keywords: []
-  expected_intent: rag_query
-  expected_min_sources: 1
-  difficulty: medium
-  expected_context_ids:
-  - 7944babd7dd2
-  reference_answer: No Answer Present.
   tags:
   - msmarco
   - en
@@ -388,19 +271,6 @@ cases:
   expected_context_ids:
   - 5fafab4f7e72
   reference_answer: Average $111,082,
-  tags:
-  - msmarco
-  - en
-  source: public
-- id: msmarco_29
-  query: how.much does squirrel.pos cost
-  expected_keywords: []
-  expected_intent: rag_query
-  expected_min_sources: 1
-  difficulty: medium
-  expected_context_ids:
-  - de988b1df117
-  reference_answer: No Answer Present.
   tags:
   - msmarco
   - en

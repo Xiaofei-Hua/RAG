@@ -88,18 +88,21 @@ def _try_msmarco(limit: int) -> tuple[list[dict], list[dict]] | None:
         answers = row.get("answers", [])
         if not answers or not answers[0]:
             continue
+        answer = str(answers[0]).strip()
+        if answer.casefold().rstrip(".") == "no answer present":
+            continue
         passages = row.get("passages", {}).get("passage_text", [])
         is_selected = row.get("passages", {}).get("is_selected", [])
         if not passages:
             continue
-        # Use selected (relevant) passages as ground-truth context ids.
+        row_corpus = []
         ctx_ids = []
         for p_idx, (txt, sel) in enumerate(zip(passages, is_selected)):
             if not txt:
                 continue
             stored = txt[:1000]
             cid = _chunk_id(stored)
-            corpus.append(
+            row_corpus.append(
                 {
                     "id": cid,
                     "source": "msmarco",
@@ -109,8 +112,9 @@ def _try_msmarco(limit: int) -> tuple[list[dict], list[dict]] | None:
             )
             if sel:
                 ctx_ids.append(cid)
-        if not ctx_ids and corpus:
-            ctx_ids = [corpus[-1]["id"]]
+        if not ctx_ids:
+            continue
+        corpus.extend(row_corpus)
         cases.append(
             {
                 "id": f"msmarco_{i}",
@@ -120,7 +124,7 @@ def _try_msmarco(limit: int) -> tuple[list[dict], list[dict]] | None:
                 "expected_min_sources": 1,
                 "difficulty": "medium",
                 "expected_context_ids": ctx_ids[:3],
-                "reference_answer": answers[0][:500],
+                "reference_answer": answer[:500],
                 "tags": ["msmarco", "en"],
                 "source": "public",
             }
