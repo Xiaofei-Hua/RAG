@@ -135,7 +135,11 @@ def test_local_preflight_requires_only_active_components(tmp_path):
     assert result.reason == "embedding_checkpoint_missing"
 
 
-def test_native_sparse_preflight_requires_trained_bge_m3_heads(tmp_path):
+def test_native_sparse_preflight_requires_trained_bge_m3_heads(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        "scripts.run_benchmark_matrix.importlib.util.find_spec",
+        lambda _name: object(),
+    )
     model_path = tmp_path / "bge-m3"
     model_path.mkdir()
     (model_path / "config.json").write_text("{}", encoding="utf-8")
