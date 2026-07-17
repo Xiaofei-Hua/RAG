@@ -139,4 +139,5 @@ uv run --frozen python scripts/run_frontier_benchmark.py \
 | Process-internal E2E | coverage append with real backend excluded | `92 passed, 2 skipped` |
 | Coverage | accumulated branch coverage | `72%` (`fail-under=60`) |
 | Static/import checks | Ruff, import, diff and disabled-comment audits | final audit passed |
+| Documentation closure | README/API/MCP/technical report/AGENTS/Skills/tests/spec index consistency audit | `1067 passed, 6 skipped`; links/diff/static/import passed |
 | UI | Playwright | N/A: no UI files changed by this feature |

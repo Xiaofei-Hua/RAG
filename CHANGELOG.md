@@ -7,6 +7,14 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Changed — Retrieval documentation closure
+
+- Synchronized the README, HTTP API guide, technical report, engineering contracts, Skill/test guides and
+  spec index with the default-on adaptive/corrective workflow, BGE-M3 defaults, judged MS MARCO correction,
+  isolated benchmark results and default-off frontier channels.
+- Added the in-process MCP retrieval contract, including the default `{documents, diagnostics}` response,
+  legacy list-only rollback shape, filter semantics and terminal states.
+
 ### Added — Retrieval frontier optimization (`retrieval-frontier-optimization`)
 
 - `[breaking]` The shared adaptive/corrective `RetrievalWorkflow` is now default-on across

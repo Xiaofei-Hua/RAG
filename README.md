@@ -13,8 +13,10 @@
 
 ## 核心能力
 
-- **双问答模式**：Thinking 模式执行完整 LangGraph 流程，Fast 模式直接检索并生成
-- **混合检索**：Dense 向量检索 + BM25 关键词检索 + RRF 融合
+- **双问答模式**：Thinking 模式执行完整 LangGraph 流程，Fast 模式复用同一检索工作流后直接生成
+- **自适应检索工作流**：按问题类型规划通道与预算，复用查询表示，执行权威排序、证据判定和最多一次有效纠正重试
+- **混合检索**：本地 BGE-M3 默认使用 Dense + 原生 Sparse，API/非 M3 配置回退 BM25，经 RRF、Cross-Encoder 与证据选择收敛
+- **可选前沿通道**：ColBERT、RAPTOR、Graph PPR 和 ColPali 已接入安全降级，真实模型 promotion 前保持默认关闭
 - **知识库管理**：支持上传、查询、删除、去重和重建文档索引
 - **结构化诊断**：输出诊断结论、可能原因、排查步骤、安全风险和依据来源
 - **推理过程捕获**：支持读取 Qwen3 的 reasoning 内容
@@ -29,27 +31,35 @@
 | Agent 编排 | LangGraph、Harness + Skills + MCP |
 | 后端 API | FastAPI、Uvicorn |
 | LLM | Qwen3:14b、Ollama OpenAI 兼容接口 |
-| Embedding | 默认 BGE-small-zh-v1.5（可替换） |
-| 检索 | Milvus Lite、BM25、RRF |
+| Embedding | 本地默认 BGE-M3（1024 维，可替换）；API-only 默认 DashScope text-embedding-v3 |
+| 检索 | RetrievalWorkflow、Milvus Lite、BGE-M3 Sparse/BM25、RRF、bge-reranker-v2-m3 |
 | 会话存储 | Redis，可自动降级到 SQLite |
 | 领域适配 | `DOMAIN_PROFILE` + `data/profiles/*.yaml`（默认 general；可选示例 aviation_phm） |
 | 前端 | Vue 3、Vite、TypeScript、Pinia |
 
 ## 工作流程
 
-Thinking 模式执行完整诊断流程：
+Thinking 模式的外层 LangGraph 与共享检索工作流如下：
 
 ```text
 用户问题
   -> 意图识别
   -> Agent 判断是否调用检索工具
-  -> Dense + BM25 混合检索
+  -> RetrievalWorkflow
+       -> 问题类型与预算规划
+       -> 请求级查询表示复用
+       -> Dense + Sparse（必要时启用健康的可选通道）
+       -> RRF / Reranker / Authority / Evidence Selection
+       -> accept | weak | conflict | empty
+       -> 非 accept 时最多一次改变检索策略的纠正重试
   -> 文档相关性评分
   -> 必要时重写问题并重新检索
   -> 生成结构化诊断回答
 ```
 
-Fast 模式跳过多轮判断，直接执行检索和生成，适合需要更低延迟的查询。
+Fast 模式跳过外层 Agent、Grade 和 Rewrite 节点，但复用同一 `RetrievalWorkflow`。只有
+`accept` 状态进入生成；`weak`、`conflict`、`empty` 返回对应的信息缺口、冲突或无证据提示。
+设置 `RETRIEVAL_WORKFLOW_ENABLED=false` 可回滚到旧的 list-only 检索路径，无需删除索引。
 
 ## 快速开始（Quick Start）
 
@@ -147,10 +157,15 @@ curl -X POST http://localhost:8000/api/documents/upload \
   -F "file=@md/general_test_knowledge_base.md"
 ```
 
-支持上传 `.md`、`.txt` 和 `.pdf`。PDF 会按页面解析：优先使用 `pypdfium2`
+支持上传 `.md`、`.txt`、`.pdf`、`.docx`、`.pptx`、`.html` 和 `.htm`；Office/HTML
+格式需要安装 `doc` extra 中的相应解析依赖。PDF 会按页面解析：优先使用 `pypdfium2`
 抽取文字层，并用 `pypdf` 逐页兜底；明确保留列分隔的表格会转成 Markdown
 表格 chunk 入库；带图片页面会记录图片对象元数据。纯扫描图片 PDF 或图片内文字
 需要启用 OCR 后才能进入检索索引。
+
+`CONTEXTUAL_INDEX_ENABLED`、`RAPTOR_ENABLED` 和 `COLPALI_ENABLED` 均默认关闭。启用后，
+摄入流程会分别维护独立 contextual collection、RAPTOR generation 或 PDF 页面视觉索引；
+任一可选索引失败都不会阻断 Milvus/BM25 主摄入路径。
 
 OCR 默认为关闭，适合在安装本地 OCR 引擎后按需打开：
 
@@ -195,7 +210,7 @@ uv sync --extra dev --extra local-models
 启动后端：
 
 ```bash
-uv run uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+uv run --frozen uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
 在另一个终端启动前端开发服务器：
@@ -227,10 +242,11 @@ sudo ./deploy.sh --skip-embedding
 sudo ./deploy.sh --build-offline-bundle
 ```
 
-`deploy.sh` 会预热运行所需的本地资产：Ollama LLM 模型、Embedding 模型、
+`deploy.sh` 会预热运行所需的本地资产：Ollama LLM 模型、BGE-M3 Embedding 模型、
 Reranker 模型、PaddleOCR 模型、Python 依赖和前端 `web/dist` 构建产物。
 其中 Reranker 会保存到 `models/local_models/reranker/...`，避免离线环境依赖
-用户级 Hugging Face cache。
+用户级 Hugging Face cache。BGE-M3 下载器会校验训练好的 sparse/ColBERT heads；
+ColPali 不属于默认部署资产，只有显式运行 `scripts/download_colpali.py` 才会准备。
 
 部署脚本完成后，使用 `./run.sh` 启动开发模式，或按下一节使用 FastAPI
 托管生产静态文件。
@@ -286,7 +302,7 @@ cd ..
 然后只启动 FastAPI：
 
 ```bash
-uv run uvicorn api.main:app --host 0.0.0.0 --port 8000
+uv run --frozen uvicorn api.main:app --host 0.0.0.0 --port 8000
 ```
 
 构建输出位于 `web/dist/`。FastAPI 会托管前端资源，并为 Vue Router 提供
@@ -300,7 +316,7 @@ SPA fallback。此时前端与 API 均通过 `http://localhost:8000` 访问。
 cd web
 VITE_BASE_PATH=/rag/ npm run build
 cd ..
-APP_ROOT_PATH=/rag uv run uvicorn api.main:app --host 0.0.0.0 --port 8000
+APP_ROOT_PATH=/rag uv run --frozen uvicorn api.main:app --host 0.0.0.0 --port 8000
 ```
 
 Nginx 配置示例：
@@ -344,9 +360,9 @@ location /rag/ {
 | `RERANKER_MODEL_PATH` | `models/local_models/reranker/bge-reranker-v2-m3` | 本地模型目录，存在时优先于模型 ID 加载（气隙自洽） |
 | `RERANKER_DEVICE` | `auto` | Reranker 运行设备；`auto` 自动探测，也可显式设 `cpu`/`cuda` |
 | `RERANKER_WARMUP` | `false` | 是否在服务启动时加载 Reranker |
-| `RERANKER_CANDIDATE_TOP_K` | `10` | Dense 与 BM25 各自送入 RRF 的候选数 |
+| `RERANKER_CANDIDATE_TOP_K` | `10` | Dense 与当前 sparse backend 各自送入 RRF 的候选数 |
 | `RERANKER_TOP_K` | `5` | 调用方未指定 `top_k` 时的最终默认结果数 |
-| `RERANKER_BATCH_SIZE` | `8` | 重排序批大小 |
+| `RERANKER_BATCH_SIZE` | `4`（`.env.example`） | 重排序批大小；未设置环境变量时代码回退值为 `8` |
 | `RETRIEVAL_WORKFLOW_ENABLED` | `true` | 统一 Fast/Thinking/MCP 的自适应计划、纠正重试与终止语义；设 `false` 回滚旧检索路径 |
 | `RETRIEVAL_CANDIDATE_FUNNEL_ENABLED` | `false` | 独立 candidate/rerank/selection/final 预算实验；控制实验未过质量门禁，默认关闭 |
 | `CONTEXTUAL_INDEX_ENABLED` | `false` | 使用 bounded `index_text` + 原始 `display_text`；只允许在新 collection 上开启 |
@@ -365,6 +381,7 @@ location /rag/ {
 | `OTEL_CONSOLE_EXPORTER` | `false` | 是否将 Span 输出到控制台 |
 | `MILVUS_DB_URI` | `./milvus_data.db` | Milvus Lite 数据库路径 |
 | `COLLECTION_NAME` | `rag_knowledge_base` | Milvus collection 名称 |
+| `MAX_UPLOAD_BYTES` | `52428800` | 最大上传体积（50 MiB），超限返回 HTTP 413 |
 | `PDF_EXTRACT_TABLES` | `true` | 是否将明确列分隔的 PDF 表格转为 Markdown chunk |
 | `PDF_OCR_ENABLED` | `false` | 是否对扫描页/图片页启用 OCR |
 | `PDF_OCR_ENGINE` | `paddleocr` | OCR 引擎，目前支持 `paddleocr`、`tesseract` |
@@ -399,7 +416,7 @@ LLM_MAX_TOKENS=2048
 重启后端后生效。也可以只对单次启动覆盖：
 
 ```bash
-LLM_MODEL=qwen3:8b uv run uvicorn api.main:app --port 8000
+LLM_MODEL=qwen3:8b uv run --frozen uvicorn api.main:app --port 8000
 ```
 
 ### 更换 Embedding 模型
@@ -492,7 +509,8 @@ docker run -p 8000:8000 \
 
 ### 两阶段重排序（默认开启）
 
-混合检索执行 Dense + BM25 召回和 RRF 融合后，默认再用 Cross-Encoder 对融合候选文档
+混合检索执行 Dense + 当前 sparse backend（本地 BGE-M3 native sparse 或 BM25 fallback）召回和
+RRF 融合后，默认再用 Cross-Encoder 对融合候选文档
 进行第二阶段重排序，提升最终排序精度。默认配置如下（无需手动设置即可生效）：
 
 ```dotenv
@@ -503,7 +521,7 @@ RERANKER_DEVICE=auto
 RERANKER_WARMUP=false
 RERANKER_CANDIDATE_TOP_K=10
 RERANKER_TOP_K=5
-RERANKER_BATCH_SIZE=8
+RERANKER_BATCH_SIZE=4
 ```
 
 `RERANKER_DEVICE=auto` 会在 CUDA 可用且安装的 torch wheel 含本机 GPU 的
@@ -520,7 +538,7 @@ RERANKER_BATCH_SIZE=8
 推荐保留项目内路径，便于离线打包。需要提前下载并验证模型时运行：
 
 ```bash
-uv run python scripts/download_reranker.py
+uv run --frozen python scripts/download_reranker.py
 ```
 
 配置 `RERANKER_WARMUP=true` 后，服务启动时会加载模型，
@@ -586,7 +604,8 @@ curl http://localhost:8000/api/admin/config
 | 系统配置 | `GET /api/admin/config` |
 | 详细健康检查 | `GET /api/admin/health` |
 
-完整请求和响应格式见 [API 文档](docs/API.md)。
+完整 HTTP 请求和响应格式见 [API 文档](docs/API.md)；进程内 MCP 工具契约见
+[MCP 文档](docs/MCP.md)。
 
 ## 测试
 
@@ -595,19 +614,19 @@ curl http://localhost:8000/api/admin/config
 
 ```bash
 uv sync --extra dev --extra local-models
-uv run pytest
+uv run --frozen pytest
 ```
 
 启动后端后，可以运行独立 API 和全链路测试：
 
 ```bash
-uv run python tests/api/test_health.py
-uv run python tests/api/test_chat.py
-uv run python tests/api/test_documents.py
-uv run python tests/api/test_sessions.py
-uv run python tests/api/test_retrieval.py
-uv run python tests/api/test_feedback.py
-uv run python tests/integration/test_system.py
+uv run --frozen python tests/api/test_health.py
+uv run --frozen python tests/api/test_chat.py
+uv run --frozen python tests/api/test_documents.py
+uv run --frozen python tests/api/test_sessions.py
+uv run --frozen python tests/api/test_retrieval.py
+uv run --frozen python tests/api/test_feedback.py
+uv run --frozen python tests/integration/test_system.py
 ```
 
 验证前端生产构建：
@@ -622,7 +641,7 @@ npm run build
 启动后端并导入知识库后，可以使用内置异步压测脚本测试 SSE 接口：
 
 ```bash
-uv run python scripts/load_test.py \
+uv run --frozen python scripts/load_test.py \
   --mode fast \
   --requests 20 \
   --concurrency 4
@@ -748,13 +767,13 @@ ColBERT、RAPTOR、Graph PPR 与 ColPali 的 deterministic microbenchmark 已通
 
 ```bash
 # 完整评测（含 judge），结果写入 data/eval/runs/
-uv run python scripts/run_eval.py
+uv run --frozen python scripts/run_eval.py
 
 # 快速规则评测（不调 judge，CI 友好）
-uv run python scripts/run_eval.py --no-judge --concurrency 8
+uv run --frozen python scripts/run_eval.py --no-judge --concurrency 8
 
 # CI 回归门禁：与基线对比，回归则退出码 1
-uv run python scripts/run_eval.py --tag ci --fail-on-regression
+uv run --frozen python scripts/run_eval.py --tag ci --fail-on-regression
 ```
 
 **模式二：replay 评测（纯数据，不跑管道、不联网）**
@@ -764,13 +783,13 @@ uv run python scripts/run_eval.py --tag ci --fail-on-regression
 
 ```bash
 # judge 开启（需本地 Ollama + 本地 BGE）
-uv run python scripts/replay_eval.py data/eval/replay_samples.jsonl
+uv run --frozen python scripts/replay_eval.py data/eval/replay_samples.jsonl
 
 # 纯规则模式（连 LLM 都不需要，任何环境可跑）
-uv run python scripts/replay_eval.py data/eval/replay_samples.jsonl --no-judge
+uv run --frozen python scripts/replay_eval.py data/eval/replay_samples.jsonl --no-judge
 
 # 回归门禁
-uv run python scripts/replay_eval.py data/eval/replay_samples.jsonl --fail-on-regression
+uv run --frozen python scripts/replay_eval.py data/eval/replay_samples.jsonl --fail-on-regression
 ```
 
 JSONL 格式见 `data/eval/replay_samples.jsonl`，每行一条 `{id, query, answer, contexts, reference_answer, intent}`。
@@ -794,10 +813,10 @@ JSONL 格式见 `data/eval/replay_samples.jsonl`，每行一条 `{id, query, ans
 用户点赞踩/纠正/标记的负反馈会自动把对应推理晋升到候选池：
 
 ```bash
-uv run python scripts/curate_golden.py --list          # 查看待标注候选
-uv run python scripts/curate_golden.py --show <id>     # 查看详情
-uv run python scripts/curate_golden.py --promote <id>  # 晋升为 golden（纠正的 corrected_answer 直接成为参考答案）
-uv run python scripts/curate_golden.py --misses        # 查看检索召回不足信号
+uv run --frozen python scripts/curate_golden.py --list          # 查看待标注候选
+uv run --frozen python scripts/curate_golden.py --show <id>     # 查看详情
+uv run --frozen python scripts/curate_golden.py --promote <id>  # 晋升为 golden（纠正的 corrected_answer 直接成为参考答案）
+uv run --frozen python scripts/curate_golden.py --misses        # 查看检索召回不足信号
 ```
 
 ### 配置
@@ -816,14 +835,15 @@ EVAL_SAMPLE_RATE=0.1
 - `GET /api/admin/inferences/{trace_id}` — 单条推理（含检索上下文 + 答案）
 - `GET /api/admin/retrieval-misses` — 检索召回不足信号
 
-更多架构细节见 [AGENTS.md](AGENTS.md) 的「Evaluation Flywheel」章节。
+更多评测闭环细节见本节、[评测闭环规格](docs/specs/eval-closure-metric-accuracy/)
+以及 [系统技术报告](docs/technical_report.md)。
 
 ## 项目结构
 
 ```text
 agent/
 ├── harness/       LangGraph 编排、计划、生命周期与可观测性
-├── skills/        Agent、检索、评分、重写、生成和意图技能（目录式布局）
+├── skills/        Agent、检索、评分、重写和生成技能（目录式布局）
 ├── context/       Agent 共享状态与会话上下文
 ├── mcp/           MCP 服务端、客户端与检索工具
 ├── eval/          可信评测与反馈回流飞轮（judge/scorer/runner/dataset/history/...）
@@ -833,15 +853,15 @@ agent/
 └── metrics/       指标与成本
 
 api/               FastAPI 应用、路由（chat/documents/sessions/admin/feedback/retrieval）与中间件
-core/              检索（hybrid/bm25/reranker/mmr/cache）、意图、会话、降级、tracing、并发
-documents/         文档解析（markdown/pdf/ocr）、注册表与 Milvus 管理
+core/              检索工作流（planner/corrective/selector/frontier）、意图、会话、降级、tracing
+documents/         文档解析（markdown/pdf/ocr）、注册表、Milvus、parent/graph store
 models/            LLM 与 Embedding 配置
 web/               Vue 3 + Vite + TS + Pinia 前端
 tests/             单元、进程内 E2E、性能、前端 E2E、API 与全链路测试
-docs/              API 文档、技术报告、specs/（需求-设计-评审）与 specs/prompts/（评审模板）
-scripts/           run_eval / replay_eval / curate_golden / load_test / download_reranker
+docs/              HTTP API、MCP、技术报告、specs/（需求-设计-评审）与评审模板
+scripts/           eval/replay、paired/matrix/public benchmark、负载测试与本地模型准备
 utils/             log_utils / env_utils / print_utils / think_tag_utils
-data/              运行时 SQLite（sessions/inferences/candidates/eval/judge_cache）+ milvus_data.db
+data/              运行时 SQLite、Milvus Lite、RAPTOR/视觉索引与 benchmark/eval 数据
 ```
 
 > 更新于本目录的树以实际目录为准；详细的模块契约、降级矩阵、不变量见
@@ -851,7 +871,7 @@ data/              运行时 SQLite（sessions/inferences/candidates/eval/judge_
 
 以下内容会在本地运行时生成，并已通过 `.gitignore` 排除：
 
-- `data/`：会话、反馈、文档注册等 SQLite 数据
+- `data/`：会话、反馈、文档注册、评测、RAPTOR、视觉索引及文档资产
 - `milvus_data.db*`：Milvus Lite 数据库与锁文件
 - `models/local_models/`：本地 Embedding 模型
 - `web/dist/`：前端生产构建产物
@@ -870,8 +890,9 @@ ollama list
 
 ### 首次启动较慢
 
-首次运行需要下载约 91 MB 的 Embedding 模型，并加载 Milvus 与模型权重。
-后续启动和检索速度会明显提升。
+本地推理 profile 首次运行需要准备 BGE-M3、Reranker 和 Ollama 权重，完整资产为数 GB；
+`scripts/download_bge_m3.py` 还会验证 sparse/ColBERT 训练头。API-only profile 不下载这些
+本地模型。后续启动会复用本地快照和索引。
 
 ### Redis 不可用
 
@@ -884,6 +905,7 @@ Redis 是可选组件。连接失败时，系统会自动降级到 `data/session
 ## 更多文档
 
 - [API 接口文档](docs/API.md)
+- [MCP 工具契约](docs/MCP.md)
 - [系统技术报告](docs/technical_report.md)
 - [Agent Skills 说明](agent/skills/README.md)
 - [测试说明](tests/README.md)

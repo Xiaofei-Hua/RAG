@@ -2,12 +2,12 @@
 MCP Retrieval Server
 
 Exposes retrieval tools via the MCP protocol:
-- rag_retrieve: hybrid (dense + BM25) retrieval
+- rag_retrieve: shared adaptive/corrective workflow (legacy hybrid when disabled)
 - rag_search_dense: dense-only vector search
 - rag_search_sparse: BM25-only keyword search
 
-Wraps the existing core.retrieval.hybrid_retriever.HybridRetriever
-and tools.retriever_tools.RetrieverManager.
+The current server is in-process. The default rag_retrieve result contains
+documents plus redacted workflow diagnostics; see docs/MCP.md.
 """
 
 from __future__ import annotations
@@ -27,8 +27,8 @@ class MCPRetrievalServer(InProcessMCPServer):
     """
     MCP server that exposes RAG retrieval as MCP tools.
 
-    Delegates to HybridRetriever (dense + sparse) and the
-    Milvus-backed RetrieverManager from the existing codebase.
+    Delegates to the shared RetrievalWorkflow for rag_retrieve and keeps
+    explicit dense/BM25 low-level tools for diagnostics and baselines.
     """
 
     def __init__(
@@ -150,11 +150,11 @@ class MCPRetrievalServer(InProcessMCPServer):
         transform: str | None = None,
     ) -> Any:
         """
-        Hybrid retrieval using dense + BM25 via HybridRetriever.
+        Shared adaptive/corrective retrieval, with a legacy hybrid fallback.
 
-        Forwards ``filter_expr`` (Milvus pre-filter) and ``transform``
-        (hyde/multi_query) so the MCP path matches the direct-retrieval path.
-        Returns formatted result dicts with content, source, score.
+        ``filter_expr`` is enforced by the workflow's typed capability routing.
+        ``transform`` is a legacy-path compatibility input; the default planner
+        selects its own bounded transform. See docs/MCP.md for both result shapes.
         """
         top_k = top_k or self._default_top_k
 

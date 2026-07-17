@@ -2,9 +2,12 @@
 Retrieval Router — 知识库向量/关键词检索
 
 提供三种检索策略，全部不调用 LLM，仅做知识库匹配：
-- 混合检索 (dense + BM25 + RRF fusion)
+- 混合检索 (dense + active sparse backend + RRF/optional rerank)
 - 纯向量检索 (dense only)
 - 纯关键词检索 (BM25 sparse only)
+
+These are low-level retrieval endpoints. Chat Fast/Thinking and MCP
+rag_retrieve use the higher-level RetrievalWorkflow instead.
 """
 
 from __future__ import annotations
@@ -103,7 +106,7 @@ def _build_response(query: str, results, elapsed_ms: float) -> RetrievalResponse
 @router.post("", response_model=RetrievalResponse)
 async def hybrid_retrieve(req: RetrievalRequest):
     """
-    混合检索 — dense 向量 + BM25 关键词，RRF 融合排序。
+    混合检索 — dense + 当前 sparse backend，RRF 融合并可选重排。
 
     适用场景：通用检索，兼顾语义匹配和关键词精确匹配。
     """

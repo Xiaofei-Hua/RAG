@@ -3,6 +3,7 @@
 > Base URL: `http://{host}:8000`
 >
 > 本文档供外部系统集成使用，涵盖所有 HTTP 接口、请求/响应格式及 SSE 流式协议。
+> 当前进程内 MCP 工具不是 HTTP 接口，其独立契约见 [MCP.md](MCP.md)。
 
 ---
 
@@ -96,8 +97,13 @@ POST /api/chat
 
 | 值 | 说明 | LLM 调用次数 | 适用场景 |
 |----|------|--------------|----------|
-| `thinking` | 深度思考模式，经过意图分析 → Agent → 检索 → 文档评估 → 生成完整流程 | 4+ | 需要高精度诊断的场景 |
-| `fast` | 快速模式，直接检索知识库 + 生成回答，跳过意图分类与文档评估 | 1 | 需要快速响应的场景 |
+| `thinking` | 深度思考模式，经过意图分析 → Agent → 共享检索工作流 → 文档评估 → 生成 | 4+ | 需要深度分析、改写和评估的场景 |
+| `fast` | 跳过 Agent/Grade/Rewrite，但复用共享检索工作流后生成 | 1 | 需要快速响应的场景 |
+
+共享检索工作流会进行问题类型规划、查询表示复用、混合召回、authority/证据选择和最多一次
+改变检索策略的纠正重试。只有 `accept` 状态进入 LLM 生成；`weak`、`conflict`、`empty`
+会直接返回安全的信息缺口、版本冲突或无证据提示。设置
+`RETRIEVAL_WORKFLOW_ENABLED=false` 可回滚旧检索路径。
 
 #### 响应体
 
@@ -130,7 +136,13 @@ POST /api/chat
     "section_labels": ["摘要", "要点", "步骤", "备注", "来源", "信息缺口"],
     "route": "rag",
     "prompt_profile": "general_v1",
-    "force_rag": false
+    "force_rag": false,
+    "reasoning": "...",
+    "confidence": 0.86,
+    "confidence_level": "high",
+    "refused": false,
+    "message_id": "msg_abc123",
+    "trace_id": "trace_abc123"
   }
 }
 ```
@@ -148,6 +160,17 @@ POST /api/chat
 | `metadata.prompt_profile` | string | Prompt 配置标识 |
 | `metadata.structured_answer` | StructuredAnswer \| null | 结构化回答数据（仅当 active profile 定义了 `section_template` 时返回；字段为通用位置槽位，展示标签见 `section_labels`） |
 | `metadata.section_labels` | string[] | active profile 的 section_template 标签，按位置对应 `structured_answer` 字段（用于 UI 渲染领域相关标题） |
+| `metadata.reasoning` | string | Thinking 模式捕获的 Qwen3 reasoning；其它路径通常为空字符串 |
+| `metadata.confidence` | float \| null | 可用时的复合置信度；不可用保持 `null`，不会伪造为 0 |
+| `metadata.confidence_level` | string | `high` / `medium` / `low` / `unknown` |
+| `metadata.refused` | boolean | 是否因证据不足、冲突或安全边界拒绝正常生成 |
+| `metadata.message_id` | string | 消息标识，用于反馈关联 |
+| `metadata.trace_id` | string | 推理 trace 标识，用于评测飞轮和排障 |
+| `metadata.retrieval_time_ms` | float | 仅 Fast 路径附带的检索耗时 |
+| `metadata.generation_time_ms` | float | 仅 Fast 路径附带的生成耗时；安全终止时为 0 |
+
+正常 `rag` / `general_chat` / `fast` 路径返回上述统一字段集合；极端异常进入 `degraded`
+路径时，`metadata` 只保证 `route`，并尽量提供 `error`、`message_id`、`trace_id`。
 
 **`metadata.route` 取值说明：**
 
@@ -155,7 +178,7 @@ POST /api/chat
 |----|------|
 | `rag` | 深度思考模式，经过完整 RAG 流程 |
 | `general_chat` | 通用闲聊，直接 LLM 回答 |
-| `fast` | 快速检索模式，直接检索 + 生成 |
+| `fast` | 共享检索工作流 + 单次生成；跳过 Agent/Grade/Rewrite |
 | `degraded` | 降级模式，服务异常时的兜底回答 |
 
 ---
@@ -449,7 +472,10 @@ POST /api/documents/upload
 
 | 字段 | 类型 | 必填 | 说明 |
 |------|------|------|------|
-| `file` | File | 是 | 文档文件，支持 `.md`、`.txt`、`.pdf` |
+| `file` | File | 是 | 文档文件，支持 `.md`、`.txt`、`.pdf`、`.docx`、`.pptx`、`.html`、`.htm` |
+
+默认最大上传大小为 50 MB，可通过 `MAX_UPLOAD_BYTES` 调整。DOCX/PPTX/HTML 解析需要安装
+`doc` extra 中的相应本地依赖。
 
 PDF 上传支持带图片、表格、图表或扫描页的混合 PDF。系统会索引可抽取的文字层，
 将明确保留列分隔的表格转换为 Markdown 表格 chunk，并在 metadata 中记录页码、
@@ -462,6 +488,14 @@ PDF 上传支持带图片、表格、图表或扫描页的混合 PDF。系统会
 下载官方模型到 `~/.paddlex/official_models/`；CPU 环境默认禁用 PaddleX
 MKLDNN 路径以提升兼容性。执行 `deploy.sh --build-offline-bundle` 时，该模型
 缓存会被复制到离线部署包中的 `paddleocr/official_models/`。
+
+可选摄入通道均默认关闭：
+
+- `CONTEXTUAL_INDEX_ENABLED=true`：为新 collection 写入 bounded `index_text`，同时保留原始
+  `display_text`；禁止在现有 collection 上原地开启。
+- `RAPTOR_ENABLED=true`：后台构建并原子发布 source generation；失败不影响 Milvus/BM25 主索引。
+- `COLPALI_ENABLED=true`：为 PDF 每页维护 hash-addressed 视觉索引；本地模型缺失、OOM 或页面
+  处理失败时回退 OCR/文本，运行时不会下载模型。
 
 #### 响应体
 
@@ -669,13 +703,17 @@ POST /api/sessions/{session_id}/extend
 
 ## 5. 知识库检索
 
-> 所有检索端点**不调用 LLM**，仅做知识库匹配，响应速度通常在 100~500ms。
+> 所有检索端点**不调用 LLM**，仅做知识库匹配。延迟取决于语料、索引、设备和是否启用
+> Cross-Encoder；公开 benchmark 只能作为参考，不构成固定 SLA。
+>
+> 这三个端点是显式低层检索 API，不返回 planner/corrective diagnostics，也不执行聊天入口的
+> 完整 `RetrievalWorkflow`。Fast、Thinking 和 MCP `rag_retrieve` 才默认使用共享工作流。
 
 ### 三种检索策略对比
 
 | 策略 | 端点 | 原理 | 适用场景 |
 |------|------|------|----------|
-| 混合检索 | `POST /api/retrieval` | dense 向量 + BM25 关键词，RRF 融合排序 | 通用检索，兼顾语义和关键词 |
+| 混合检索 | `POST /api/retrieval` | dense + 当前 sparse backend（本地 BGE-M3 native sparse 或 BM25）+ RRF/可选重排 | 通用检索或 baseline 对照 |
 | 纯向量检索 | `POST /api/retrieval/dense` | 仅 embedding 余弦相似度 | 意思相近但关键词不同的查询 |
 | 纯关键词检索 | `POST /api/retrieval/sparse` | 仅 BM25 词频匹配 | 精确关键词（标识符、配置项、错误代码） |
 
@@ -687,7 +725,9 @@ POST /api/sessions/{session_id}/extend
 POST /api/retrieval
 ```
 
-同时执行 dense 向量检索和 BM25 关键词检索，通过 Reciprocal Rank Fusion (RRF) 融合排序，返回综合最优结果。
+同时执行 dense 向量检索和当前 sparse backend。本地默认 BGE-M3 使用 Milvus native sparse；
+API embedding、非 BGE-M3 或训练 sparse head 不可用时使用 BM25。结果经 Reciprocal Rank
+Fusion (RRF) 融合，并在启用时经过 Cross-Encoder/MMR。该端点保持固定的低层检索契约。
 
 #### 请求体
 
@@ -733,7 +773,7 @@ curl -X POST http://localhost:8000/api/retrieval \
 POST /api/retrieval/dense
 ```
 
-仅使用 embedding 向量相似度搜索（Milvus IVF/AUTOINDEX），不经过 BM25 和 RRF。
+仅使用 embedding 向量相似度搜索（Milvus 配置的索引，默认 AUTOINDEX），不经过 BM25 和 RRF。
 
 #### 请求体 / 响应体
 
@@ -1154,6 +1194,10 @@ GET /api/admin/config
 
 ```json
 {
+  "runtime_config": {
+    "schema_version": 1,
+    "fingerprint": "a1b2c3d4e5f6"
+  },
   "llm": {
     "model": "qwen3:14b",
     "temperature": 0.0,
@@ -1162,10 +1206,11 @@ GET /api/admin/config
     "max_retries": 1
   },
   "embedding": {
-    "model": "BAAI/bge-small-zh-v1.5",
+    "model": "BAAI/bge-m3",
+    "model_source": "/path/to/models/local_models/bge-m3",
     "provider": "local",
-    "local_path": "/path/to/models/local_models/bge-small-zh-v1.5",
-    "dimension": 512,
+    "local_path": "/path/to/models/local_models/bge-m3",
+    "dimension": 1024,
     "device": "cuda",
     "normalize": true,
     "batch_size": 8,
@@ -1179,7 +1224,7 @@ GET /api/admin/config
     "warmup": false,
     "candidate_top_k": 10,
     "top_k": 5,
-    "batch_size": 8
+    "batch_size": 4
   },
   "opentelemetry": {
     "enabled": false,
@@ -1194,7 +1239,7 @@ GET /api/admin/config
   },
   "pdf_ingestion": {
     "extract_tables": true,
-    "ocr_enabled": true,
+    "ocr_enabled": false,
     "ocr_engine": "paddleocr",
     "ocr_lang": "ch",
     "ocr_dpi": 220,
@@ -1234,13 +1279,22 @@ interface ChatResponse {
   sources: SourceDocument[]
   processing_time_ms: number
   metadata: {
-    intent_confidence: number
-    intent_reasoning: string
-    source_count: number
-    diagnosis: StructuredAnswer | null
+    intent_confidence?: number
+    intent_reasoning?: string
+    source_count?: number
+    structured_answer?: StructuredAnswer | null
+    section_labels?: string[]
     route: "rag" | "general_chat" | "fast" | "degraded"
-    prompt_profile: string
-    force_rag: boolean
+    prompt_profile?: string
+    force_rag?: boolean
+    reasoning?: string
+    confidence?: number | null
+    confidence_level?: "high" | "medium" | "low" | "unknown"
+    refused?: boolean
+    message_id?: string
+    trace_id?: string
+    retrieval_time_ms?: number
+    generation_time_ms?: number
   }
 }
 ```
@@ -1252,7 +1306,7 @@ interface SourceDocument {
   content: string
   source?: string
   title?: string
-  score: number
+  score?: number
   retrieval_score?: number      // RRF 融合分数
   rerank_score?: number         // Cross-Encoder 重排分数
   rerank_applied?: boolean      // 本次是否成功应用重排
@@ -1453,14 +1507,15 @@ curl -X POST http://localhost:8000/api/feedback \
 
 ```
 深度思考模式 (mode="thinking"):
-  用户消息 → 意图分类(LLM) → Agent决策(LLM) → 向量检索 → 文档评估(LLM) → 生成回答(LLM)
-             ──────────────────────────────────────────────────────────────────────────────
-             约 4+ 次 LLM 调用，耗时 15~30 秒，精度高
+  用户消息 → 意图分类 → Agent决策 → RetrievalWorkflow → 文档评估 → 生成回答
+                                      │
+                                      └─ weak/conflict/empty → 安全终止，不调用生成 LLM
+             约 4+ 次 LLM 调用；延迟取决于模型、硬件、改写轮数和上下文
 
 快速模式 (mode="fast"):
-  用户消息 → 向量检索 → 生成回答(LLM)
-             ──────────────────────────
-             仅 1 次 LLM 调用，耗时 3~8 秒，速度快
+  用户消息 → RetrievalWorkflow → accept → 生成回答(LLM)
+                              └→ weak/conflict/empty → 安全终止
+             最多 1 次生成 LLM 调用；安全终止为 0 次，延迟取决于部署硬件
 ```
 
 ---
@@ -1474,7 +1529,7 @@ curl -X POST http://localhost:8000/api/feedback \
 | 依赖安装 | `uv sync --extra ocr --extra local-models` | `uv sync --extra api-only`（或裸 sync） |
 | torch / 本地权重 | ✅ 含（embedding + reranker 本地推理） | ❌ 不含（镜像 ~0.43 GB，无 GPU 友好） |
 | LLM | 本地 Ollama（`OPENAI_BASE_URL=http://localhost:11434/v1`） | DashScope Qwen 或任意 OpenAI 兼容端点 |
-| Embedding | 本地 BGE（`EMBEDDING_PROVIDER=local`） | DashScope `text-embedding-v3`（`EMBEDDING_PROVIDER=api`） |
+| Embedding | 本地 BGE-M3 1024 维（`EMBEDDING_PROVIDER=local`） | DashScope `text-embedding-v3`（`EMBEDDING_PROVIDER=api`） |
 | Reranker | 本地 bge-reranker-v2-m3（`RERANKER_ENABLED=true`） | 关闭，回退 RRF 顺序（`RERANKER_ENABLED=false`） |
 | 镜像 | `deploy.sh` 裸机部署（≥ 8 GB 含权重） | `docker build -t rag-platform:api-only .`（< 4 GB） |
 
@@ -1486,7 +1541,11 @@ curl -X POST http://localhost:8000/api/feedback \
 | `DASHSCOPE_API_KEY` | — | **必填**（运行时注入） | DashScope embedding 鉴权；空值会 fail-fast |
 | `DASHSCOPE_BASE_URL` | — | `https://dashscope.aliyuncs.com` | 可覆盖为内网网关 |
 | `OPENAI_BASE_URL` | `http://localhost:11434/v1` | `https://dashscope.aliyuncs.com/compatible-mode/v1` | LLM 端点 |
-| `EMBEDDING_DIMENSION` | 512（BGE-small） | 512（v3 合法集合之一） | 必须 = Milvus collection 维度 |
+| `EMBEDDING_DIMENSION` | 1024（BGE-M3） | 512（v3 合法集合之一） | 必须 = Milvus collection 维度 |
+| `RETRIEVAL_WORKFLOW_ENABLED` | `true` | `true` | Fast/Thinking/MCP 的共享 plan、纠正与终态；`false` 回滚 legacy |
+| `RETRIEVAL_CANDIDATE_FUNNEL_ENABLED` | `false` | `false` | 控制实验未通过稳定收益门禁 |
+| `CONTEXTUAL_INDEX_ENABLED` | `false` | `false` | 只能在新 collection 上实验 |
+| `COLBERT_RERANK_ENABLED` / `RAPTOR_ENABLED` / `GRAPH_PPR_ENABLED` / `COLPALI_ENABLED` | `false` | `false` | 真实模型/私域 promotion 前保持关闭 |
 
 > **安全**：`DASHSCOPE_API_KEY` / `OPENAI_API_KEY` / `ADMIN_API_KEY` 均为运行时 secret，
 > 通过 `docker run -e` 或 secret 挂载注入，**绝不烘进镜像**。`/api/admin/config` 响应中

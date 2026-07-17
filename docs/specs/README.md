@@ -63,6 +63,21 @@ docs/specs/
 > 历史产物 `bugfix-batch-1/review/` 是模板之前的即兴散文形态，实质质量高但结构不统一；
 > 自模板起，所有新 spec 的 `review/` 必须按 `prompts/` 模板产出。
 
+## Current Retrieval Specifications
+
+以下文档共同描述当前检索事实。历史 spec 保留当时的迁移背景；发生冲突时，以当前代码、
+根/子目录 `AGENTS.md` 和下表的最终 benchmark-results 为准。
+
+| Spec | 当前职责 | 关键事实 |
+|---|---|---|
+| `retrieval-backend-modernization/` | BGE-M3、native sparse、late chunking 与 collection identity 基础 | 本地默认 BGE-M3/1024；训练 head 缺失时安全降级 |
+| `retrieval-frontier-optimization/` | shared planner/corrective workflow、authority、selector 与可选 frontier 通道 | Workflow 默认开；funnel/contextual/frontier 默认关；结果见 `benchmark-results.md` |
+| `retrieval-benchmark-expansion/` | 八变体矩阵、Nano-BEIR/MIRACL adapter、证据等级与 Pareto | 私域策略必须由 private golden 决定；结果见 `benchmark-results.md` |
+| `graphrag/` | one-hop graph leg、过滤与图存储契约 | `GRAPH_RAG_ENABLED` 默认关；Graph PPR 是 frontier spec 的额外默认关闭层 |
+
+对外入口：HTTP 契约见 `../API.md`；进程内 MCP 契约见 `../MCP.md`；技术汇总见
+`../technical_report.md`。
+
 ## 横切工程治理批（`engineering-governance-optimization/`）
 
 `engineering-governance-optimization/` 是对**整个工程治理面**（CI 门禁、仓库瘦身、测试纪律、类型/lint 工具链、版本发布）的一次性横切优化 spec，独立于 `bugfix-batch-1/2` 的代码 bugfix。

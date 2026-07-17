@@ -63,7 +63,7 @@
 ```bash
 # 后端
 python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
-uv run uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload    # 开发
+uv run --frozen uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload    # 开发
 
 # 单元 + 进程内 E2E（CI 可跑，无 Ollama/Milvus）
 python -m pytest tests/unit/ tests/e2e/ -q
@@ -72,6 +72,13 @@ python -m pytest tests/unit/test_x.py::test_y -q                   # 迭代期�
 # 评测飞轮
 uv run --frozen python scripts/run_eval.py --no-judge --concurrency 8
 uv run --frozen python scripts/run_eval.py --tag ci --fail-on-regression
+
+# 检索 benchmark（真实本地模型；每个变体使用隔离进程/存储）
+uv run --frozen python scripts/run_paired_benchmark.py \
+  --dataset data/benchmark/builtin_general.yaml --top-k 4 --repeats 3
+uv run --frozen --extra benchmark python scripts/run_benchmark_matrix.py \
+  --matrix data/benchmark/retrieval_baselines.yaml \
+  --dataset data/benchmark/builtin_general.yaml --schedule balanced --top-k 4 --repeats 3
 
 # 前端 Playwright（需 web/dist + 后端）
 cd web && npm run build && cd .. && npx playwright test --config=web/playwright.config.ts
@@ -86,25 +93,28 @@ python -c "import api.main; print('OK')"
 
 ## 4. Architecture Overview
 
-企业级**领域自适应** RAG 智能平台（默认领域无关；按 `DOMAIN_PROFILE` 切换/新增领域，仓库自带可选示例 `aviation_phm` profile 用于演示嵌入航空航天领域），**Harness + Skills + MCP** 架构，FastAPI + LangGraph + Qwen3:14b（Ollama）+ Milvus Lite + 可替换 Embedding（默认 BGE-small-zh-v1.5），面向内网/离线/气隙部署。
+企业级**领域自适应** RAG 智能平台（默认领域无关；按 `DOMAIN_PROFILE` 切换/新增领域，仓库自带可选示例 `aviation_phm` profile 用于演示嵌入航空航天领域），**Harness + Skills + MCP** 架构，FastAPI + LangGraph + Qwen3:14b（Ollama）+ Milvus Lite + 可替换 Embedding（本地默认 BGE-M3/1024 维；API-only 默认 DashScope），面向内网/离线/气隙部署。
 
 ```
 agent/      # 编排层：harness/skills/context/mcp/eval/guardrails/feedback/memory/metrics
 api/        # FastAPI 应用与路由（chat/documents/sessions/admin/feedback/retrieval）+ 中间件
-core/       # 基础设施：retrieval/fallback/memory/prompts/intent/tracing/context
+core/       # 基础设施：retrieval workflow/planner/corrective/frontier + fallback/memory/prompts/intent/tracing
 documents/  # 文档解析（markdown/pdf/ocr）+ 注册表 + Milvus 管理 + parent_store
 models/     # LLM/Embedding/model_router
 web/        # Vue 3 + Vite + TS + Pinia 前端
 tests/      # 测试矩阵（unit/e2e/perf/api/integration/e2e_ui）
-docs/       # API.md/technical_report.md/specs/（需求-设计-评审）/specs/prompts/（评审模板）
-scripts/    # run_eval/replay_eval/curate_golden/load_test/download_reranker
+docs/       # HTTP API/MCP/technical_report/specs（需求-设计-评审）/specs/prompts（评审模板）
+scripts/    # eval/replay/paired+matrix+public benchmark/load_test/model preparation
 utils/      # log_utils/env_utils/print_utils/think_tag_utils
-data/       # 运行时 SQLite（sessions/inferences/candidates/eval/judge_cache）+ milvus_data.db
+data/       # 运行时 SQLite + Milvus Lite + RAPTOR/visual index + benchmark/eval 数据
 ```
 
 **详细契约**：编排层 `agent/AGENTS.md`；基础设施与降级矩阵 `core/AGENTS.md`；前端 `web/AGENTS.md`；测试 `tests/AGENTS.md`。
 **Entry Points**：API → `agent.harness.get_agent_harness()`（单例）；CLI → `AgentHarness.invoke()`。
 **Graph 拓扑**：Thinking `START→agent→[tools_condition]→retrieve→grade→[generate|rewrite→agent]`；Fast `retrieve→generate`（`core/fast_mode` 直连）。
+**共享检索边界**：Thinking 的 `retrieve`、Fast 和 MCP `rag_retrieve` 默认统一调用
+`core/retrieval/workflow.py`；状态为 `accept|weak|conflict|empty`，只允许一次改变请求身份的纠正重试。
+`RETRIEVAL_WORKFLOW_ENABLED=false` 回滚旧路径；ColBERT/RAPTOR/Graph PPR/ColPali 默认关闭。
 
 ---
 
@@ -165,7 +175,8 @@ data/       # 运行时 SQLite（sessions/inferences/candidates/eval/judge_cache
 
 ## 10. Data & Persistence
 
-运行时落盘：`data/` 下 sessions/inferences/candidates/eval/judge_cache/retrieval_misses SQLite + `milvus_data.db` + checkpoints.db。**所有落盘路径必须保持模块级属性**，以便 `tests/conftest.py` 重定向到 `tmp_path`。
+运行时落盘：`data/` 下 sessions/inferences/candidates/eval/judge_cache/retrieval_misses、
+RAPTOR/visual index 与文档资产 + `milvus_data.db` + `checkpoints.db`。**所有落盘路径必须保持模块级属性**，以便 `tests/conftest.py` 重定向到 `tmp_path`。
 
 ---
 
@@ -207,7 +218,7 @@ data/       # 运行时 SQLite（sessions/inferences/candidates/eval/judge_cache
 | 子文件 | 内容 |
 |--------|------|
 | `agent/AGENTS.md` | Skills 契约不变量、shared_state 键所有权、Graph 拓扑、Adding a Skill、单例并发 |
-| `core/AGENTS.md` | 完整 11 行降级矩阵、熔断器参数、检索栈、Prompt 单源 |
+| `core/AGENTS.md` | 完整检索/生成降级矩阵、熔断器参数、检索栈、Prompt 单源 |
 | `web/AGENTS.md` | Vue+Pinia+Playwright 约定、web/dist 契约 |
 | `tests/AGENTS.md` | 测试分层矩阵、conftest 密封性、确定性纪律、热路径测试、Golden test |
 | `docs/specs/prompts/` | critic/defender/tracking 评审模板（严重性量表、8 字段 schema、FMEA/STRIDE、闭环追踪） |

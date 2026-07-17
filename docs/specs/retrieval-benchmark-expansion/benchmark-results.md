@@ -187,3 +187,4 @@ uv run --frozen --extra benchmark python scripts/run_benchmark_matrix.py \
 | Process-internal E2E | `92 passed, 2 skipped` |
 | Branch coverage | `72%` (`fail-under=60`) |
 | Static/import/diff audit | passed |
+| Documentation closure | README/API/MCP/technical report/AGENTS/Skills/tests/spec index synchronized; current full matrix `1067 passed, 6 skipped` |

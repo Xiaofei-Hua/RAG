@@ -1,7 +1,7 @@
 # 领域自适应 RAG 智能问答平台技术报告
 
 > 测试环境：WSL2 Ubuntu / NVIDIA RTX 5070 Ti 16GB / Ollama 0.24.0
-> 测试日期：2026-05-27
+> 文档同步日期：2026-07-17；LLM 延迟表为 2026-05-27 历史基线，检索 benchmark 为 2026-07-16/17 隔离复测
 > 领域 profile：本报告的实测数据在可选示例 aviation_phm profile（`DOMAIN_PROFILE=aviation_phm`）下采集；平台本身领域无关，默认 `general`，可按 `DOMAIN_PROFILE` + `data/profiles/*.yaml` 切换/新增领域。
 
 ---
@@ -13,7 +13,8 @@
 - **后端**：FastAPI + LangGraph + Milvus Lite
 - **前端**：Vue 3 + Vite + TypeScript
 - **LLM**：Qwen3-14B（本地 Ollama 部署，Q4_K_M 量化）
-- **Embedding**：默认 BGE-small-zh-v1.5（本地部署，可替换）
+- **Embedding**：本地默认 BGE-M3（1024 维、dense + native sparse，可替换）；API-only 默认 DashScope
+- **检索编排**：Fast、Thinking、MCP 共用 adaptive/corrective `RetrievalWorkflow`
 
 ---
 
@@ -90,10 +91,14 @@ sudo ./deploy.sh --build-offline-bundle
 预热阶段会下载或验证以下资产：
 
 1. Ollama LLM 模型，存放于 `models/local_models/ollama`。
-2. Embedding 模型，存放于 `models/local_models/bge-small-zh-v1.5`。
+2. BGE-M3 Embedding 模型，存放于 `models/local_models/bge-m3`；下载器校验训练好的
+   `sparse_linear.pt` 与 `colbert_linear.pt`，不允许随机初始化 head 进入索引。
 3. Reranker 模型，存放于 `models/local_models/reranker/...`，避免依赖用户级 Hugging Face cache。
 4. PaddleOCR 官方模型，默认缓存于 `~/.paddlex/official_models`。
 5. Python wheelhouse 和前端 `web/dist` 构建产物。
+
+ColPali 是默认关闭的实验通道，不属于标准运行资产。需要时由操作员显式执行
+`uv run --frozen python scripts/download_colpali.py`；运行时不会联网下载。
 
 离线包输出为 `offline_bundle/rag_offline_bundle_<timestamp>.tar.gz`，包含项目代码、
 `requirements.lock.txt`、`wheelhouse/`、`models/local_models/`、PaddleOCR cache、
@@ -109,6 +114,9 @@ sudo ./deploy.sh --build-offline-bundle
 ### 2.5 推理性能实测
 
 测试硬件：NVIDIA RTX 5070 Ti 16GB（GPU 占用约 12GB，14B Q4_K_M 量化）
+
+本节保留 2026-05-27 的 LLM/端到端历史基线，用于说明生成开销；当前检索性能与 promotion
+结论以第 13 节的 2026-07-16/17 隔离 benchmark 为准，两类数字不可直接混用。
 
 #### 基础 LLM 调用
 
@@ -145,44 +153,27 @@ sudo ./deploy.sh --build-offline-bundle
 用户请求
    │
    ▼
-┌──────────────────────────────────────────────────┐
-│  FastAPI API 层 (:8000)                           │
-│  ┌─────────┐ ┌──────────┐ ┌────────┐ ┌───────┐  │
-│  │  Chat   │ │ Documents│ │Session │ │ Admin │  │
-│  │ Router  │ │  Router  │ │ Router │ │Router │  │
-│  └────┬────┘ └────┬─────┘ └───┬────┘ └───┬───┘  │
-│       │           │           │          │       │
-│  ┌────▼────────────▼───────────▼──────────▼───┐  │
-│  │        Middleware (Tracing / Error)         │  │
-│  └─────────────────┬──────────────────────────┘  │
-└────────────────────┼─────────────────────────────┘
-                     │
-        ┌────────────┼────────────┐
-        ▼            ▼            ▼
-   ┌─────────┐ ┌──────────┐ ┌────────────┐
-   │ Thinking│ │   Fast   │ │  General   │
-   │  Mode   │ │   Mode   │ │    Chat    │
-   └────┬────┘ └────┬─────┘ └─────┬──────┘
-        │           │             │
-        ▼           ▼             ▼
-   ┌────────────────────────────────────────┐
-   │           LangGraph Pipeline           │
-   │  Agent → Retrieve → Grade → Generate  │
-   │         (或直接 Retrieve → Generate)    │
-   └────────────────┬───────────────────────┘
-                    │
-        ┌───────────┼───────────┐
-        ▼           ▼           ▼
-   ┌─────────┐ ┌─────────┐ ┌──────────┐
-   │ Milvus  │ │  BM25   │ │  Redis   │
-   │  Lite   │ │ Retriever│ │ Memory   │
-   │(Dense)  │ │(Sparse) │ │(Session) │
-   └─────────┘ └─────────┘ └──────────┘
-        │           │
-        ▼           ▼
-   ┌──────────────────────────┐
-   │  RRF 融合 → 重排序 → TopK │
-   └──────────────────────────┘
+FastAPI（Chat / Documents / Sessions / Admin / Retrieval）
+   │
+   ├─ General Chat ───────────────────────────────► LLM
+   │
+   ├─ Thinking ─► Agent ─► RetrieveSkill ─► Grade/Rewrite/Generate
+   │                         │
+   ├─ Fast ──────────────────┤
+   │                         ▼
+   └─ MCP rag_retrieve ─► Shared RetrievalWorkflow
+                             │
+                             ├─ typed plan + bounded budgets
+                             ├─ request-local query representation
+                             ├─ Dense + native sparse/BM25 + optional healthy channels
+                             ├─ RRF + Cross-Encoder + authority + selector
+                             └─ accept | weak | conflict | empty
+                                      │
+                                      ├─ accept ─► generation
+                                      └─ others ─► safe terminal response
+
+Documents ingestion ─► Milvus/BM25 main index
+                    └► optional contextual/RAPTOR/visual generations（default off）
 ```
 
 ### 3.2 双流水线设计
@@ -191,13 +182,14 @@ sudo ./deploy.sh --build-offline-bundle
 
 | 维度 | Thinking 模式 | Fast 模式 |
 |------|-------------|-----------|
-| 流水线 | 意图→Agent→检索→评分→重写→生成 | 检索→生成 |
+| 外层流水线 | 意图→Agent→RetrieveSkill→评分→重写/生成 | RetrievalWorkflow→生成 |
 | LLM 调用次数 | 4-6 次 | 1 次 |
 | Qwen3 Thinking | **开启**（捕获推理过程） | **关闭**（/no_think） |
 | 推理过程 | 返回 800-1,600 字符推理内容 | 无推理内容 |
-| 典型延迟 | 10-18 秒 | 9-11 秒 |
+| 典型延迟 | 受多轮本地 LLM 调用影响 | 主要由单次生成决定 |
 | 适用场景 | 复杂结构化分析、深度回答 | 高频查询、快速响应 |
-| 检索质量 | 带查询重写，更高 | 直接检索 |
+| 检索内核 | 共享 planner/corrective workflow，外层仍可追加 Grade/Rewrite | 同一 workflow，无外层 Grade/Rewrite |
+| 安全终态 | weak/conflict/empty 不进入正常生成 | 同左 |
 | Reasoning 传递 | `metadata.reasoning` 返回前端 | 无 |
 
 ---
@@ -208,12 +200,18 @@ sudo ./deploy.sh --build-offline-bundle
 
 | 参数 | 数值 |
 |------|------|
-| 模型 | BAAI/bge-small-zh-v1.5 |
-| 向量维度 | **512** |
-| 运行设备 | CPU |
+| 本地默认模型 | `BAAI/bge-m3` |
+| 向量维度 | **1024** |
+| 表示 | dense + lexical sparse + 可选 ColBERT token vectors |
+| 最大输入 | 8,192 tokens；FlashAttention 不可用时安全下调 |
+| 运行设备 | `auto`：CUDA wheel 含本机 `sm_xx` 时用 GPU，否则 CPU |
 | 批处理大小 | 8 |
 | 归一化 | True |
-| 模型大小 | ~91 MB |
+| 资产完整性 | native sparse/ColBERT 必须存在训练好的 `sparse_linear.pt` / `colbert_linear.pt` |
+
+`EMBEDDING_PROVIDER=auto` 在 torch 与 `langchain-huggingface` 可导入时选择本地 BGE-M3；
+torch-less API-only profile 自动选择 DashScope `text-embedding-v3`。缺少训练 head 时不会使用
+随机初始化权重：dense 保留，sparse 回退 BM25，ColBERT 关闭。
 
 ### 4.2 向量数据库（Milvus Lite）
 
@@ -222,39 +220,53 @@ sudo ./deploy.sh --build-offline-bundle
 | 存储后端 | SQLite（本地文件 `milvus_data.db`） |
 | Collection | `rag_knowledge_base` |
 | 索引类型 | AUTOINDEX |
-| 度量类型 | IP（内积） |
+| Dense | `FLOAT_VECTOR(1024)`，IP（归一化后等价 cosine 排序） |
+| Native sparse | BGE-M3 时增加 `SPARSE_FLOAT_VECTOR` + `SPARSE_INVERTED_INDEX` |
 | 最大文本长度 | 4,000 字符 |
 | 最大元数据长度 | 500 字符 |
 | 批处理大小 | 20 |
 | 一致性级别 | Bounded |
 
-### 4.3 混合检索策略
+### 4.3 自适应检索与排序策略
 
-系统采用 **Dense + Sparse（BM25）双路召回 + RRF 融合**策略：
+默认 plan 仍以 Dense/Sparse 各 0.5 为安全基础，但 `RetrievalPlanner` 会根据 exact、procedure、
+comparison、multi-hop、global-summary、visual 等问题类型调整权重、候选预算、facet 与健康通道。
 
-| 参数 | Dense 路径 | Sparse 路径 |
-|------|-----------|-------------|
-| 模型 | BGE-small-zh-v1.5 | BM25 |
-| 权重 | 0.5 | 0.5 |
-| Top-K | 5 | 5 |
-| RRF 常数 k | 60 | 60 |
-| 最终 Top-K | 3 | 3 |
+```text
+plan
+  -> Dense + native sparse（或 BM25 fallback）
+  -> optional Graph/ColBERT/RAPTOR/ColPali（默认关闭且需能力/过滤匹配）
+  -> RRF(k=60)
+  -> bge-reranker-v2-m3（默认开启）
+  -> authority/version ordering
+  -> facet/parent-aware evidence selection
+  -> accept | weak | conflict | empty
+```
 
-**BM25 参数**：k1=1.5, b=0.75
-
-**重排序器**：cross-encoder/ms-marco-MiniLM-L-6-v2（Top-5，本次 baseline 测量时的配置；当前默认已切换为 `BAAI/bge-reranker-v2-m3` 并默认开启）
+静态 enlarged candidate funnel 与 contextual index 在控制实验中没有稳定收益，因此默认关闭。
+ColBERT、RAPTOR、Graph PPR 与 ColPali 只完成 deterministic/synthetic 算法闭环，尚未获得
+真实模型和私域语料的 promotion 资格。
 
 ### 4.4 检索性能实测
 
-| 查询 | 检索耗时 | 文档数 | Dense 命中 | Sparse 命中 |
-|------|---------|--------|-----------|------------|
-| 发动机振动偏高（冷启动） | 2,397 ms | 3 | 5 | 0 |
-| 液压系统压力低（热启动） | 19 ms | 3 | 5 | 0 |
-| 起落架收放超时（热启动） | 14 ms | 3 | 5 | 0 |
+2026-07-16/17 的独立进程 AB/BA 结果如下；每个 dataset×variant 使用独立 Milvus、collection、
+registry、cache namespace 和可选 store，排除顺序与热缓存串扰：
 
-> 冷启动包含模型加载和索引构建耗时，热启动检索仅需 14-20 ms。
+| 数据集 | Recall control→workflow | nDCG control→workflow | Warm P95 ms control→workflow | Query forwards control→workflow |
+|---|---:|---:|---:|---:|
+| builtin general | 1.000→1.000 | 1.000→1.000 | 104.1→66.1 | 56→24 |
+| CMRC2018 | 1.000→1.000 | 0.934→0.971 | 177.5→146.2 | 210→90 |
+| HotpotQA | 0.917→0.917 | 0.915→0.919 | 169.5→141.8 | 210→90 |
+| MS MARCO judged | 0.900→0.900 | 0.773→0.795 | 135.6→105.5 | 140→60 |
+
+四个数据集 Recall 无损，MRR/nDCG 持平或提升，query embedding forwards 下降约 57%。
+完整证据、限制和复现命令见第 13 节。
 
 ### 4.5 文档分块策略
+
+上传路由支持 `.md`、`.txt`、`.pdf`、`.docx`、`.pptx`、`.html`、`.htm`；Office/HTML
+格式依赖 `doc` extra。主摄入始终先保证 Milvus 与 BM25/native sparse 可用，contextual、
+RAPTOR 与 visual generation 均为可选旁路，失败不阻断主索引。
 
 #### PDF 结构化解析与 OCR
 
@@ -298,7 +310,7 @@ START
 └────┬─────┘                      │
      │ tools_condition             │
      ├─ 需要检索 ──→ Retrieve      │ END（直接回答）
-     │              (ToolNode)     │
+     │          (RetrievalWorkflow)│
      │                 │           │
      │                 ▼           │
      │           Grade Documents   │
@@ -317,12 +329,16 @@ START
      │               (最多重写3次)
 ```
 
+`Retrieve` 内部先产生 typed plan，执行混合/可选通道、authority/selector 和最多一次 changed
+retry，并把 `retrieval_diagnostics` 写入 `shared_state`。Generate Skill 在调用 LLM 前检查
+`should_generate`；`weak`、`conflict`、`empty` 使用统一终止语义，不把不可用相关性写成 0。
+
 ### 5.2 各节点配置
 
 | 节点 | 超时 | 重试 | 说明 |
 |------|------|------|------|
 | Agent Node | 60s | 2次 | 决定是否调用检索工具 |
-| Retrieve Node | — | 3次 | 执行混合检索 |
+| Retrieve Node | — | 最多 1 次 changed retry | 执行共享 planner/corrective workflow |
 | Grade Node | — | — | LLM 结构化输出判断文档相关性 |
 | Rewrite Node | — | — | 优化查询以提升检索质量（最多3轮） |
 | Generate Node | 120s | 2次 | 基于上下文生成结构化回答 |
@@ -330,13 +346,10 @@ START
 
 ### 5.3 快速模式性能实测
 
-| 查询 | 检索 | 生成 | 总耗时 | 回答长度 |
-|------|------|------|--------|---------|
-| 发动机振动偏高 | 2,397 ms | 7,389 ms | 10,206 ms | 719 chars |
-| 液压系统压力低 | 19 ms | 7,432 ms | 7,452 ms | 642 chars |
-| 起落架收放超时 | 14 ms | 8,453 ms | 8,468 ms | 1,146 chars |
-
-> 性能瓶颈：LLM 生成约占 85-95% 的总耗时（单次推理 6-8.5 秒），检索热启动仅 14-20 ms。
+Fast 模式仍只调用一次生成 LLM。2026-05-27 历史基线中，单次本地 Qwen3-14B 生成约
+6-8.5 秒，是端到端延迟的主要部分；当前检索 workflow 的隔离 warm P95 为
+66-146 ms（按数据集不同，见 §4.4）。两者测量协议不同，不能把旧的单 query 热启动数字
+当作当前四数据集 benchmark。
 
 ---
 
@@ -406,6 +419,20 @@ START
 
 降级缓存 TTL：3600 秒（1 小时）
 
+### 7.4 检索热路径降级
+
+| 组件 | 不可用时的行为 |
+|---|---|
+| planner / filter | planner 回到 bounded dense+sparse safe plan；非法/不支持 filter 绝不无过滤重试 |
+| BGE-M3 query representation | 丢弃不完整原子表示，保留可用 dense/BM25；缺失值为 `None` |
+| dense/sparse/graph 任一腿 | 仅移除失败腿，RRF 使用其余健康通道；总失败返回安全空结果 |
+| reranker / ColBERT / selector | 保持 RRF/authority 顺序并 bounded backfill，不伪造分数 |
+| RAPTOR / Graph PPR / ColPali | 不贡献可选结果；回到 ordinary hybrid/OCR/text |
+| corrective score | 全部评分不可用时为 `weak + degraded=True`，而不是 0 分或错误 accept |
+
+完整强制矩阵见 `core/AGENTS.md`。所有新增持久化路径均暴露模块级属性，测试可重定向到
+`tmp_path`；应用关闭时 reset 对应 workflow/store 单例。
+
 ---
 
 ## 8. 会话管理
@@ -422,6 +449,8 @@ START
 
 ## 9. API 接口
 
+下表是代表性 HTTP 接口；完整请求/响应见 `docs/API.md`，进程内 MCP 工具见 `docs/MCP.md`。
+
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | `/api/chat` | 同步对话（支持 thinking/fast 模式） |
@@ -429,10 +458,13 @@ START
 | GET | `/api/chat/history/{session_id}` | 获取历史记录 |
 | DELETE | `/api/chat/session/{session_id}` | 清除会话 |
 | GET | `/api/chat/prompt-status` | Prompt 状态 |
-| POST | `/api/documents/upload` | 上传文档（md/txt/pdf） |
+| POST | `/api/documents/upload` | 上传 md/txt/pdf/docx/pptx/html/htm |
 | GET | `/api/documents` | 文档列表 |
 | DELETE | `/api/documents/{doc_id}` | 删除文档 |
 | POST | `/api/documents/reindex` | 重建索引 |
+| POST | `/api/retrieval` | 低层混合检索（不执行高层 RetrievalWorkflow） |
+| POST | `/api/retrieval/dense` | Dense-only baseline |
+| POST | `/api/retrieval/sparse` | BM25-only baseline |
 | GET | `/api/sessions` | 会话列表 |
 | POST | `/api/sessions` | 创建会话 |
 | GET | `/health` | 健康检查 |
@@ -477,84 +509,106 @@ START
 
 ## 12. 硬件资源占用
 
-| 资源 | 占用 | 总量 | 利用率 |
-|------|------|------|--------|
-| GPU 显存 | 12 GB | 16 GB | 75% |
-| GPU 温度 | 32°C | — | 正常 |
-| Embedding 模型 | ~91 MB（内存） | — | CPU 运行 |
-| Milvus 数据库 | ~230 KB | — | 本地文件 |
-| 模型文件 | 9.3 GB（磁盘） | — | GGUF Q4_K_M |
+| 资源 | 当前事实 |
+|------|----------|
+| LLM | Qwen3-14B Q4_K_M，历史实测约 12 GB/16 GB GPU 显存 |
+| Embedding | 本地 BGE-M3；设备自动选择，benchmark 在 RTX 5070 Ti/cu132 上运行 |
+| Reranker | `bge-reranker-v2-m3` 默认开启，是查询延迟与本地内存的重要组成部分 |
+| Milvus/RAPTOR/visual | 均为本地文件，实际大小随语料、页面数和可选通道而变化 |
+| API-only | 不安装 torch/BGE/Reranker 本地权重，embedding 走 DashScope |
+
+旧的 “BGE-small 约 91 MB、Milvus 约 230 KB” 只对应早期小语料实验，不再代表当前默认部署。
 
 ---
 
 ## 13. 评测基准与回归实测
 
-本节记录在 `torch 2.12.1+cu132`（RTX 5070 Ti, compute capability `sm_120`）下的检索
-benchmark 与端到端 eval 实测，以及相对基线的回归对比。两组测试均全程 GPU 运行，零
-`cudaErrorNoKernelImageForDevice`。
+本节以 `torch 2.12.1+cu132`、RTX 5070 Ti（`sm_120`）、本地 BGE-M3/1024 与本地
+`bge-reranker-v2-m3` 为环境。每个 dataset×variant×order 使用独立进程、Milvus DB、
+collection、embedding registry、cache namespace、RAPTOR DB 与视觉索引；模型权重未训练或修改。
 
-### 13.1 检索 Benchmark（纯检索栈，无 LLM）
+### 13.1 Shared workflow AB/BA promotion
 
-通过 `scripts/run_benchmark.py` 评测 Dense + BM25 + RRF 融合 + Cross-Encoder 重排的纯
-检索质量（`top_k=4`），不涉及 LLM 生成：
+`top_k=4`、每个进程三轮；表中为独立 AB/BA 进程的中位结果：
 
-| 数据集 | cases | 命中率（≥1 gold） | context_recall | answer_overlap | 耗时 |
-|--------|:---:|:---:|:---:|:---:|:---:|
-| CMRC2018（中文） | 30 | **100.0%** | **1.000** | 0.971 | 5.6s |
-| MSMARCO（英文） | 30 | **80.0%** | 0.800 | 0.945 | 4.3s |
+| 数据集 | Recall control→workflow | MRR control→workflow | nDCG control→workflow | Warm P95 ms control→workflow | Query forwards control→workflow |
+|---|---:|---:|---:|---:|---:|
+| builtin general | 1.000→1.000 | 1.000→1.000 | 1.000→1.000 | 104.1→66.1 | 56→24 |
+| CMRC2018 | 1.000→1.000 | 0.911→0.961 | 0.934→0.971 | 177.5→146.2 | 210→90 |
+| HotpotQA | 0.917→0.917 | 1.000→1.000 | 0.915→0.919 | 169.5→141.8 | 210→90 |
+| MS MARCO judged | 0.900→0.900 | 0.729→0.758 | 0.773→0.795 | 135.6→105.5 | 140→60 |
 
-> **关于 precision**：`context_precision` 为 0.20/0.25 是 `top_k=4` 的数学上限——每个
-> query 返回 4 片段、命中 1 个 gold chunk，precision = 1/4 = 0.25，属设计取舍（保 recall），
-> 非质量问题。需要更高 precision 可加 `--dedup-source` 收敛同源片段。
+四个数据集 Recall 零损失，MRR/nDCG 持平或提升，warm P95 均通过不高于 control 1.25 倍的
+门禁，query embedding forwards 下降约 57%，因此 `RETRIEVAL_WORKFLOW_ENABLED=true` 保持默认。
 
-MSMARCO 未命中的 6 个 case（phloem 流向 / calomel 粉 / cpap 处方 / msn 邮箱等）均为冷门
-术语或专业领域 hard case，dense + BM25 都难召回，属数据集固有难点，非检索栈缺陷。
+MS MARCO 只保留 20 个同时具有有效答案和 selected passage 的 judged query。旧 adapter 曾把
+10 个 `No Answer Present.`/无 selected passage 行的最后一个无关 passage 误作 ground truth；
+现已由生成器与 checked-in dataset contract test 永久拒绝。298 文档语料不变，被移除行仍作为
+distractor，不再制造虚假召回目标。
 
-### 13.2 端到端 Eval（含 LLM 生成，可选示例 aviation_phm golden 数据集）
+### 13.2 Eight-variant production matrix
 
-通过 `scripts/run_eval.py --no-judge` 评测可选示例 aviation_phm golden 数据集（15 cases，覆盖发动机 /
-液压 / 航电 / 闲聊 / 边缘 query；该数据集用于演示在航空航天示例 profile 下的评测，平台默认 general profile 使用领域无关的通用 golden）。全链路 Thinking 模式（agent→retrieve→grade→rewrite→
-generate），并发 1：
+balanced schedule 覆盖 BM25-only、dense-only、hybrid RRF、hybrid+reranker、production legacy、
+workflow、workflow funnel 和 workflow contextual。核心结论：
 
-| 维度 | 结果 |
-|------|------|
-| 通过 / 失败 | **15 / 0** |
-| average_score | **0.911** |
-| intent_accuracy | 15/15（rag_query 全部正确分类） |
-| 超时降级 | 0（并发 1 稳定） |
-| 单 case 平均耗时 | ~75s（含多轮 LLM 调用） |
+- BM25-only 成本最低，但在 HotpotQA 与 MS MARCO 明显损失质量。
+- Dense-only 是公开多分布下最强的低延迟 baseline，但不是所有语料的全局最优。
+- Reranker 对 multi-hop/top-4 质量重要，同时是查询延迟的主要部分。
+- Workflow 匹配或提升最佳 reranked 质量，并复用 query representation。
+- enlarged funnel 与 contextual index 没有稳定增益，保持默认关闭。
 
-### 13.3 回归对比（vs 基线）
+跨进程 latency range 触发了保守 position warning，因此该矩阵用于 Pareto/确认；默认 promotion
+由上面的独立 AB/BA 实验决定。
 
-与基线 run（`run_20260624_123251`，commit `1fd17c6`，同 15 cases）逐 case 对比：
+### 13.3 Public retrieval evidence
 
-| case | baseline | cu132 | delta |
-|------|:---:|:---:|:---:|
-| engine_vibration_01 | 0.650 | 1.000 | +0.350 |
-| engine_overheat_02 | 0.650 | 0.775 | +0.125 |
-| engine_fault_code_03 | 0.650 | 0.850 | +0.200 |
-| engine_oil_degradation_04 | 0.800 | 0.940 | +0.140 |
-| engine_performance_05 | 0.725 | 0.850 | +0.125 |
-| hydraulic_leak_06 | 0.725 | 0.925 | +0.200 |
-| hydraulic_pump_07 | 0.725 | 0.925 | +0.200 |
-| hydraulic_valve_08 | 0.800 | 1.000 | +0.200 |
-| avionics_signal_09 | 0.800 | 1.000 | +0.200 |
-| avionics_power_10 | 0.800 | 1.000 | +0.200 |
-| avionics_display_11 | 0.800 | 1.000 | +0.200 |
-| chat_greeting_12 | 0.800 | 0.800 | +0.000 |
-| chat_capability_13 | 0.800 | 0.800 | +0.000 |
-| edge_ambiguous_14 | 0.800 | 0.800 | +0.000 |
-| edge_short_15 | 0.800 | 1.000 | +0.200 |
-| **AVERAGE** | **0.755** | **0.911** | **+0.156** |
+Nano-BEIR 使用完整 corpus/50 queries/qrels，MIRACL-zh 使用 5 个 query、全部正例与 200 个
+deterministic negatives，后者只属于 sampled-local：
 
-**结论**：15 cases 全部不回归（0/15 regress），12 个 case 提升，平均分 +0.156。
+| 数据集 | 最优观察 | 结论 |
+|---|---|---|
+| Nano SciFact | hybrid nDCG@10 0.732，Recall@100 0.960 | lexical+dense 融合有利 |
+| Nano NFCorpus | hybrid nDCG@10 0.366 | hybrid 优于单通道 |
+| Nano FiQA | dense nDCG@10 0.574，Recall@100 0.846 | dense-only 明显更优 |
+| MIRACL-zh sampled | dense/hybrid nDCG@10 均 1.000 | dense 更便宜，样本不足以全局 promotion |
 
-### 13.4 已知的环境瓶颈
+所以不存在“所有数据都应强制 hybrid”的结论。封闭部署必须用自己的 private golden 校准通道、
+reranker 和拒答阈值。
 
-- **并发 LLM 调用受限**：本机 Qwen3:14b（context 4096）在 Thinking 模式多轮 LLM 调用下，
-  4 并发会触发 generate 超时降级（单次 6 分钟超时）。**并发 1 稳定**（零超时）。这是 LLM
-  推理硬件瓶颈，与检索栈无关；如需更高吞吐或开 LLM-as-judge，建议更强 GPU 或更低并发。
-- **复现命令**：`uv run python scripts/run_eval.py --dataset data/eval/golden.yaml --no-judge --concurrency 1`
+### 13.4 Optional frontier evidence boundary
+
+ColBERT、RAPTOR、Graph PPR/path 和 ColPali 的 deterministic microbenchmark 均完成 enabled/disabled
+闭环，但使用 synthetic token encoder，只证明算法与降级接线，不证明真实 checkpoint/私域收益。
+这些通道继续默认关闭；ColPali 目前只保证页面定位，生成模型仍是文本模型，不能把页面命中解释为
+完整视觉问答能力。
+
+### 13.5 End-to-end eval and reproduction
+
+2026-06-24 的 aviation_phm 示例 E2E 历史结果为 15/15 通过、平均规则分 0.911；它说明评测飞轮
+与本地 LLM 链路可运行，不用于替代 2026-07-17 的检索 promotion 数据。Qwen3-14B Thinking 多轮
+调用在单卡上仍受吞吐限制，较低并发更稳定。
+
+```bash
+uv run --frozen python scripts/run_paired_benchmark.py \
+  --dataset data/benchmark/builtin_general.yaml \
+  --dataset data/benchmark/benchmark_cmrc2018.yaml \
+  --dataset data/benchmark/benchmark_hotpotqa.yaml \
+  --dataset data/benchmark/benchmark_msmarco.yaml \
+  --output-dir /tmp/rfo-stage2-abba --top-k 4 --repeats 3
+
+uv run --frozen --extra benchmark python scripts/run_benchmark_matrix.py \
+  --matrix data/benchmark/retrieval_baselines.yaml \
+  --dataset data/benchmark/builtin_general.yaml \
+  --schedule balanced --top-k 4 --repeats 3
+
+uv run --frozen python scripts/run_eval.py \
+  --dataset data/eval/golden.yaml --no-judge --concurrency 1
+```
+
+完整逐变体结果与证据等级见：
+
+- `docs/specs/retrieval-frontier-optimization/benchmark-results.md`
+- `docs/specs/retrieval-benchmark-expansion/benchmark-results.md`
 
 ---
 
@@ -562,26 +616,24 @@ generate），并发 1：
 
 ### 14.1 LLM 性能优化
 
-- **模型已升级**：从 Qwen3-8B（6.5GB 显存）升级至 Qwen3-14B（12GB 显存），参数量提升 80%，充分利用 RTX 5070 Ti 16GB 显存
-- **调整采样参数**：当前 Temperature=0.0，官方推荐思考模式用 0.6、非思考模式用 0.7
-- **Qwen3 Thinking 已集成**：Thinking 模式已开启推理过程捕获（通过 OpenAI SDK 直接读取 `reasoning` 字段），Fast 模式通过 `/no_think` 关闭推理以降低延迟
+- 在封闭单卡部署中优先优化并发、上下文预算、TTFT 和请求排队，不把检索收益与 LLM 吞吐混为一谈。
+- Temperature=0.0 保持评测确定性；若调整 Thinking/非 Thinking 采样参数，必须单独跑生成 golden 与 judge 回归。
+- Fast 已通过 `/no_think` 降低生成开销；需要更高吞吐时应比较更小本地模型或受控 API endpoint。
 
 ### 14.2 检索质量优化
 
-- **升级 Embedding**：bge-small-zh-v1.5（512维）→ bge-large-zh-v1.5（1024维）或 bge-m3（多语言）
-- **两阶段重排序已接入**：Dense 与 BM25 扩大候选召回，经 RRF 融合后可选 Cross-Encoder 重排序；接口保留 `retrieval_score`、`rerank_score` 和 `rerank_applied` 便于排障
-- **中文 Reranker 选型**：默认已采用 `BAAI/bge-reranker-v2-m3`（多语言 cross-encoder，默认开启且优先 GPU），对通用中文语料均有效；如需进一步降低资源占用可评估更轻量的 reranker
-- **增大上下文窗口**：当前 2,500 字符截断偏小，建议提升至 4,000-6,000 字符
-- **优化 BM25**：当前 BM25 召回为 0（中文分词未生效），需引入 jieba 分词
+- 第一优先级是建立部署语料的 private golden，覆盖 exact、procedure、comparison、multi-hop、全局总结、扫描 PDF 与版本冲突。
+- 依据 private golden 比较 dense-only、BM25/native sparse、hybrid 和 reranker；公开数据已经证明最优通道依赖分布。
+- Reranker 是主要检索延迟来源，可在不损伤私域 nDCG/Recall 的前提下评估更小模型、较小候选池或按 query type 跳过。
+- ColBERT/RAPTOR/Graph PPR/ColPali 只有在真实 checkpoint + 真实语料通过同一隔离门禁后才能默认开启。
+- Contextual index 必须迁移到新 collection，并与 control 做 AB/BA；不能原地修改生产向量空间。
 
 ### 14.3 架构优化
 
-- **意图分类去 LLM 化**：当前已实现关键词快捷路由，但仍走 LLM 回退路径，可完全改为规则匹配
-- **文档评分去 LLM 化**：用 embedding 相似度替代 LLM 评分，节省一次推理
-- **原生异步执行已完成**：Agent Skill 使用 LangGraph `ainvoke/astream`，SQLite checkpoint 使用 `AsyncSqliteSaver`，同步 Milvus 操作通过受控线程边界执行
-- **Thinking 模式真正流式输出已完成**：Generate Skill 使用 LangGraph custom stream 将生成文本增量透传至 SSE，并记录首 Token 延迟（TTFT）
-- **OpenTelemetry 已接入**：支持 FastAPI HTTP Span、Agent Skill Span 与 OTLP/HTTP 导出，可对接 Jaeger、Tempo 或 OpenTelemetry Collector
-- **压测能力已补充**：`scripts/load_test.py` 可统计并发请求成功率、吞吐量、P50/P95/P99 与 TTFT
+- 将 `retrieval_diagnostics` 的聚合统计接入运维面板，重点观察 weak/conflict/empty、retry、cache hit 和通道 unavailable 比例。
+- 为 RAPTOR/visual generation 增加后台维护与容量告警，但保持原子发布、旧代回滚和主摄入不阻断。
+- 若要发挥 ColPali 的图表/图像价值，需要引入经过独立评审的多模态生成链；当前仅定位页面。
+- 继续使用 balanced/AB-BA runner 防止 warm cache、运行顺序与共享 store 被误判为算法提升。
 
 ---
 
@@ -590,6 +642,7 @@ generate），并发 1：
 - [Qwen3 Technical Report (arXiv:2505.09388)](https://arxiv.org/abs/2505.09388)
 - [Qwen3-14B Model Card (HuggingFace)](https://huggingface.co/Qwen/Qwen3-14B)
 - [Qwen3 Blog: Think Deeper, Act Faster](https://qwenlm.github.io/blog/qwen3/)
-- [BGE Embedding Models (BAAI)](https://huggingface.co/BAAI/bge-small-zh-v1.5)
+- [BGE-M3 Model Card (BAAI)](https://huggingface.co/BAAI/bge-m3)
+- [BEIR Benchmark](https://github.com/beir-cellar/beir)
 - [Milvus Lite Documentation](https://milvus.io/docs/milvus_lite.md)
 - [LangGraph Documentation](https://langchain-ai.github.io/langgraph/)

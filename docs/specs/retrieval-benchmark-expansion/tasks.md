@@ -58,5 +58,5 @@
   最终为 `975 passed, 4 deselected`、`92 passed, 2 skipped`、branch coverage `72%`。
 - [x] **T4.5** [REQ-RBE-008/009/020] 在 `benchmark-results.md` 归档质量、延迟、资源、
   Pareto、证据等级、默认与回滚决策。
-- [x] **T4.6** [REQ-RBE-001..024] 更新 README/CHANGELOG，复核 `.env.example` 默认值，
-  并关闭两套 review tracking。
+- [x] **T4.6** [REQ-RBE-001..024] 更新 README/CHANGELOG、HTTP API/MCP、技术报告、测试说明与
+  spec 索引，复核 `.env.example` 默认值，并关闭两套 review tracking。

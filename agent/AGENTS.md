@@ -74,12 +74,24 @@ START -> agent -> [tools_condition]
 ```
 retrieve -> generate  (/no_think)
 ```
-不走 LangGraph，由 `core/fast_mode.fast_generate[_async|_stream]` 直接检索 + 生成。
+不走 LangGraph，由 `core/fast_mode.fast_generate[_async|_stream]` 调用共享检索工作流后生成。
+
+### Shared Retrieval Workflow（内层检索边界）
+
+- Thinking 的 `RetrieveSkill`、Fast sync/async/stream 与 MCP `rag_retrieve` 默认都调用
+  `core/retrieval/workflow.py`，保证 plan、纠正重试、authority 排序与终止语义一致。
+- 终态为 `accept` / `weak` / `conflict` / `empty`；只有 `accept` 进入正常生成，其余状态返回
+  安全的信息缺口、冲突或无证据文案。
+- `RetrieveSkill` 把脱敏 diagnostics 写入 `shared_state["retrieval_diagnostics"]`；Fast 返回
+  `FastModeResult.retrieval_diagnostics`；MCP 默认返回 `{documents, diagnostics}`。
+- `RETRIEVAL_WORKFLOW_ENABLED=false` 时恢复 legacy list-only 路径。MCP 调用方必须按
+  `../docs/MCP.md` 处理默认对象形态与 legacy 列表形态。
 
 ## 4. Entry Points
 
 - **API**：`api/routers/chat.py` → `agent.harness.get_agent_harness()`（单例）。
 - **CLI/直接调用**：`agent/harness/orchestrator.py` → `AgentHarness.invoke()`。
+- **MCP（当前为进程内）**：`MCPClient` → `MCPRetrievalServer`；无独立网络监听端口，工具契约见 `../docs/MCP.md`。
 - **生命周期**：`api/main.py` 的 `lifespan` 启动时 `get_agent_harness().astart()`（初始化异步 SQLite checkpointer，双检锁），关闭时 `aclose()`。
 
 ## 5. Adding a New Skill

@@ -24,8 +24,13 @@ Each skill directory may also carry `prompts.py` (re-exporting from
 
 ```
 AgentSkill -> RetrieveSkill -> GradeSkill -> GenerateSkill
-                                         \-> RewriteSkill -> AgentSkill (loop)
+                 |                       \-> RewriteSkill -> AgentSkill (loop)
+                 +-> shared RetrievalWorkflow
+                     plan -> retrieve -> authority/select -> accept|weak|conflict|empty
 ```
+
+`RetrieveSkill`、Fast 模式和 MCP `rag_retrieve` 默认复用同一 `RetrievalWorkflow`。
+外层 LangGraph 拓扑不变，但检索节点内部已经不是固定的单次 Dense+BM25 调用。
 
 ## Adding a Skill
 
@@ -40,7 +45,7 @@ AgentSkill -> RetrieveSkill -> GradeSkill -> GenerateSkill
 | Skill | File | Description |
 |-------|------|-------------|
 | agent | agent/skills/agent/skill.py | Tool-call decision node |
-| retrieve | agent/skills/retrieve/skill.py | Hybrid retrieval (Dense + BM25 + RRF) |
+| retrieve | agent/skills/retrieve/skill.py | Adaptive/corrective retrieval with shared workflow, hybrid channels and safe terminal states |
 | grade | agent/skills/grade/skill.py | Document relevance grading |
 | rewrite | agent/skills/rewrite/skill.py | Query rewriting |
 | generate | agent/skills/generate/skill.py | Final answer generation (Qwen3 reasoning capture + grounding + confidence) |

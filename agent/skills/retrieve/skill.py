@@ -1,8 +1,8 @@
 """
 Retrieve Skill
 
-Wraps the existing retrieval pipeline (HybridRetriever / MilvusRetriever)
-as a skill that can be used standalone or via the MCP retrieval server.
+Uses the shared adaptive/corrective RetrievalWorkflow by default, with the
+legacy HybridRetriever path retained behind RETRIEVAL_WORKFLOW_ENABLED=false.
 
 This skill is used in both:
 - The full graph (as the ToolNode replacement / direct retriever)
@@ -68,8 +68,8 @@ class RetrieveSkill(BaseSkill):
     """
     Skill that retrieves documents from the knowledge base.
 
-    Wraps HybridRetriever and the existing retrieval pipeline.
-    Can operate standalone or as part of a graph via MCP.
+    Shares planner, corrective states and diagnostics with Fast mode and MCP.
+    Can operate standalone or as part of the LangGraph pipeline.
     """
 
     name = "retrieve"

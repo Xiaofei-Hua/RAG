@@ -2,7 +2,8 @@
 Fast Mode Pipeline for Enterprise RAG Platform
 
 Skips the full LangGraph pipeline and directly retrieves + generates.
-Uses exactly 1 retrieval call + 1 LLM call for minimal latency.
+Uses one shared workflow invocation (which may perform one bounded changed
+retry) and at most one LLM call. Weak/conflict/empty states skip generation.
 
 Thinking mode (current graph): Intent → Agent → Retrieve → Grade → Generate  (4+ LLM calls)
 Fast mode (this module):       Retrieve → Generate                               (1 LLM call)

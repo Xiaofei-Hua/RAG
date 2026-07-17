@@ -79,4 +79,6 @@
   order independence before accepting benchmark conclusions.
 - [x] **T4.5** [REQ-RFO-028] Record promotion/default decisions and defended quality/latency trade-offs.
 - [x] **T4.6** [REQ-RFO-020/025] Verify all optional flags off restore the compatibility workflow offline.
-- [x] **T4.7** [REQ-RFO-001..030] Update README/CHANGELOG/config docs and prepare PR test matrix with `<!-- RAG_LLM_PR -->`.
+- [x] **T4.7** [REQ-RFO-001..030] Synchronize README, HTTP API, MCP contract, technical report,
+  root/core/agent engineering contracts, Skill/test documentation and spec index; archive benchmark evidence
+  and the PR test matrix with `<!-- RAG_LLM_PR -->`.
