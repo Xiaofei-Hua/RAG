@@ -25,6 +25,30 @@ starting from 0.1.0.
   microbenchmarks. Static enlarged funnels/contextual indexing and all frontier channels remain
   default-off because their real-model/domain promotion gates have not been met.
 
+### Added — Retrieval benchmark expansion (`retrieval-benchmark-expansion`)
+
+- Added a local-only named matrix for BM25-only, dense-only, hybrid RRF, hybrid+reranker,
+  production legacy, workflow, funnel and contextual variants. Balanced rotations, complete
+  requested/effective configuration attestation, isolated stores/caches, stage resource metrics,
+  position warnings and quality-latency/resource Pareto sets prevent order or cache artifacts from
+  being mistaken for retrieval gains.
+- Added atomic `ir_datasets` conversion bundles and a versioned `ir_measures` evaluator for Nano-BEIR
+  SciFact/NFCorpus/FiQA plus sampled-local MIRACL-zh. Public quality depth is separated from production
+  performance, and official/full-local/sampled-local/synthetic evidence cannot be conflated.
+- Final clean four-dataset AB/BA keeps the shared workflow default-on with zero recall loss, higher or
+  equal MRR/nDCG, about 57% fewer query embedding forwards and lower warm P95 on every dataset. Public
+  results remain distribution-dependent, so sealed deployments should calibrate channels on their own
+  private golden set.
+
+### Fixed — MS MARCO benchmark ground truth
+
+- The legacy public benchmark adapter no longer accepts `No Answer Present.` rows or rows without a
+  selected passage. It previously assigned the last unrelated passage as ground truth, creating a
+  false workflow recall regression and incentivizing worse retrieval. Ten unjudged checked-in cases
+  were removed from the supervised quality set; their corpus passages remain available as distractors.
+- Added permanent generator and checked-in dataset contract tests, with red→green evidence and a clean
+  balanced/AB-BA rerun.
+
 ### Fixed — BGE-M3 hybrid-head asset integrity
 
 - The offline BGE-M3 downloader now preserves the repository snapshot and requires the trained

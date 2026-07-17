@@ -70,8 +70,9 @@
 ## Stage 4 — Closure
 
 - [x] **T4.1** [REQ-RFO-029/030] Run targeted unit red-green evidence for each slice.
-- [x] **T4.2** [REQ-RFO-029/030] Run full unit/perf + process-internal E2E matrix. The CI-equivalent
-  matrix is green with `968 passed, 4 deselected` and `92 passed, 2 skipped`; branch coverage is 72%.
+- [x] **T4.2** [REQ-RFO-029/030] Run full unit/perf + process-internal E2E matrix. The final
+  CI-equivalent matrix is green with `975 passed, 4 deselected` and `92 passed, 2 skipped`;
+  branch coverage is 72%.
 - [x] **T4.3** [REQ-RFO-029] Playwright is not applicable because this feature has no UI change.
 - [x] **T4.4** [REQ-RFO-026/027] Run all controlled and specialized benchmarks with commands/results archived.
 - [x] **T4.4a** [REQ-RFO-026/028/029, F-06] Prove dataset×variant process/store/cache isolation and AB/BA

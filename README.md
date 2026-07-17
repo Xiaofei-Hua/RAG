@@ -656,15 +656,18 @@ uv run --frozen python scripts/run_benchmark.py \
 
 | 数据集 | Recall control→workflow | MRR control→workflow | nDCG control→workflow | Warm P95 ms control→workflow | Query forwards control→workflow |
 |--------|-------------------------|----------------------|-----------------------|-------------------------------|---------------------------------|
-| builtin general | 1.000→1.000 | 1.000→1.000 | 1.000→1.000 | 107.9→70.8 | 56→24 |
-| CMRC2018 | 1.000→1.000 | 0.911→0.961 | 0.934→0.971 | 196.9→155.4 | 210→90 |
-| HotpotQA | 0.917→0.917 | 1.000→1.000 | 0.915→0.919 | 216.9→165.7 | 210→90 |
-| MS MARCO | 0.800→0.800 | 0.578→0.597 | 0.634→0.648 | 164.3→110.8 | 210→90 |
+| builtin general | 1.000→1.000 | 1.000→1.000 | 1.000→1.000 | 104.1→66.1 | 56→24 |
+| CMRC2018 | 1.000→1.000 | 0.911→0.961 | 0.934→0.971 | 177.5→146.2 | 210→90 |
+| HotpotQA | 0.917→0.917 | 1.000→1.000 | 0.915→0.919 | 169.5→141.8 | 210→90 |
+| MS MARCO judged | 0.900→0.900 | 0.729→0.758 | 0.773→0.795 | 135.6→105.5 | 140→60 |
 
 AB/BA 的主质量指标完全一致，四个数据集均通过质量损失 `≤0.02`、P95 增幅
 `≤25%` 的 promotion gate，因此共享 `RetrievalWorkflow` 默认开启。主模型权重没有变化；
 收益来自一次查询表示复用、问题类型计划、authority/reranker 排序保护、filter fail-closed
 和一致的证据选择/拒答边界。
+
+MS MARCO 只统计 20 个同时具有有效答案和 selected passage 的可评分查询；旧生成器曾把
+`No Answer Present.` 行的最后一条无关 passage 当作 ground truth，现已由生成器与数据契约测试永久拒绝。
 
 完整隔离实验：
 
@@ -680,6 +683,29 @@ uv run --frozen python scripts/run_frontier_benchmark.py \
   --fixture data/benchmark/frontier_specialized.yaml \
   --repeats 5 --output-json /tmp/rfo-frontier.json
 ```
+
+多 baseline balanced matrix 与公开 IR adapter：
+
+```bash
+uv run --frozen --extra benchmark python scripts/run_benchmark_matrix.py \
+  --matrix data/benchmark/retrieval_baselines.yaml \
+  --dataset data/benchmark/builtin_general.yaml \
+  --dataset data/benchmark/benchmark_cmrc2018.yaml \
+  --dataset data/benchmark/benchmark_hotpotqa.yaml \
+  --dataset data/benchmark/benchmark_msmarco.yaml \
+  --schedule balanced --top-k 4 --repeats 3
+
+uv run --frozen --extra benchmark python scripts/prepare_ir_benchmark.py \
+  --dataset nano-beir/scifact \
+  --dataset nano-beir/nfcorpus \
+  --dataset nano-beir/fiqa \
+  --corpus-mode full --offline
+```
+
+公开结果显示策略依赖数据分布：SciFact/NFCorpus 更偏好 hybrid，FiQA 更偏好 dense-only，
+MIRACL-zh 小样本中 dense 与 hybrid 同质。因此封闭部署应以自己的 private golden 做最终通道校准，
+而不是照搬单一公开榜单。完整矩阵与证据等级见
+`docs/specs/retrieval-benchmark-expansion/benchmark-results.md`。
 
 ColBERT、RAPTOR、Graph PPR 与 ColPali 的 deterministic microbenchmark 已通过算法闭环，
 但使用 synthetic token encoder，不具备真实模型 promotion 资格，仍默认关闭。ColPali 需由操作员

@@ -48,9 +48,15 @@
 
 ## Stage 4 — Experiments and Closure
 
-- [ ] **T4.1** [REQ-RBE-008/020, F-05/F-08] 在已有四数据集运行 8-variant balanced matrix。
-- [ ] **T4.2** [REQ-RBE-010..014/020] 在成功转换的扩展数据集运行选定 baseline 子矩阵。
-- [ ] **T4.3** [REQ-RBE-018/020] 复跑 frontier specialized，验证 synthetic 仍不可 promotion。
-- [x] **T4.4** [REQ-RBE-020] 运行定向红绿、完整 unit + process-internal E2E、Ruff/import/diff audit。
-- [ ] **T4.5** [REQ-RBE-008/009/020] 归档 benchmark 结果、性能结论、默认/回滚决策。
-- [ ] **T4.6** [REQ-RBE-001..024] 更新 README/CHANGELOG/.env.example 与 review tracking。
+- [x] **T4.1** [REQ-RBE-008/020, F-05/F-08] 在已有四数据集运行 8-variant balanced matrix；
+  完成 256-run 主矩阵，并在修正未判定 MS MARCO 标签后重跑其 64-run slice。
+- [x] **T4.2** [REQ-RBE-010..014/020] 在 Nano SciFact/NFCorpus/FiQA 与 MIRACL-zh 运行
+  3-baseline balanced public-quality 子矩阵，`36/36` 完成。
+- [x] **T4.3** [REQ-RBE-018/020] 复跑 frontier specialized，确认
+  `synthetic_encoder=true`、`promotion_eligible=false`。
+- [x] **T4.4** [REQ-RBE-020] 运行定向红绿、完整 unit + process-internal E2E、Ruff/import/diff audit；
+  最终为 `975 passed, 4 deselected`、`92 passed, 2 skipped`、branch coverage `72%`。
+- [x] **T4.5** [REQ-RBE-008/009/020] 在 `benchmark-results.md` 归档质量、延迟、资源、
+  Pareto、证据等级、默认与回滚决策。
+- [x] **T4.6** [REQ-RBE-001..024] 更新 README/CHANGELOG，复核 `.env.example` 默认值，
+  并关闭两套 review tracking。
