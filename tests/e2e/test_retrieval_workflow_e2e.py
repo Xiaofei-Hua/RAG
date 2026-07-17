@@ -156,10 +156,7 @@ def test_documents_route_populates_dense_sparse_and_hybrid_with_cache_invalidati
                 document
                 for document in self.documents
                 if query.lower() in document.page_content.lower()
-                and (
-                    allowed_source is None
-                    or document.metadata.get("source") == allowed_source
-                )
+                and (allowed_source is None or document.metadata.get("source") == allowed_source)
             ]
             return [
                 SearchResult(
@@ -223,12 +220,8 @@ def test_documents_route_populates_dense_sparse_and_hybrid_with_cache_invalidati
         assert token in sparse.json()["results"][0]["content"]
         assert token in hybrid.json()["results"][0]["content"]
 
-        allowed = retriever.retrieve(
-            token, top_k=4, filter_expr=f'source == "{filename}"'
-        )
-        excluded = retriever.retrieve(
-            token, top_k=4, filter_expr='source == "another-tenant.md"'
-        )
+        allowed = retriever.retrieve(token, top_k=4, filter_expr=f'source == "{filename}"')
+        excluded = retriever.retrieve(token, top_k=4, filter_expr='source == "another-tenant.md"')
         assert allowed and all(doc.metadata["source"] == filename for doc in allowed)
         assert excluded == []
     finally:

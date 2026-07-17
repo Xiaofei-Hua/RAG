@@ -70,8 +70,7 @@ def _load_corpus(dataset_path: str) -> dict[str, dict[str, Any]]:
 
 def _snapshot_rows(rows: list[tuple[str, str]]) -> dict[str, Any]:
     canonical = [
-        {"id": str(doc_id), "text": " ".join((text or "").split())}
-        for doc_id, text in rows
+        {"id": str(doc_id), "text": " ".join((text or "").split())} for doc_id, text in rows
     ]
     canonical.sort(key=lambda row: (row["id"], row["text"]))
     payload = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -274,7 +273,9 @@ def _effective_retrieval_config(config: Any) -> dict[str, str]:
         return "true" if value else "false"
 
     def env_boolean(name: str, default: bool = False) -> str:
-        return boolean(os.getenv(name, boolean(default)).strip().lower() in {"1", "true", "yes", "on"})
+        return boolean(
+            os.getenv(name, boolean(default)).strip().lower() in {"1", "true", "yes", "on"}
+        )
 
     values = {
         "COLBERT_RERANK_ENABLED": env_boolean("COLBERT_RERANK_ENABLED"),
@@ -286,9 +287,7 @@ def _effective_retrieval_config(config: Any) -> dict[str, str]:
         "QUERY_TRANSFORM_ENABLED": env_boolean("QUERY_TRANSFORM_ENABLED"),
         "RAPTOR_ENABLED": env_boolean("RAPTOR_ENABLED"),
         "RERANKER_ENABLED": boolean(bool(config.enable_reranker)),
-        "RETRIEVAL_CANDIDATE_FUNNEL_ENABLED": boolean(
-            bool(config.enable_candidate_funnel)
-        ),
+        "RETRIEVAL_CANDIDATE_FUNNEL_ENABLED": boolean(bool(config.enable_candidate_funnel)),
         "RETRIEVAL_DENSE_ENABLED": boolean(bool(config.enable_dense)),
         "RETRIEVAL_MMR_ENABLED": boolean(bool(config.enable_mmr)),
         "RETRIEVAL_SPARSE_ENABLED": boolean(bool(config.enable_sparse)),
@@ -637,9 +636,7 @@ async def _run(args: argparse.Namespace) -> int:
             ingested_count, ingest_manager = _ingest_corpus(corpus_by_id)
         else:
             log.warning("No corpus — retrieving against whatever is already indexed")
-        active_store_snapshot = _active_store_snapshot(
-            active_policy, corpus_by_id, ingest_manager
-        )
+        active_store_snapshot = _active_store_snapshot(active_policy, corpus_by_id, ingest_manager)
         index_build_ms = (time.perf_counter() - ingest_started) * 1000
         text_index = _build_text_index(corpus_by_id)
         retriever_started = time.perf_counter()

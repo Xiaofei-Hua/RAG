@@ -105,7 +105,9 @@ def select_evaluation_rows(
         if query_id in selected_set
     )
     if not queries or not qrels:
-        raise DatasetConversionError("empty_evaluation_set", "dataset has no selected queries/qrels")
+        raise DatasetConversionError(
+            "empty_evaluation_set", "dataset has no selected queries/qrels"
+        )
     return EvaluationSelection(
         queries=queries,
         qrels=qrels,
@@ -190,9 +192,7 @@ def _sample_documents(
     max_doc_scan: int,
     seed: int,
 ) -> list[dict[str, str]]:
-    positive_ids = {
-        str(qrel["doc_id"]) for qrel in selection.qrels if int(qrel["relevance"]) > 0
-    }
+    positive_ids = {str(qrel["doc_id"]) for qrel in selection.qrels if int(qrel["relevance"]) > 0}
     selected_qrel_ids = {str(qrel["doc_id"]) for qrel in selection.qrels}
     other_qrel_ids = set(selection.all_qrel_doc_ids) - selected_qrel_ids
     found = _fetch_documents(dataset, positive_ids, max_doc_scan=max_doc_scan)
@@ -359,9 +359,7 @@ def prepare_dataset(
             seed=seed,
         )
     document_ids = {document["id"] for document in documents}
-    positive_ids = {
-        str(qrel["doc_id"]) for qrel in selection.qrels if int(qrel["relevance"]) > 0
-    }
+    positive_ids = {str(qrel["doc_id"]) for qrel in selection.qrels if int(qrel["relevance"]) > 0}
     missing_positives = positive_ids - document_ids
     if missing_positives:
         raise DatasetConversionError(
@@ -525,11 +523,16 @@ def prepare_many(
             )
         except Exception as exc:
             code = _unavailable_code(exc)
-            status = "unavailable" if code in {
-                "dataset_not_cached",
-                "network_unavailable",
-                "dataset_unavailable",
-            } else "failed"
+            status = (
+                "unavailable"
+                if code
+                in {
+                    "dataset_not_cached",
+                    "network_unavailable",
+                    "dataset_unavailable",
+                }
+                else "failed"
+            )
             results[dataset_id] = {"status": status, "error_code": code}
     success_count = sum(result.get("status") == "success" for result in results.values())
     if success_count == len(results):

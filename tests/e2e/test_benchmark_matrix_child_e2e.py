@@ -100,9 +100,7 @@ def test_real_bm25_matrix_child_is_isolated_and_secret_free(tmp_path, monkeypatc
     }
     for run in summary["runs"]:
         assert run["metrics"]["active_index_stages"] == ["bm25"]
-        assert run["metrics"]["active_store_snapshot"]["stores"]["bm25"][
-            "row_count"
-        ] == 2
+        assert run["metrics"]["active_store_snapshot"]["stores"]["bm25"]["row_count"] == 2
     assert not list(output.rglob("milvus.db"))
     serialized = "\n".join(
         path.read_text(encoding="utf-8", errors="replace")

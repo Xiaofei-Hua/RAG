@@ -544,9 +544,7 @@ class RetrievalWorkflow:
             "document_count": len(documents),
             "channel_counts": channel_counts,
             "optional_channel_status": optional_channel_status,
-            "primary_channel_status": (
-                execution.channel_status if execution is not None else {}
-            ),
+            "primary_channel_status": (execution.channel_status if execution is not None else {}),
             "retrieval_identity": execution.identity if execution is not None else None,
             "retrieval_cache_hit": execution.cache_hit if execution is not None else False,
             "uncovered_facets": list(decision.uncovered_facets),

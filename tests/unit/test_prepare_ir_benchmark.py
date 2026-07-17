@@ -83,18 +83,12 @@ class FakeDataset:
 
 def _generation_files(root: Path, result: dict) -> dict[str, bytes]:
     generation = root / result["dataset_slug"] / result["generation"]
-    return {
-        path.name: path.read_bytes()
-        for path in generation.iterdir()
-        if path.is_file()
-    }
+    return {path.name: path.read_bytes() for path in generation.iterdir() if path.is_file()}
 
 
 def test_dataset_slug_uses_hash_to_avoid_normalization_collision():
     assert prepare_ir_benchmark.dataset_slug("a/b") != prepare_ir_benchmark.dataset_slug("a-b")
-    assert prepare_ir_benchmark.dataset_slug("nano-beir/scifact").startswith(
-        "nano-beir-scifact-"
-    )
+    assert prepare_ir_benchmark.dataset_slug("nano-beir/scifact").startswith("nano-beir-scifact-")
 
 
 def test_selection_is_deterministic_and_preserves_graded_qrels():

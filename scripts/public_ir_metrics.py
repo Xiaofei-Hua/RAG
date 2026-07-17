@@ -34,18 +34,10 @@ DATASET_PROTOCOLS = {
     "nano-beir/nfcorpus": DatasetProtocol(
         ("nDCG@10", "RR@10", "Recall@100"), 100, None, "nano-beir"
     ),
-    "nano-beir/fiqa": DatasetProtocol(
-        ("nDCG@10", "RR@10", "Recall@100"), 100, None, "nano-beir"
-    ),
-    "beir/scifact/test": DatasetProtocol(
-        ("nDCG@10", "RR@10", "Recall@100"), 100, "test", "beir"
-    ),
-    "beir/nfcorpus/test": DatasetProtocol(
-        ("nDCG@10", "RR@10", "Recall@100"), 100, "test", "beir"
-    ),
-    "beir/fiqa/test": DatasetProtocol(
-        ("nDCG@10", "RR@10", "Recall@100"), 100, "test", "beir"
-    ),
+    "nano-beir/fiqa": DatasetProtocol(("nDCG@10", "RR@10", "Recall@100"), 100, None, "nano-beir"),
+    "beir/scifact/test": DatasetProtocol(("nDCG@10", "RR@10", "Recall@100"), 100, "test", "beir"),
+    "beir/nfcorpus/test": DatasetProtocol(("nDCG@10", "RR@10", "Recall@100"), 100, "test", "beir"),
+    "beir/fiqa/test": DatasetProtocol(("nDCG@10", "RR@10", "Recall@100"), 100, "test", "beir"),
     "miracl/zh/dev": DatasetProtocol(("nDCG@10", "Recall@100"), 100, "dev", "miracl"),
 }
 
@@ -164,7 +156,11 @@ def _comparability_reasons(
         reasons.append("wrong_run_protocol")
     evaluation_depth = _positive_int(run_metrics.get("evaluation_depth"))
     top_k = _positive_int(run_metrics.get("top_k"))
-    if evaluation_depth is None or top_k is None or min(evaluation_depth, top_k) < protocol.max_cutoff:
+    if (
+        evaluation_depth is None
+        or top_k is None
+        or min(evaluation_depth, top_k) < protocol.max_cutoff
+    ):
         reasons.append("evaluation_depth_too_small")
     effective = run_metrics.get("effective_retrieval_config")
     if not isinstance(effective, dict):
@@ -202,21 +198,21 @@ def evaluate_public_ir(
 
     dataset_id = str(manifest.get("dataset_id", ""))
     protocol = DATASET_PROTOCOLS.get(dataset_id)
-    metric_names = protocol.metrics if protocol is not None else (
-        "nDCG@10",
-        "RR@10",
-        "Recall@100",
+    metric_names = (
+        protocol.metrics
+        if protocol is not None
+        else (
+            "nDCG@10",
+            "RR@10",
+            "Recall@100",
+        )
     )
     measures = _measure_registry(metric_names)
     qrels, qrel_query_ids = _qrel_records(qrels_payload)
     run, run_query_ids = _run_records(ranked_run)
     aggregate = calc_aggregate(list(measures.values()), qrels, run)
-    metric_values = {
-        name: float(aggregate[measure]) for name, measure in measures.items()
-    }
-    reasons = _comparability_reasons(
-        manifest, run_metrics, protocol, qrel_query_ids, run_query_ids
-    )
+    metric_values = {name: float(aggregate[measure]) for name, measure in measures.items()}
+    reasons = _comparability_reasons(manifest, run_metrics, protocol, qrel_query_ids, run_query_ids)
     official = not reasons
     if official:
         evidence_class = "official-comparable"

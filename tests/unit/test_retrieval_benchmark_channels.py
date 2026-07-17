@@ -113,7 +113,9 @@ def test_sync_exception_fallback_does_not_resurrect_disabled_dense(monkeypatch):
 
     monkeypatch.setattr(retriever, "_dense_retrieve", dense)
     monkeypatch.setattr(retriever, "_sparse_retrieve", sparse)
-    monkeypatch.setattr(retriever, "_rrf_fusion", lambda *_args: (_ for _ in ()).throw(RuntimeError("boom")))
+    monkeypatch.setattr(
+        retriever, "_rrf_fusion", lambda *_args: (_ for _ in ()).throw(RuntimeError("boom"))
+    )
     try:
         documents = retriever.retrieve("fallback query", top_k=1)
     finally:

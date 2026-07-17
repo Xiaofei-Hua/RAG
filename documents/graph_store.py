@@ -52,9 +52,7 @@ __all__ = [
 # Module-level path so tests/conftest.py can redirect it to tmp_path
 # (AGENTS.md §6/§10 persistence contract).
 DEFAULT_DB_PATH = os.getenv("GRAPH_STORE_DB_PATH", "./data/graph_store.db")
-DEFAULT_V1_BACKUP_PATH = os.getenv(
-    "GRAPH_STORE_BACKUP_PATH", "./data/graph_store_v1_backup.db"
-)
+DEFAULT_V1_BACKUP_PATH = os.getenv("GRAPH_STORE_BACKUP_PATH", "./data/graph_store_v1_backup.db")
 
 # F-03: cap LLM-generated descriptions so an injected payload cannot smuggle a
 # long instruction into the store. The retrieval context returns original chunk

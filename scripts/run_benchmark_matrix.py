@@ -245,9 +245,7 @@ def _canonical_variant_env(raw: Any) -> dict[str, str]:
     for key in _FORCED_OFF:
         if _bool(env[key]):
             raise ValueError(f"{key} is benchmarked only by the specialized frontier runner")
-    if not _bool(env["RETRIEVAL_DENSE_ENABLED"]) and not _bool(
-        env["RETRIEVAL_SPARSE_ENABLED"]
-    ):
+    if not _bool(env["RETRIEVAL_DENSE_ENABLED"]) and not _bool(env["RETRIEVAL_SPARSE_ENABLED"]):
         raise ValueError("a matrix variant must keep at least one primary retrieval channel")
     return env
 
@@ -312,9 +310,7 @@ def build_minimal_child_env(
             "HF_HUB_OFFLINE": "1",
             "PYTHON_DOTENV_DISABLED": "1",
             "RERANKER_MODEL": "BAAI/bge-reranker-v2-m3",
-            "RERANKER_MODEL_PATH": str(
-                ROOT / "models/local_models/reranker/bge-reranker-v2-m3"
-            ),
+            "RERANKER_MODEL_PATH": str(ROOT / "models/local_models/reranker/bge-reranker-v2-m3"),
             "RETRIEVAL_CACHE_ENABLED": "false",
             "TRANSFORMERS_OFFLINE": "1",
         }
@@ -343,7 +339,10 @@ def _model_cache_ready(path: Path | None) -> bool:
     return bool(
         path
         and path.is_dir()
-        and any((path / marker).is_file() for marker in ("config.json", "modules.json", "model.safetensors"))
+        and any(
+            (path / marker).is_file()
+            for marker in ("config.json", "modules.json", "model.safetensors")
+        )
     )
 
 
@@ -386,7 +385,10 @@ def preflight_local_components(env: dict[str, str]) -> PreflightResult:
         embedding_path = _resolved_model_path(env.get("EMBEDDING_MODEL_PATH"))
         if not _model_cache_ready(embedding_path):
             return PreflightResult(False, "embedding_checkpoint_missing")
-        if importlib.util.find_spec("torch") is None or importlib.util.find_spec("FlagEmbedding") is None:
+        if (
+            importlib.util.find_spec("torch") is None
+            or importlib.util.find_spec("FlagEmbedding") is None
+        ):
             return PreflightResult(False, "embedding_dependency_missing")
         fingerprints["embedding"] = _path_fingerprint(embedding_path)
         if sparse_native:
@@ -428,8 +430,7 @@ def _yaml_list_count(path: Path, key: str) -> int:
 
 def _snapshot_rows(rows: list[tuple[str, str]]) -> dict[str, Any]:
     canonical = [
-        {"id": str(doc_id), "text": " ".join((text or "").split())}
-        for doc_id, text in rows
+        {"id": str(doc_id), "text": " ".join((text or "").split())} for doc_id, text in rows
     ]
     canonical.sort(key=lambda row: (row["id"], row["text"]))
     payload = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
@@ -848,9 +849,7 @@ def run_spec(
     if spec.run_dir.exists():
         raise ValueError(f"isolated run path already exists: {spec.run_dir.name}")
     spec.run_dir.mkdir(parents=True, exist_ok=False)
-    requested_env, top_k = _protocol_request(
-        spec.variant.env, top_k=top_k, protocol=protocol
-    )
+    requested_env, top_k = _protocol_request(spec.variant.env, top_k=top_k, protocol=protocol)
     child_env = build_minimal_child_env(parent_env, requested_env, spec.env)
     command = [
         sys.executable,
@@ -976,9 +975,7 @@ def _position_report(
     }
 
 
-def _reference_delta_report(
-    rows: list[dict[str, Any]], reference_variant: str
-) -> dict[str, Any]:
+def _reference_delta_report(rows: list[dict[str, Any]], reference_variant: str) -> dict[str, Any]:
     grouped: dict[str, dict[str, dict[str, Any]]] = {}
     for row in rows:
         grouped.setdefault(str(row["dataset"]), {})[str(row["variant"])] = row
@@ -995,7 +992,9 @@ def _reference_delta_report(
                 reference_numeric = isinstance(reference_value, (int, float)) and not isinstance(
                     reference_value, bool
                 )
-                delta = float(value) - float(reference_value) if numeric and reference_numeric else None
+                delta = (
+                    float(value) - float(reference_value) if numeric and reference_numeric else None
+                )
                 relative = (
                     delta / float(reference_value)
                     if delta is not None and float(reference_value) != 0.0
@@ -1048,9 +1047,7 @@ def _aggregate_rows(runs: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     observed.append(float(value))
             row[output_key] = statistics.median(observed) if observed else None
         row["quality"] = (
-            row["public_ndcg_at_10"]
-            if row["public_ndcg_at_10"] is not None
-            else row["median_ndcg"]
+            row["public_ndcg_at_10"] if row["public_ndcg_at_10"] is not None else row["median_ndcg"]
         )
         rows.append(row)
     return rows
@@ -1159,9 +1156,7 @@ def main(argv: list[str] | None = None) -> int:
                 atomic_write_json(summary_path, summary)
                 break
             try:
-                _verify_worktree_fingerprint(
-                    worktree_fingerprint, _worktree_fingerprint()
-                )
+                _verify_worktree_fingerprint(worktree_fingerprint, _worktree_fingerprint())
                 run = run_spec(
                     spec,
                     parent_env=dict(os.environ),
@@ -1169,9 +1164,7 @@ def main(argv: list[str] | None = None) -> int:
                     protocol=args.protocol,
                     timeout_seconds=args.run_timeout,
                 )
-                _verify_worktree_fingerprint(
-                    worktree_fingerprint, _worktree_fingerprint()
-                )
+                _verify_worktree_fingerprint(worktree_fingerprint, _worktree_fingerprint())
             except Exception as exc:
                 run = {
                     "dataset": _dataset_identity(spec.dataset),
@@ -1184,18 +1177,14 @@ def main(argv: list[str] | None = None) -> int:
                 }
             summary["runs"].append(run)
             atomic_write_json(summary_path, summary)
-            if run.get("error") == "RuntimeError" and "worktree changed" in run.get(
-                "message", ""
-            ):
+            if run.get("error") == "RuntimeError" and "worktree changed" in run.get("message", ""):
                 break
 
         summary["order_independence"] = _order_report(summary["runs"])
         summary["position_effects"] = _position_report(summary["runs"])
         aggregate = _aggregate_rows(summary["runs"])
         summary["aggregate"] = aggregate
-        summary["reference_deltas"] = _reference_delta_report(
-            aggregate, matrix.reference_variant
-        )
+        summary["reference_deltas"] = _reference_delta_report(aggregate, matrix.reference_variant)
         summary["pareto"] = (
             {"available": True, "datasets": pareto_by_dataset(aggregate)}
             if args.schedule == "balanced"
@@ -1207,9 +1196,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         failed = [run for run in summary["runs"] if run.get("status") != "success"]
         summary["status"] = (
-            "failed"
-            if failed or not summary["order_independence"]["passed"]
-            else "complete"
+            "failed" if failed or not summary["order_independence"]["passed"] else "complete"
         )
         summary["promotion_eligible"] = bool(
             summary["status"] == "complete"

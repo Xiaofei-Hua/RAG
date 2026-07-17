@@ -90,7 +90,9 @@ class BM25Retriever:
             for doc in documents:
                 self._documents.append(doc)
                 index_text = doc.metadata.get("index_text", doc.page_content)
-                tokens = self._tokenize(index_text if isinstance(index_text, str) else doc.page_content)
+                tokens = self._tokenize(
+                    index_text if isinstance(index_text, str) else doc.page_content
+                )
                 self._doc_tokens.append(tokens)
                 self._doc_lengths.append(len(tokens))
 

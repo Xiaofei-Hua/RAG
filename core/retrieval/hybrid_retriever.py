@@ -96,9 +96,7 @@ class HybridRetrieverConfig:
     """
 
     # Dense retrieval
-    enable_dense: bool = field(
-        default_factory=lambda: _env_bool("RETRIEVAL_DENSE_ENABLED", True)
-    )
+    enable_dense: bool = field(default_factory=lambda: _env_bool("RETRIEVAL_DENSE_ENABLED", True))
     dense_weight: float = field(default_factory=lambda: _env_float("DENSE_WEIGHT", 0.5))
     dense_top_k: int = field(
         default_factory=lambda: _env_int(
@@ -108,9 +106,7 @@ class HybridRetrieverConfig:
     )
 
     # Sparse retrieval (BM25)
-    enable_sparse: bool = field(
-        default_factory=lambda: _env_bool("RETRIEVAL_SPARSE_ENABLED", True)
-    )
+    enable_sparse: bool = field(default_factory=lambda: _env_bool("RETRIEVAL_SPARSE_ENABLED", True))
     sparse_weight: float = field(default_factory=lambda: _env_float("SPARSE_WEIGHT", 0.5))
     sparse_top_k: int = field(
         default_factory=lambda: _env_int(
@@ -131,9 +127,7 @@ class HybridRetrieverConfig:
     # MMR de-redundancy (applied after RRF, optionally after reranker).
     # When enabled, near-duplicate chunks are removed in favour of diverse,
     # still-relevant evidence. F4: MMR_LAMBDA env-tunable.
-    enable_mmr: bool = field(
-        default_factory=lambda: _env_bool("RETRIEVAL_MMR_ENABLED", True)
-    )
+    enable_mmr: bool = field(default_factory=lambda: _env_bool("RETRIEVAL_MMR_ENABLED", True))
     mmr_lambda: float = field(default_factory=lambda: _env_float("MMR_LAMBDA", 0.7))
     enable_time_decay: bool = field(
         default_factory=lambda: _env_bool("RETRIEVAL_TIME_DECAY_ENABLED", True)
@@ -178,7 +172,9 @@ class HybridRetrieverConfig:
         sparse_backend = (
             "disabled"
             if not self.enable_sparse
-            else "native_m3" if self.enable_native_sparse else "bm25"
+            else "native_m3"
+            if self.enable_native_sparse
+            else "bm25"
         )
         return ActiveChannelPolicy(
             dense=bool(self.enable_dense),
@@ -784,8 +780,7 @@ class HybridRetriever:
                 if self._needs_shared_representation(filter_scope):
                     representation = self._prepare_query_representation(query)
                 dense_execution = self._execute_channel(
-                    policy.dense
-                    and filter_scope.supports(FilterCapability.MILVUS_EXPRESSION),
+                    policy.dense and filter_scope.supports(FilterCapability.MILVUS_EXPRESSION),
                     lambda: self._dense_retrieve(
                         query,
                         filter_expr,

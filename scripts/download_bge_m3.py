@@ -36,8 +36,7 @@ def missing_required_assets(output: Path) -> tuple[str, ...]:
     if not (output / "config.json").is_file():
         missing.append("config.json")
     if not any(
-        (output / filename).is_file()
-        for filename in ("model.safetensors", "pytorch_model.bin")
+        (output / filename).is_file() for filename in ("model.safetensors", "pytorch_model.bin")
     ):
         missing.append("model.safetensors|pytorch_model.bin")
     missing.extend(
@@ -89,8 +88,7 @@ def main() -> int:
         *REQUIRED_HYBRID_HEADS,
     ]
     if not any(
-        (output / filename).is_file()
-        for filename in ("model.safetensors", "pytorch_model.bin")
+        (output / filename).is_file() for filename in ("model.safetensors", "pytorch_model.bin")
     ):
         allow_patterns.extend(("model.safetensors", "pytorch_model.bin"))
     snapshot_download(

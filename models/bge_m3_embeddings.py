@@ -63,8 +63,7 @@ def is_bge_m3_cached(model_path: str) -> bool:
     """Return whether the local model directory looks loadable."""
     p = Path(model_path)
     return p.is_dir() and any(
-        (p / filename).is_file()
-        for filename in ("model.safetensors", "pytorch_model.bin")
+        (p / filename).is_file() for filename in ("model.safetensors", "pytorch_model.bin")
     )
 
 
@@ -280,10 +279,7 @@ class BGEM3Embeddings(Embeddings):
         )
         dense = out["dense_vecs"][0].tolist()
         sparse = (
-            {
-                int(key): float(value)
-                for key, value in out["lexical_weights"][0].items()
-            }
+            {int(key): float(value) for key, value in out["lexical_weights"][0].items()}
             if use_hybrid_heads
             else None
         )
