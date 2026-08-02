@@ -1,6 +1,6 @@
 # 闭环追踪 — WSL Local Deployment
 
-**当前阶段**: implementation verified in worktree；真实目标激活仍受 verification §4 边界约束。
+**当前阶段**: implementation committed；真实目标激活仍受 verification §4 边界约束。
 **日期**: 2026-08-02
 
 执行命令、红绿证据、完整矩阵和目标机限制见 [verification.md](verification.md)。
@@ -9,16 +9,15 @@
 
 | 发现 ID | 严重性 | REQ | defender 决策 | v2 修订 | 修复 commit | 验证测试 | 回归测试固化 | 状态 |
 |---|---|---|---|---|---|---|---|---|
-| F-01 | High | REQ-WND-009 | accepted | §1/§3 | `verified-in-worktree (no commit authorized)` | local truth table、Trusted Host、8000/11434 listener gate | Host/origin/bind regression + clean dry-run | closed |
-| F-02 | High | REQ-WND-010/011 | accepted | §2.2 steps 1/9/10 | `verified-in-worktree (no commit authorized)` | path/env owner-mode-link、owned marker/root digest、systemd verify | deployment contract + ShellCheck | closed |
-| F-03 | High | REQ-WND-018 | accepted | §4/§6/§7 | `verified-in-worktree (no commit authorized)` | MCP success/failure query/URL canaries | permanent log-redaction suite | closed |
-| F-04 | High | REQ-WND-003/007 | accepted | §2.2 step 12 | `verified-in-worktree (no commit authorized)` | real generation、exact VRAM、`sm_120`、CUDA synchronize | pre-activation order + composite fixtures | closed |
-| F-05 | High | REQ-WND-014 | defended-with-alternative | §4/§8/§9 | `verified-in-worktree (no commit authorized)` | guide/registry input schema + exception-shape drift | `KeyError`/`RuntimeError` + unavailable≠0 docs | defended-with-alternative |
-| F-06 | High | REQ-WND-008/015 | accepted | §2.1/§2.2/§5 | `verified-in-worktree (no commit authorized)` | manifest backup/restore failure injection、new/existing owned rollback state | data preservation + staged/no-op contracts | closed |
+| F-01 | High | REQ-WND-009 | accepted | §1/§3 | `0f852c0` | local truth table、Trusted Host、8000/11434 listener gate | Host/origin/bind regression + clean dry-run | closed |
+| F-02 | High | REQ-WND-010/011 | accepted | §2.2 steps 1/9/10 | `0f852c0` | path/env owner-mode-link、owned marker/root digest、systemd verify | deployment contract + ShellCheck | closed |
+| F-03 | High | REQ-WND-018 | accepted | §4/§6/§7 | `0f852c0` | MCP success/failure query/URL canaries | permanent log-redaction suite | closed |
+| F-04 | High | REQ-WND-003/007 | accepted | §2.2 step 12 | `0f852c0` | real generation、exact VRAM、`sm_120`、CUDA synchronize | pre-activation order + composite fixtures | closed |
+| F-05 | High | REQ-WND-014 | defended-with-alternative | §4/§8/§9 | `0f852c0` | guide/registry input schema + exception-shape drift | `KeyError`/`RuntimeError` + unavailable≠0 docs | defended-with-alternative |
+| F-06 | High | REQ-WND-008/015 | accepted | §2.1/§2.2/§5 | `0f852c0` | manifest backup/restore failure injection、new/existing owned rollback state | data preservation + staged/no-op contracts | closed |
 
-没有 commit 授权时，“修复 commit”最终写为 `verified-in-worktree (no commit authorized)`，但只有验证与
-永久回归测试均填实后才允许关闭。F-05 的当前 feature closure 仅代表文档/测试替代落地；运行时问题
-由 `FIX-MCP-NONTHROWING-DEGRADATION` 保持 backlog，不得被描述为已修复。
+修复实现已记录在 commit `0f852c0`。F-05 的当前 feature closure 仅代表文档/测试替代落地；运行时
+问题由 `FIX-MCP-NONTHROWING-DEGRADATION` 保持 backlog，不得被描述为已修复。
 
 ## 2. Additional Premortem Trace
 

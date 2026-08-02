@@ -46,4 +46,4 @@
 - [x] pinned frontend build 与适用浏览器 smoke 通过 `[REQ-WND-004]` `[REQ-WND-016]`
 - [x] 完整 Python 矩阵连续通过两次 `[REQ-WND-016]`
 - [x] 归档 `review/verification.md`，如实记录外部下载/真实服务未验证项 `[REQ-WND-016]`
-- [x] 更新 tracking；无 commit 授权时保持 `verified-in-worktree` `[REQ-WND-016]`
+- [x] 更新 tracking，并在 commit `0f852c0` 建立后关闭对应 finding `[REQ-WND-016]`

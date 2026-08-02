@@ -1,7 +1,7 @@
 # Verification — WSL Local Deployment
 
 **Date**: 2026-08-02
-**Result**: implementation and documentation verified in worktree; no commit was authorized
+**Result**: implementation and documentation verified and committed as `0f852c0`
 **Scope**: WSL deployment assets, local-production runtime contract, HTTP/MCP documentation,
 deployment regression, frontend build and browser smoke
 
@@ -65,9 +65,8 @@ deployment regression, frontend build and browser smoke
 
 以下是“尚未在真实目标上完成部署”的边界，不是脚本测试通过的替代说法：
 
-1. 当前主 checkout 包含本次尚未提交的 tracked changes，所以直接执行真实
-   `./deploy_wsl.sh --dry-run` 会按设计在 clean-checkout 门禁停止。隔离 clean fixture 的完整 dry-run
-   已通过；合并/提交后仍应在正式 checkout 再跑一次。
+1. 主实现已提交为 `0f852c0`，clean-checkout 门禁不再受未提交改动阻塞。隔离 clean fixture 的完整
+   dry-run 已通过；真实 checkout 仍会按设计在下述非项目 owned Ollama 监听冲突处停止。
 2. 当前主机已有非本项目 owned 的 Ollama 配置把 `OLLAMA_HOST` 设为 `0.0.0.0:11434`，实际 socket
    为 `*:11434`。脚本会在任何写入前拒绝它。正式部署前必须按
    `docs/deployment/WSL_DEPLOYMENT.md` §4.5 审阅并移除冲突，再确认 11434 只监听
@@ -78,5 +77,5 @@ deployment regression, frontend build and browser smoke
 4. 已有 BGE/reranker/Ollama 模型被复用，没有为了测试重复下载全部大文件。脚本的 staging、required
    asset 和 exact-model gates 由 fixture/现有资产验证。
 
-因此，本报告证明的是部署文档、脚本和可自动验证合同已闭合；不声称当前脏 checkout/通配 Ollama
-主机已经完成生产部署。
+因此，本报告证明的是部署文档、脚本和可自动验证合同已闭合；不声称当前通配 Ollama 主机已经完成
+生产部署。

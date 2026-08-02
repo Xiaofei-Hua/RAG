@@ -90,6 +90,5 @@ clean `HEAD`、untracked canary、symlink escape 与宽泛目标拒绝。未构�
 
 ## 5. Review Closure
 
-Critic 的 F-01～F-06 六条 Critical finding 均已有实现、验证和永久回归测试。由于用户没有授权
-创建 Git commit，`tracking.md` 中状态保持 `verified-in-worktree`，merge gate 等 commit 建立后
-才能按仓库协议标为 `closed`。
+Critic 的 F-01～F-06 六条 Critical finding 均已有实现、验证和永久回归测试，修复实现已记录在
+commit `0f852c0`。`tracking.md` 已补齐修复 commit 并按仓库协议将 6 条 finding 标为 `closed`。
