@@ -220,6 +220,7 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { apiUrl } from '@/utils/api'
 
 const healthData = ref<any>({ services: {} })
 const circuitBreakers = ref<any>({})
@@ -288,7 +289,7 @@ async function refreshAll() {
 
 async function loadHealth() {
   try {
-    const response = await fetch('/api/admin/health')
+    const response = await fetch(apiUrl('api/admin/health'))
     healthData.value = await response.json()
     _syncHealthPolling()
   } catch (e) {
@@ -298,7 +299,7 @@ async function loadHealth() {
 
 async function loadCircuitBreakers() {
   try {
-    const response = await fetch('/api/admin/circuit-breakers')
+    const response = await fetch(apiUrl('api/admin/circuit-breakers'))
     circuitBreakers.value = await response.json()
   } catch (e) {
     console.error('Load circuit breakers error:', e)
@@ -307,7 +308,7 @@ async function loadCircuitBreakers() {
 
 async function loadMetrics() {
   try {
-    const response = await fetch('/api/admin/metrics')
+    const response = await fetch(apiUrl('api/admin/metrics'))
     metrics.value = await response.json()
   } catch (e) {
     console.error('Load metrics error:', e)
@@ -316,7 +317,7 @@ async function loadMetrics() {
 
 async function loadDegradation() {
   try {
-    const response = await fetch('/api/admin/degradation')
+    const response = await fetch(apiUrl('api/admin/degradation'))
     const data = await response.json()
     degradationMode.value = data.mode || 'full'
   } catch (e) {
@@ -327,7 +328,7 @@ async function loadDegradation() {
 async function resetCircuitBreaker(name: string | number) {
   const nameStr = String(name)
   try {
-    await fetch(`/api/admin/circuit-breakers/${nameStr}/reset`, { method: 'POST' })
+    await fetch(apiUrl(`api/admin/circuit-breakers/${nameStr}/reset`), { method: 'POST' })
     await loadCircuitBreakers()
   } catch (e) {
     console.error('Reset circuit breaker error:', e)
@@ -336,7 +337,7 @@ async function resetCircuitBreaker(name: string | number) {
 
 async function setDegradationMode(mode: string) {
   try {
-    await fetch(`/api/admin/degradation/mode/${mode}`, { method: 'POST' })
+    await fetch(apiUrl(`api/admin/degradation/mode/${mode}`), { method: 'POST' })
     degradationMode.value = mode
   } catch (e) {
     console.error('Set degradation mode error:', e)

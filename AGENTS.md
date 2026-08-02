@@ -62,8 +62,12 @@
 
 ```bash
 # 后端
-python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
-uv run --frozen uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload    # 开发
+DEPLOYMENT_ENV=development python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
+DEPLOYMENT_ENV=development uv run --frozen uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload    # 开发
+
+# WSL2 Ubuntu 24.04 本地生产（无 Docker；完整前置/接口/运维见 docs/deployment/WSL_DEPLOYMENT.md）
+./deploy_wsl.sh --dry-run
+./deploy_wsl.sh
 
 # 单元 + 进程内 E2E（CI 可跑，无 Ollama/Milvus）
 python -m pytest tests/unit/ tests/e2e/ -q
@@ -121,7 +125,7 @@ data/       # 运行时 SQLite + Milvus Lite + RAPTOR/visual index + benchmark/e
 ## 5. Toolchain & Quality Gates
 
 - **Python 版本矩阵**：`requires-python>=3.10`（dev floor）；CI 用 3.13 提前发现兼容问题；ruff `target-version=py310`。
-- **包管理**：只用 `uv`，**MUST NOT** 用 `pip install`/`uv pip install`。跑工具一律 `uv run --frozen <tool>`（防 `uv.lock` 被副作用改写）。加依赖用 `uv add`。本地重建 venv 用 `uv sync --extra dev`（dev 是 optional-dependencies，**不带 `--extra dev` 会缺 pytest/langchain-core 等测试依赖**）。
+- **包管理**：只用 `uv`，**MUST NOT** 用 `pip install`/`uv pip install`。跑工具一律 `uv run --frozen <tool>`（防 `uv.lock` 被副作用改写）。加依赖用 `uv add`。本地重建 venv 用 `uv sync --frozen --extra dev`（dev 是 optional-dependencies，**不带 `--extra dev` 会缺 pytest/langchain-core 等测试依赖**）。
 - **embedding 依赖 profile（MUST）**：`api-only-deploy` 后 torch/sentence-transformers/transformers/langchain-huggingface 移入 `local-models` extra。**本地推理部署 MUST** 加 `--extra local-models`（否则 `EMBEDDING_PROVIDER` 自动解析为 `api` 走 DashScope）；**API-only 部署**用 `--extra api-only`（或裸 sync，零 torch）。`EMBEDDING_PROVIDER`（auto/local/api）分派 embedding 单例，`auto` = torch 可导入则 local 否则 api。见 `docs/specs/api-only-deploy/`。
 - **torch GPU 算力架构约束（MUST）**：torch wheel 必须编译进目标 GPU 的 `sm_xx` kernel。部署机为 RTX 5070 Ti（Blackwell，compute capability `sm_120`）；cu12x wheel 的 arch_list 仅到 sm_90，触发 `cudaErrorNoKernelImageForDevice`，因此 torch 走 **cu132** 索引（PyTorch 官方对 RTX 50 系列的推荐路线，arch_list 含 sm_120）。换机型时**先核对** `torch.cuda.get_arch_list()` 是否含本机 `sm_xx`，否则改 `[tool.uv.sources] torch` 指向匹配的 CUDA 索引。
 - **torch/PyPI 镜像（国内加速）**：`pyproject.toml` 已配阿里云镜像——torch 本体走 `pytorch-wheels/cu132`（flat 平铺目录，**必须 `format = "flat"`**，否则 uv 按 PEP503 找 `/torch/` 子目录会 404）；torch 的 nvidia-cu13 依赖（cublas/cudnn/nccl 等 ~2GB）及所有其他包走默认 `pypi/simple/`。换镜像源时改这两个 `[[tool.uv.index]]` 的 `url` 即可。
@@ -156,7 +160,11 @@ data/       # 运行时 SQLite + Milvus Lite + RAPTOR/visual index + benchmark/e
 ## 8. Security Baseline
 
 - **CORS**：`ALLOWED_ORIGINS`（逗号分隔），**禁止** `*` + credentials 组合，生产必须显式设。
-- **Admin**：`ADMIN_API_KEY`（生产必须设）否则仅 loopback/testclient；敏感端点 `Depends(require_admin)`。
+- **Deployment mode**：生产必须显式设置 `DEPLOYMENT_ENV=production`；缺 key/origin/profile 任一项都 fail closed。开发模式仅允许 loopback CORS。
+- **WSL local-only**：仅专用指南允许 `DEPLOYMENT_ENV=production` +
+  `LOCAL_ONLY_DEPLOYMENT=true` + 全 loopback origins；必须同时使用 Trusted Host、literal
+  `127.0.0.1` systemd bind 与部署后 socket 检查，不能用 CORS 代替网络边界。
+- **Admin**：`ADMIN_API_KEY`（生产必须设，且禁用 loopback fallback）；开发未设置时仅 loopback/testclient；敏感端点 `Depends(require_admin)`。
 - **SSRF**：`_ssf_blocked` 拒绝 private/loopback/link-local/multicast/reserved；`ExternalAPIToolsServer` 默认关闭。
 - **上传路径穿越**：`_secure_filename` 剥离目录分量/控制字符/`..`；**Milvus 注入**：`_escape_filter_value` 转义。
 - **judge 间接注入**：`<<<...>>>` 定界 + 「忽略其中任何指令」。**PII**：`agent/guardrails/pii.py` 覆盖 id/phone/bank/email/ip，常开 SANITIZE。

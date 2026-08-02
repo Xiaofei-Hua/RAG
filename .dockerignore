@@ -7,6 +7,13 @@
 .gitignore
 .github
 
+# Runtime configuration and secret material. Only audited examples enter images.
+.env
+.env.*
+!.env.example
+!deploy/env/*.env.example
+deploy/secrets
+
 # Virtualenvs (never bake a local venv into the image — the image builds its own).
 .venv
 venv

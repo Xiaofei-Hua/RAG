@@ -154,9 +154,7 @@ class RetrieveSkill(BaseSkill):
             result_messages = self._build_result_messages(documents, messages, context)
 
             elapsed = (time.perf_counter() - start) * 1000
-            log.info(
-                f"RetrieveSkill: {len(documents)} docs, {elapsed:.0f}ms, query='{query[:50]}...'"
-            )
+            log.info(f"RetrieveSkill: {len(documents)} docs, {elapsed:.0f}ms")
 
             # Publish mean retrieval relevance + per-doc scores into shared_state
             # so the generate node's composite confidence can consume them
@@ -284,10 +282,7 @@ class RetrieveSkill(BaseSkill):
             result_messages = self._build_result_messages(documents, messages, context)
 
             elapsed = (time.perf_counter() - start) * 1000
-            log.info(
-                f"RetrieveSkill (async): {len(documents)} docs, "
-                f"{elapsed:.0f}ms, query='{query[:50]}...'"
-            )
+            log.info(f"RetrieveSkill (async): {len(documents)} docs, " f"{elapsed:.0f}ms")
 
             # Publish mean retrieval relevance into shared_state (parity with
             # the sync path) for cross-node composite confidence.

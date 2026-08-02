@@ -5,9 +5,9 @@ Handles system administration and monitoring endpoints.
 
 Security: sensitive endpoints (config, inference detail, circuit-breaker
 reset, degradation mode) are gated by :func:`require_admin`, which checks an
-``X-Admin-Key`` header against the ``ADMIN_API_KEY`` env var. When no key is
-configured, requests are allowed only from localhost (127.0.0.1/::1) so local
-development keeps working. Read-only health/metrics remain open.
+``X-Admin-Key`` header against the ``ADMIN_API_KEY`` env var. In development,
+an unconfigured key permits only localhost (127.0.0.1/::1); production disables
+that fallback and startup requires a key. Read-only health/metrics remain open.
 """
 
 from __future__ import annotations
@@ -34,13 +34,15 @@ def require_admin(
       consumed as-is — no ``.strip()`` at compare time, which would both leak
       the key length and silently mutate a key with intentional surrounding
       bytes. (The configured value is stripped once at config load.)
-    - If unset (local dev): only loopback clients are allowed.
+    - If unset in local development: only loopback clients are allowed.
+    - If unset in production: fail closed even for loopback clients.
 
     Raises 401 on missing/mismatched key, 403 on non-loopback without a key.
     """
     import hmac
 
     configured = os.getenv("ADMIN_API_KEY", "").strip()
+    deployment_env = os.getenv("DEPLOYMENT_ENV", "").strip().lower()
     client_host = None
     try:
         client = request.client
@@ -57,6 +59,9 @@ def require_admin(
         if not hmac.compare_digest(supplied, configured):
             raise HTTPException(status_code=401, detail="invalid or missing admin key")
         return
+
+    if deployment_env == "production":
+        raise HTTPException(status_code=401, detail="admin key is required in production")
 
     # No key configured -> allow loopback (and the in-process Starlette test
     # client, whose client.host is the literal "testclient") so local dev and

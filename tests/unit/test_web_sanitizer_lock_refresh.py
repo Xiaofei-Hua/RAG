@@ -37,6 +37,25 @@ def test_dompurify_lock_is_patched_and_has_trusted_provenance() -> None:
     assert str(package["integrity"]).startswith("sha512-")
 
 
+def test_frontend_build_toolchain_locks_are_outside_known_advisory_ranges() -> None:
+    manifest = json.loads((ROOT / "web" / "package.json").read_text(encoding="utf-8"))
+    assert manifest["devDependencies"]["vite"] == "^6.4.3"
+    assert manifest["devDependencies"]["vue-tsc"] == "^2.2.12"
+
+    lock = json.loads((ROOT / "package-lock.json").read_text(encoding="utf-8"))
+    packages = lock["packages"]
+    assert _version_tuple(packages["node_modules/vite"]["version"]) >= (6, 4, 3)
+    assert _version_tuple(packages["node_modules/vue-tsc"]["version"]) >= (2, 0, 29)
+    patched_brace_versions = {1: (1, 1, 16), 2: (2, 1, 2), 5: (5, 0, 7)}
+    for path, package in packages.items():
+        if not path.endswith("node_modules/brace-expansion"):
+            continue
+        version = _version_tuple(package["version"])
+        assert version[0] in patched_brace_versions
+        assert version > patched_brace_versions[version[0]]
+        assert str(package["resolved"]).startswith("https://registry.npmjs.org/brace-expansion/-/")
+
+
 def test_api_only_docker_consumes_root_workspace_lock() -> None:
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
     assert dockerfile.startswith("# Multi-stage Dockerfile for the API-only deploy profile.")

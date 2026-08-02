@@ -97,7 +97,7 @@ def _llm_invoke(prompt: str) -> str | None:
             _cache_put(prompt, model, result)
         return result
     except Exception as e:  # noqa: BLE001
-        log.debug(f"query-transform LLM call failed: {e}")
+        log.debug(f"query-transform LLM call failed: error_type={type(e).__name__}")
         return None
 
 
@@ -119,7 +119,7 @@ async def _allm_invoke(prompt: str) -> str | None:
             _cache_put(prompt, model, result)
         return result
     except Exception as e:  # noqa: BLE001
-        log.debug(f"query-transform async LLM call failed: {e}")
+        log.debug(f"query-transform async LLM call failed: error_type={type(e).__name__}")
         return None
 
 
@@ -189,7 +189,7 @@ def condense_query(question: str, history: list[BaseMessage]) -> str:
                 return result
         return question
     except Exception as e:  # noqa: BLE001 — degrade to original
-        log.debug(f"condense_query failed, using original: {e}")
+        log.debug(f"condense_query failed, using original: error_type={type(e).__name__}")
         return question
 
 
@@ -324,7 +324,7 @@ def multi_query_retrieve(
         try:
             lists.append(retriever.retrieve(q, top_k=top_k, filter_expr=filter_expr))
         except Exception as e:  # noqa: BLE001
-            log.debug(f"multi-query retrieve failed for '{q[:30]}': {e}")
+            log.debug(f"multi-query retrieve failed: error_type={type(e).__name__}")
     if not lists:
         return retriever.retrieve(query, top_k=top_k, filter_expr=filter_expr)
     fused = _rrf_fuse(lists)

@@ -144,7 +144,7 @@ class IntentClassifier:
         Returns:
             IntentResult with classified intent and confidence
         """
-        log.debug(f"Classifying intent for: {query[:50]}...")
+        log.debug(f"Classifying intent: query_length={len(query)}")
 
         for attempt in range(self.config.max_retries + 1):
             try:
@@ -188,7 +188,7 @@ class IntentClassifier:
         Returns:
             IntentResult with classified intent and confidence
         """
-        log.debug(f"Async classifying intent for: {query[:50]}...")
+        log.debug(f"Async classifying intent: query_length={len(query)}")
 
         # Fast path: keyword-based classification to skip LLM call
         result = self._keyword_classify(query)

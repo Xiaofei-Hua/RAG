@@ -1,183 +1,148 @@
-#!/bin/bash
-# =============================================================================
-# 领域自适应 RAG 智能问答平台 — 一键启动
-#
-# 启动后端 (FastAPI :8000) 和前端 (Vite :3000)
-# 访问地址: http://localhost:3000
-# =============================================================================
+#!/usr/bin/env bash
+set -euo pipefail
 
-set -e
+UV_VERSION="0.11.8"
+NODE_VERSION="20.20.2"
+NPM_VERSION="10.8.2"
 
-PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
-DATA_DIR="$PROJECT_DIR/data"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 PID_DIR="$PROJECT_DIR/.pids"
 LOG_DIR="$PROJECT_DIR/logs"
-VENV_DIR="$PROJECT_DIR/.venv"
-WEB_DIR="$PROJECT_DIR/web"
+PROFILE="local"
+SYNC=true
+FRONTEND=true
+started_pgids=()
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
+usage() {
+  cat <<'EOF'
+Usage: ./run.sh [--profile local|api-only] [--skip-sync] [--no-frontend]
 
-info()  { echo -e "${CYAN}[INFO]${NC}  $1"; }
-ok()    { echo -e "${GREEN}[ OK ]${NC}  $1"; }
-warn()  { echo -e "${YELLOW}[WARN]${NC}  $1"; }
-fail()  { echo -e "${RED}[FAIL]${NC}  $1"; exit 1; }
+Starts a loopback-only development instance. Production uses systemd or the
+API-only container profile documented under docs/deployment/.
+EOF
+}
 
-echo ""
-echo -e "${BOLD}============================================${NC}"
-echo -e "${BOLD}  领域自适应 RAG 智能问答平台 — 启动中${NC}"
-echo -e "${BOLD}============================================${NC}"
-echo ""
+fail() { echo "run: $*" >&2; exit 2; }
+info() { echo "run: $*"; }
 
-# Create directories
-mkdir -p "$DATA_DIR" "$PID_DIR" "$LOG_DIR"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --profile) [[ $# -ge 2 ]] || fail "--profile needs a value"; PROFILE="$2"; shift 2 ;;
+    --skip-sync) SYNC=false; shift ;;
+    --no-frontend) FRONTEND=false; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) fail "unknown option: $1" ;;
+  esac
+done
+[[ "$PROFILE" == "local" || "$PROFILE" == "api-only" ]] || fail "profile must be local or api-only"
+[[ ${EUID:-$(id -u)} -ne 0 ]] || fail "do not run the development stack as root"
 
-# ─── Check if already running ───────────────────────────────────────────────
+require_version() {
+  local command_name="$1" expected="$2" actual
+  command -v "$command_name" >/dev/null 2>&1 || fail "$command_name $expected is required"
+  case "$command_name" in
+    uv) actual="$(uv --version | awk '{print $2}')" ;;
+    node) actual="$(node --version | sed 's/^v//')" ;;
+    npm) actual="$(npm --version)" ;;
+  esac
+  [[ "$actual" == "$expected" ]] || fail "$command_name $expected is required (found $actual)"
+}
 
-for svc in backend frontend; do
-    if [ -f "$PID_DIR/$svc.pid" ]; then
-        OLD_PID=$(cat "$PID_DIR/$svc.pid")
-        if kill -0 "$OLD_PID" 2>/dev/null; then
-            warn "$svc 已在运行 (PID: $OLD_PID)，先停止..."
-            kill "$OLD_PID" 2>/dev/null && sleep 1
-            kill -9 "$OLD_PID" 2>/dev/null
-        fi
-        rm -f "$PID_DIR/$svc.pid"
-    fi
+require_version uv "$UV_VERSION"
+if [[ "$FRONTEND" == true ]]; then
+  require_version node "$NODE_VERSION"
+  require_version npm "$NPM_VERSION"
+fi
+command -v setsid >/dev/null 2>&1 || fail "setsid (util-linux) is required"
+command -v curl >/dev/null 2>&1 || fail "curl is required"
+
+mkdir -p "$PID_DIR" "$LOG_DIR" "$PROJECT_DIR/data"
+for service in backend frontend; do
+  [[ ! -f "$PID_DIR/$service.meta" ]] || fail "$service metadata exists; run ./stop.sh first"
 done
 
-# ─── Check Python venv ──────────────────────────────────────────────────────
-
-if [ ! -f "$VENV_DIR/bin/python" ]; then
-    info "创建 Python 虚拟环境..."
-    python3 -m venv "$VENV_DIR"
-    ok "虚拟环境已创建"
+if [[ "$SYNC" == true ]]; then
+  if [[ "$PROFILE" == "local" ]]; then
+    (cd "$PROJECT_DIR" && uv sync --frozen --extra dev --extra local-models)
+  else
+    (cd "$PROJECT_DIR" && uv sync --frozen --extra dev --extra api-only)
+  fi
+  if [[ "$FRONTEND" == true ]]; then
+    (cd "$PROJECT_DIR" && npm ci)
+  fi
 fi
 
-PYTHON="$VENV_DIR/bin/python"
-PIP="$VENV_DIR/bin/pip"
-cd "$PROJECT_DIR"
+write_metadata() {
+  local service="$1" pid="$2" marker="$3" pgid start_ticks
+  pgid="$(ps -o pgid= -p "$pid" | tr -d ' ')"
+  start_ticks="$(awk '{print $22}' "/proc/$pid/stat")"
+  [[ "$pgid" =~ ^[0-9]+$ && "$start_ticks" =~ ^[0-9]+$ ]] || fail "cannot identify $service"
+  {
+    printf 'service=%s\n' "$service"
+    printf 'pid=%s\n' "$pid"
+    printf 'pgid=%s\n' "$pgid"
+    printf 'start_ticks=%s\n' "$start_ticks"
+    printf 'marker=%s\n' "$marker"
+  } >"$PID_DIR/$service.meta"
+  started_pgids+=("$pgid")
+}
 
-# Install Python dependencies if uvicorn not available
-if ! "$PYTHON" -c "import uvicorn" 2>/dev/null; then
-    info "安装 Python 依赖（首次运行）..."
-    "$PIP" install -q -r "$PROJECT_DIR/requirements.txt"
-    ok "Python 依赖安装完成"
-fi
+cleanup_failed_start() {
+  local pgid
+  for pgid in "${started_pgids[@]}"; do
+    kill -TERM -- "-$pgid" 2>/dev/null || true
+  done
+  rm -f "$PID_DIR/backend.meta" "$PID_DIR/frontend.meta"
+}
+trap cleanup_failed_start ERR INT TERM
 
-# Download configured embedding model if the local cache is not present
-if ! "$PYTHON" -c "
-from models.embedding_models import is_embedding_model_cached
-raise SystemExit(0 if is_embedding_model_cached() else 1)
-"; then
-    info "下载配置的 Embedding 模型（仅首次）..."
-    "$PYTHON" -c "
-from sentence_transformers import SentenceTransformer
-from pathlib import Path
-from utils.env_utils import EMBEDDING_MODEL, EMBEDDING_MODEL_PATH
-if not EMBEDDING_MODEL_PATH:
-    raise SystemExit('EMBEDDING_MODEL_PATH cannot be empty when run.sh downloads a model')
-Path(EMBEDDING_MODEL_PATH).mkdir(parents=True, exist_ok=True)
-model = SentenceTransformer(EMBEDDING_MODEL)
-model.save(EMBEDDING_MODEL_PATH)
-print('模型下载完成')
-"
-    ok "Embedding 模型已下载到配置的本地路径"
-else
-    ok "Embedding 模型已就绪"
-fi
+info "starting backend on 127.0.0.1:8000"
+(
+  cd "$PROJECT_DIR"
+  exec setsid env DEPLOYMENT_ENV=development \
+    uv run --frozen --no-sync uvicorn api.main:app \
+    --host 127.0.0.1 --port 8000 --log-level info
+) >"$LOG_DIR/backend.log" 2>&1 &
+backend_pid=$!
+write_metadata backend "$backend_pid" "uvicorn api.main:app"
 
-# ─── Check Node.js ──────────────────────────────────────────────────────────
+backend_ready=false
+for _ in $(seq 1 60); do
+  if curl --fail --silent --max-time 2 http://127.0.0.1:8000/live >/dev/null 2>&1; then
+    backend_ready=true
+    break
+  fi
+  kill -0 "$backend_pid" 2>/dev/null || fail "backend exited; inspect logs/backend.log"
+  sleep 1
+done
+[[ "$backend_ready" == true ]] || fail "backend liveness timed out; inspect logs/backend.log"
 
-if ! command -v node &>/dev/null; then
-    fail "Node.js 未安装，请先安装: brew install node"
-fi
-ok "Node.js $(node --version)"
-
-# Install frontend dependencies if needed
-if [ ! -d "$WEB_DIR/node_modules" ]; then
-    info "安装前端依赖（首次运行）..."
-    cd "$WEB_DIR" && npm install --silent 2>/dev/null && cd "$PROJECT_DIR"
-    ok "前端依赖安装完成"
-fi
-
-# ─── Start Backend ──────────────────────────────────────────────────────────
-
-# Kill any existing process on port 8000
-EXISTING=$(lsof -ti:8000 2>/dev/null || true)
-if [ -n "$EXISTING" ]; then
-    warn "端口 8000 被占用，正在释放..."
-    kill $EXISTING 2>/dev/null; sleep 1
-    kill -9 $EXISTING 2>/dev/null; sleep 1
-    ok "端口 8000 已释放"
-fi
-
-info "启动后端服务..."
-
-cd "$PROJECT_DIR"
-"$PYTHON" -m uvicorn api.main:app \
-    --host 0.0.0.0 \
-    --port 8000 \
-    --log-level info \
-    > "$LOG_DIR/backend.log" 2>&1 &
-
-BACKEND_PID=$!
-echo "$BACKEND_PID" > "$PID_DIR/backend.pid"
-
-# Wait for backend to be ready (max 30s)
-for i in $(seq 1 30); do
-    if curl -s http://localhost:8000/health > /dev/null 2>&1; then
-        ok "后端已启动 (PID: $BACKEND_PID, 端口: 8000)"
-        break
+if [[ "$FRONTEND" == true ]]; then
+  info "starting frontend on 127.0.0.1:3000"
+  (
+    cd "$PROJECT_DIR"
+    exec setsid npm run dev --workspace web -- --host 127.0.0.1 --port 3000
+  ) >"$LOG_DIR/frontend.log" 2>&1 &
+  frontend_pid=$!
+  write_metadata frontend "$frontend_pid" "vite"
+  frontend_ready=false
+  for _ in $(seq 1 30); do
+    if curl --fail --silent --max-time 2 http://127.0.0.1:3000/ >/dev/null 2>&1; then
+      frontend_ready=true
+      break
     fi
-    if ! kill -0 "$BACKEND_PID" 2>/dev/null; then
-        echo ""
-        fail "后端启动失败，日志: $LOG_DIR/backend.log"
-    fi
+    kill -0 "$frontend_pid" 2>/dev/null || fail "frontend exited; inspect logs/frontend.log"
     sleep 1
-done
-
-if ! curl -s http://localhost:8000/health > /dev/null 2>&1; then
-    warn "后端仍在初始化，已在后台运行 (PID: $BACKEND_PID)"
+  done
+  [[ "$frontend_ready" == true ]] || fail "frontend readiness timed out"
 fi
 
-# ─── Start Frontend ─────────────────────────────────────────────────────────
-
-info "启动前端服务..."
-
-cd "$WEB_DIR"
-npx vite --host 0.0.0.0 --port 3000 \
-    > "$LOG_DIR/frontend.log" 2>&1 &
-
-FRONTEND_PID=$!
-echo "$FRONTEND_PID" > "$PID_DIR/frontend.pid"
-cd "$PROJECT_DIR"
-
-sleep 3
-if kill -0 "$FRONTEND_PID" 2>/dev/null; then
-    ok "前端已启动 (PID: $FRONTEND_PID, 端口: 3000)"
+health_status="$(curl --fail --silent --show-error http://127.0.0.1:8000/health \
+  | uv run --frozen --no-sync python -c 'import json,sys; print(json.load(sys.stdin)["status"])')"
+trap - ERR INT TERM
+info "started successfully; readiness=$health_status"
+if [[ "$FRONTEND" == true ]]; then
+  info "frontend=http://127.0.0.1:3000 backend=http://127.0.0.1:8000"
 else
-    fail "前端启动失败，日志: $LOG_DIR/frontend.log"
+  info "backend=http://127.0.0.1:8000"
 fi
-
-# ─── Summary ────────────────────────────────────────────────────────────────
-
-echo ""
-echo -e "${BOLD}============================================${NC}"
-echo -e "  ${GREEN}✓ 所有服务已启动${NC}"
-echo -e "${BOLD}============================================${NC}"
-echo ""
-echo "  前端地址:  http://localhost:3000"
-echo "  后端 API:  http://localhost:8000"
-echo "  API 文档:  http://localhost:8000/docs"
-echo ""
-echo "  后端日志:  tail -f $LOG_DIR/backend.log"
-echo "  前端日志:  tail -f $LOG_DIR/frontend.log"
-echo ""
-echo "  停止服务:  ./stop.sh"
-echo ""

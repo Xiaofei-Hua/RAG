@@ -106,10 +106,18 @@ class TestSSRFGuard:
         assert reason is not None
         assert "允许列表" in reason
 
-    def test_public_host_allowed(self):
+    def test_public_host_allowed(self, monkeypatch):
+        import socket
+
         from agent.mcp.tools_registry import ExternalAPIToolsServer
 
-        # A real public host (example.com resolves to public IPs).
+        monkeypatch.setattr(
+            socket,
+            "getaddrinfo",
+            lambda *_args, **_kwargs: [
+                (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 0))
+            ],
+        )
         reason = ExternalAPIToolsServer._ssf_blocked("https://example.com/")
         assert reason is None
 

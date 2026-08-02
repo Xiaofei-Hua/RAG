@@ -1,5 +1,9 @@
 # Environment variables (contains secrets)
 .env
+deploy/env/*.env
+!deploy/env/*.env.example
+deploy/secrets/
+.wsl-deploy/
 
 # Python
 __pycache__/
@@ -78,9 +82,6 @@ models/local_models/
 
 # CUDA installer
 cuda_*.run
-
-# Ollama deployment
-deploy_ollama.sh
 
 # Claude Code
 .claude/

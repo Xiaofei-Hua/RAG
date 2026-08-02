@@ -76,7 +76,15 @@ docs/specs/
 | `graphrag/` | one-hop graph leg、过滤与图存储契约 | `GRAPH_RAG_ENABLED` 默认关；Graph PPR 是 frontier spec 的额外默认关闭层 |
 
 对外入口：HTTP 契约见 `../API.md`；进程内 MCP 契约见 `../MCP.md`；技术汇总见
-`../technical_report.md`。
+`../technical_report.md`；可执行的当前部署与运维手册见 `../deployment/README.md`。历史 spec
+中的旧安装命令只保留决策背景，不应替代部署手册与锁文件。
+
+## Current Deployment Specifications
+
+| Spec | 当前职责 | 操作入口 |
+|---|---|---|
+| `deployment-documentation-hardening/` | 通用开发、裸机、API-only、offline、operations 与部署安全基线 | `../deployment/README.md` |
+| `wsl-local-deployment/` | Windows 11 + WSL2、本地 Ollama/BGE、systemd、localhost、接口完整性与 staged release | `../deployment/WSL_DEPLOYMENT.md` |
 
 ## 横切工程治理批（`engineering-governance-optimization/`）
 

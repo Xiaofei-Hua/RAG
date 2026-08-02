@@ -110,6 +110,37 @@ jobs:
         run: |
           docker run --rm --entrypoint /app/venv/bin/python \
             rag-platform:api-only-ci -c "from pathlib import Path; \
-          assert Path('/app/data/profiles/general.yaml').is_file(); \
-          assert Path('/app/data/profiles/aviation_phm.yaml').is_file(); \
+          assert Path('/app/config/profiles/general.yaml').is_file(); \
+          assert Path('/app/config/profiles/aviation_phm.yaml').is_file(); \
           import api.main; print('IMPORT_OK')"
+
+      - name: Smoke-test non-root container health
+        run: |
+          set -euo pipefail
+          SECRET_DIR=$(mktemp -d)
+          CONTAINER_NAME=rag-api-only-ci-smoke
+          cleanup() {
+            docker rm -f "$CONTAINER_NAME" >/dev/null 2>&1 || true
+            rm -rf "$SECRET_DIR"
+          }
+          trap cleanup EXIT
+          openssl rand -hex 32 > "$SECRET_DIR/admin_api_key"
+          openssl rand -hex 32 > "$SECRET_DIR/openai_api_key"
+          openssl rand -hex 32 > "$SECRET_DIR/dashscope_api_key"
+          chmod 644 "$SECRET_DIR"/*
+          test "$(docker image inspect rag-platform:api-only-ci --format '{{.Config.User}}')" = "rag-platform"
+          docker run -d --name "$CONTAINER_NAME" -p 127.0.0.1:18080:8000 \
+            -e ALLOWED_ORIGINS=https://rag-ci.example \
+            --mount type=bind,src="$SECRET_DIR/admin_api_key",dst=/run/secrets/admin_api_key,readonly \
+            --mount type=bind,src="$SECRET_DIR/openai_api_key",dst=/run/secrets/openai_api_key,readonly \
+            --mount type=bind,src="$SECRET_DIR/dashscope_api_key",dst=/run/secrets/dashscope_api_key,readonly \
+            rag-platform:api-only-ci
+          for attempt in $(seq 1 60); do
+            if curl --fail --silent --show-error http://127.0.0.1:18080/live >/dev/null; then
+              break
+            fi
+            test "$attempt" -lt 60
+            sleep 1
+          done
+          curl --fail --silent --show-error http://127.0.0.1:18080/health \
+            | python3 -c 'import json,sys; assert json.load(sys.stdin)["status"] in {"healthy", "degraded"}'

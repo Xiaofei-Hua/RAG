@@ -1,111 +1,111 @@
-#!/bin/bash
-# =============================================================================
-# RAG offline bundle installer.
-#
-# Usage:
-#   ./install_offline.sh /opt/rag-platform
-#
-# This script expects to be run from an extracted offline bundle directory. It
-# installs the bundled project files, Python wheelhouse, local models, frontend
-# build artifacts, and PaddleOCR model cache without network access.
-# =============================================================================
+#!/usr/bin/env bash
+set -euo pipefail
 
-set -e
+BUNDLE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+TARGET_DIR=""
+UPGRADE=false
 
-BUNDLE_DIR="$(cd "$(dirname "$0")" && pwd)"
-TARGET_DIR="${1:-/opt/rag-platform}"
-PROJECT_SRC="$BUNDLE_DIR/project"
-WHEELHOUSE_DIR="$BUNDLE_DIR/wheelhouse"
-REQUIREMENTS_FILE="$BUNDLE_DIR/requirements.lock.txt"
-PADDLEOCR_SRC="$BUNDLE_DIR/paddleocr/official_models"
+usage() { echo "Usage: ./install_offline.sh TARGET_DIR [--upgrade]"; }
+fail() { echo "install_offline: $*" >&2; exit 2; }
+info() { echo "install_offline: $*"; }
 
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
-
-info()  { echo -e "  ${CYAN}*${NC} $1"; }
-ok()    { echo -e "  ${GREEN}OK${NC} $1"; }
-warn()  { echo -e "  ${YELLOW}!!${NC} $1"; }
-fail()  { echo -e "  ${RED}FAIL${NC} $1"; exit 1; }
-
-echo ""
-echo -e "${BOLD}============================================${NC}"
-echo -e "${BOLD}  RAG Offline Bundle Installer${NC}"
-echo -e "${BOLD}============================================${NC}"
-echo ""
-
-[ -d "$PROJECT_SRC" ] || fail "Missing bundle project directory: $PROJECT_SRC"
-[ -d "$WHEELHOUSE_DIR" ] || fail "Missing wheelhouse directory: $WHEELHOUSE_DIR"
-[ -f "$REQUIREMENTS_FILE" ] || fail "Missing requirements file: $REQUIREMENTS_FILE"
-
-if ! command -v python3 >/dev/null 2>&1; then
-    fail "python3 is required on the target host"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --upgrade) UPGRADE=true; shift ;;
+    -h|--help) usage; exit 0 ;;
+    -*) fail "unknown option: $1" ;;
+    *) [[ -z "$TARGET_DIR" ]] || fail "only one target directory is accepted"; TARGET_DIR="$1"; shift ;;
+  esac
+done
+[[ -n "$TARGET_DIR" ]] || fail "TARGET_DIR is required"
+[[ "$TARGET_DIR" == /* && "$TARGET_DIR" != "/" ]] || fail "TARGET_DIR must be an absolute non-root path"
+[[ ! -L "$TARGET_DIR" ]] || fail "TARGET_DIR must not be a symlink"
+command -v realpath >/dev/null 2>&1 || fail "realpath is required"
+TARGET_DIR="$(realpath -m -- "$TARGET_DIR")"
+home_root="$(realpath -m -- "${HOME:-/__rag_no_home__}")"
+case "$TARGET_DIR" in
+  /|/bin|/boot|/dev|/etc|/home|/lib|/lib32|/lib64|/media|/mnt|/opt|/proc|/root|/run|/sbin|/srv|/sys|/tmp|/usr|/var)
+    fail "TARGET_DIR must not be a top-level system, home, or bundle path"
+    ;;
+esac
+if [[ "$TARGET_DIR" == "$home_root" || "$TARGET_DIR" == "$BUNDLE_DIR" \
+    || "$TARGET_DIR" == "$BUNDLE_DIR"/* ]]; then
+  fail "TARGET_DIR must not be a top-level system, home, or bundle path"
 fi
+[[ -d "$BUNDLE_DIR/project" && -x "$BUNDLE_DIR/bin/uv" ]] || fail "bundle payload is incomplete"
+[[ -f "$BUNDLE_DIR/SHA256SUMS" && -f "$BUNDLE_DIR/bundle-metadata.env" ]] || fail "bundle integrity metadata is missing"
 
-mkdir -p "$TARGET_DIR"
-info "Copying project to $TARGET_DIR"
-cp -a "$PROJECT_SRC"/. "$TARGET_DIR"/
-ok "Project files installed"
+declare -A metadata=()
+while IFS='=' read -r key value; do
+  case "$key" in
+    OS_ID|OS_VERSION|ARCH|PYTHON_VERSION|PYTHON_ABI|UV_VERSION|WITH_OCR|WITH_DOC|SOURCE_COMMIT) metadata["$key"]="$value" ;;
+    *) fail "unexpected bundle metadata key" ;;
+  esac
+done <"$BUNDLE_DIR/bundle-metadata.env"
 
-mkdir -p "$TARGET_DIR/models/local_models"
-if [ -d "$BUNDLE_DIR/models/local_models" ]; then
-    info "Restoring local model directory"
-    cp -a "$BUNDLE_DIR/models/local_models"/. "$TARGET_DIR/models/local_models"/
-    ok "Local models restored"
+for key in OS_ID OS_VERSION ARCH PYTHON_VERSION PYTHON_ABI UV_VERSION WITH_OCR WITH_DOC SOURCE_COMMIT; do
+  [[ -n "${metadata[$key]:-}" ]] || fail "missing bundle metadata: $key"
+done
+[[ "${metadata[SOURCE_COMMIT]}" =~ ^[0-9a-f]{40,64}$ ]] \
+  || fail "bundle source commit is invalid"
+
+current_os_id="$(. /etc/os-release; printf '%s' "$ID")"
+current_os_version="$(. /etc/os-release; printf '%s' "$VERSION_ID")"
+current_python="$(python3 -c 'import platform; print(platform.python_version())')"
+current_abi="$(python3 -c 'import sysconfig; print(sysconfig.get_config_var("SOABI") or "unknown")')"
+[[ "${metadata[OS_ID]}" == "$current_os_id" ]] || fail "bundle OS does not match target"
+[[ "${metadata[OS_VERSION]}" == "$current_os_version" ]] || fail "bundle OS version does not match target"
+[[ "${metadata[ARCH]}" == "$(uname -m)" ]] || fail "bundle architecture does not match target"
+[[ "${metadata[PYTHON_VERSION]}" == "$current_python" ]] || fail "bundle Python version does not match target"
+[[ "${metadata[PYTHON_ABI]}" == "$current_abi" ]] || fail "bundle Python ABI does not match target"
+
+(cd "$BUNDLE_DIR" && sha256sum --check --quiet SHA256SUMS) || fail "bundle checksum verification failed"
+"$BUNDLE_DIR/bin/uv" --version | grep -F "uv ${metadata[UV_VERSION]}" >/dev/null \
+  || fail "bundled uv version does not match metadata"
+
+if [[ -e "$TARGET_DIR" ]]; then
+  [[ -d "$TARGET_DIR" ]] || fail "target exists and is not a directory"
+  if find "$TARGET_DIR" -mindepth 1 -maxdepth 1 -print -quit | grep -q .; then
+    [[ "$UPGRADE" == true ]] || fail "target exists; use --upgrade after stopping the service"
+    backup_parent="$(dirname "$TARGET_DIR")"
+    backup_name="$(basename "$TARGET_DIR").backup.$(date +%Y%m%d%H%M%S)"
+    tar -C "$backup_parent" -czf "$backup_parent/$backup_name.tar.gz" "$(basename "$TARGET_DIR")"
+    info "upgrade backup created: $backup_parent/$backup_name.tar.gz"
+  fi
 else
-    warn "No bundled models/local_models directory found"
+  mkdir -p "$TARGET_DIR"
 fi
 
-if [ -d "$PADDLEOCR_SRC" ]; then
-    info "Restoring PaddleOCR model cache to $HOME/.paddlex/official_models"
-    mkdir -p "$HOME/.paddlex"
-    rm -rf "$HOME/.paddlex/official_models"
-    cp -a "$PADDLEOCR_SRC" "$HOME/.paddlex/official_models"
-    ok "PaddleOCR cache restored"
-else
-    warn "No bundled PaddleOCR cache found; OCR may try to download models on first use"
+saved_env=""
+if [[ -f "$TARGET_DIR/.env" ]]; then
+  saved_env="$(mktemp)"
+  install -m 0600 "$TARGET_DIR/.env" "$saved_env"
+fi
+cp -a "$BUNDLE_DIR/project"/. "$TARGET_DIR"/
+if [[ -n "$saved_env" ]]; then
+  install -m 0600 "$saved_env" "$TARGET_DIR/.env"
+  rm -f "$saved_env"
+elif [[ ! -f "$TARGET_DIR/.env" ]]; then
+  install -m 0600 "$TARGET_DIR/.env.example" "$TARGET_DIR/.env"
 fi
 
-info "Creating Python virtual environment"
-python3 -m venv "$TARGET_DIR/.venv"
-"$TARGET_DIR/.venv/bin/python" -m ensurepip --upgrade >/dev/null 2>&1 || true
-"$TARGET_DIR/.venv/bin/python" -m pip install --no-index --find-links "$WHEELHOUSE_DIR" -r "$REQUIREMENTS_FILE"
-ok "Python dependencies installed from local wheelhouse"
-
-if [ -f "$BUNDLE_DIR/env.offline" ]; then
-    cp "$BUNDLE_DIR/env.offline" "$TARGET_DIR/.env"
-    ok ".env restored from offline bundle"
-elif [ ! -f "$TARGET_DIR/.env" ] && [ -f "$TARGET_DIR/.env.example" ]; then
-    cp "$TARGET_DIR/.env.example" "$TARGET_DIR/.env"
-    warn ".env created from .env.example; review model paths before starting"
+if [[ -d "$BUNDLE_DIR/models/local_models" ]]; then
+  mkdir -p "$TARGET_DIR/models/local_models"
+  cp -a "$BUNDLE_DIR/models/local_models"/. "$TARGET_DIR/models/local_models"/
+fi
+if [[ -d "$BUNDLE_DIR/paddleocr/official_models" ]]; then
+  mkdir -p "$TARGET_DIR/.paddlex/official_models"
+  cp -a "$BUNDLE_DIR/paddleocr/official_models"/. "$TARGET_DIR/.paddlex/official_models"/
 fi
 
-if command -v ollama >/dev/null 2>&1; then
-    cat <<EOF
-
-Ollama is installed on this host. To use bundled Ollama models, start it with:
-
-  export OLLAMA_MODELS="$TARGET_DIR/models/local_models/ollama"
-  ollama serve
-
-If systemd manages Ollama, add this environment variable to the service:
-
-  Environment="OLLAMA_MODELS=$TARGET_DIR/models/local_models/ollama"
-
-EOF
-else
-    warn "Ollama executable is not installed; install Ollama before starting LLM-backed chat"
-fi
-
-cat <<EOF
-${BOLD}Offline install complete.${NC}
-
-Start the backend:
+extras=(--extra local-models)
+[[ "${metadata[WITH_OCR]}" == "false" ]] || extras+=(--extra ocr)
+[[ "${metadata[WITH_DOC]}" == "false" ]] || extras+=(--extra doc)
+(
   cd "$TARGET_DIR"
-  .venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 8000
+  PATH="$BUNDLE_DIR/bin:$PATH" UV_CACHE_DIR="$BUNDLE_DIR/uv-cache" \
+    UV_PROJECT_ENVIRONMENT="$TARGET_DIR/.venv" UV_PYTHON_DOWNLOADS=never \
+    uv sync --frozen --offline "${extras[@]}"
+)
 
-Frontend static files are already bundled under web/dist and will be served by FastAPI.
-EOF
+info "offline installation completed; review .env before starting the service"

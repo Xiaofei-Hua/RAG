@@ -67,7 +67,7 @@ Fast 模式跳过外层 Agent、Grade 和 Rewrite 节点，但复用同一 `Retr
 
 - Linux、WSL2 或 macOS
 - Python 3.10+（开发最低版本；CI 用 3.13 提前发现兼容问题，见 `.github/workflows/`）
-- Node.js 20+
+- uv 0.11.8、Node.js 20.20.2、npm 10.8.2（脚本会拒绝漂移版本）
 - [Ollama](https://ollama.com/)
 - 建议至少 16 GB 内存；运行 `qwen3:14b` 建议使用独立显卡
 
@@ -81,10 +81,10 @@ Redis 为可选组件。Redis 不可用时，系统会自动使用 SQLite 保存
 ollama serve
 ```
 
-然后下载默认模型：
+然后用仓库脚本准备并核对默认模型：
 
 ```bash
-ollama pull qwen3:14b
+./deploy_ollama.sh --model qwen3:14b
 ```
 
 可以通过 `ollama list` 确认模型已经就绪。
@@ -95,6 +95,7 @@ ollama pull qwen3:14b
 git clone <repository-url>
 cd RAG
 cp .env.example .env
+chmod 600 .env
 ```
 
 如果已经进入本项目目录，直接执行 `cp .env.example .env` 即可。
@@ -103,6 +104,8 @@ cp .env.example .env
 
 ```dotenv
 # LLM
+DEPLOYMENT_ENV=development
+ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 OPENAI_BASE_URL=http://localhost:11434/v1
 OPENAI_API_KEY=ollama
 LLM_MODEL=qwen3:14b
@@ -126,10 +129,11 @@ DOMAIN_PROFILE=general
 
 ```bash
 chmod +x run.sh stop.sh
-./run.sh
+./run.sh --profile local
 ```
 
-首次启动会自动创建 Python 虚拟环境、安装依赖、下载 Embedding 模型并安装前端依赖。
+首次启动按 `uv.lock` 与根 npm lock 同步依赖。模型资产由 `deploy.sh` / 专用下载脚本显式准备；
+脚本默认只监听 loopback，不用于公网生产。
 
 启动完成后访问：
 
@@ -138,6 +142,7 @@ chmod +x run.sh stop.sh
 | Web 前端 | http://localhost:3000 |
 | 后端 API | http://localhost:8000/api |
 | Swagger 文档 | http://localhost:8000/docs |
+| 存活检查 | http://localhost:8000/live |
 | 健康检查 | http://localhost:8000/health |
 
 查看日志或停止服务：
@@ -202,54 +207,68 @@ curl -X POST http://localhost:8000/api/chat \
 
 ```bash
 # 本地推理部署（含 torch/embedding/reranker 本地权重）：
-uv sync --extra dev --extra local-models
+uv sync --frozen --extra dev --extra local-models
 # 或 API-only 部署（零 torch，embedding 走 DashScope API）：
-# uv sync --extra dev --extra api-only
+# uv sync --frozen --extra dev --extra api-only
 ```
 
 启动后端：
 
 ```bash
-uv run --frozen uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+DEPLOYMENT_ENV=development uv run --frozen uvicorn api.main:app --host 127.0.0.1 --port 8000 --reload
 ```
 
 在另一个终端启动前端开发服务器：
 
 ```bash
-cd web
 npm ci
-npm run dev
+npm run dev --workspace web
 ```
 
 Vite 开发服务器会将 `/api` 请求代理到 `http://127.0.0.1:8000`。
 
-## Ubuntu 一键部署
+## Windows WSL 完整部署（推荐桌面本地方案）
 
-`deploy.sh` 可以安装 Ubuntu/Debian 所需组件、下载模型、构建前端静态文件并生成
-`.env`：
+Windows 11 + WSL2 Ubuntu 24.04、不使用 Docker、在 WSL 内运行 Ollama/BGE-M3/reranker 并由
+systemd 管理应用时，直接按独立的 [WSL 完整部署指南](docs/deployment/WSL_DEPLOYMENT.md) 执行。
+该文档从 Windows/WSL/GPU/固定工具版本开始，覆盖 `deploy_wsl.sh`、localhost 安全边界、真实
+Ollama/GPU 验收、备份升级回滚，以及全部 HTTP 和进程内 MCP 接口。
 
 ```bash
-sudo ./deploy.sh
+./deploy_wsl.sh --dry-run
+./deploy_wsl.sh
+```
+
+WSL 方案使用 `DEPLOYMENT_ENV=production` + `LOCAL_ONLY_DEPLOYMENT=true`，应用和 Ollama 只绑定
+loopback；不要为解决 Windows 访问问题改成 `0.0.0.0`。
+
+## Ubuntu 一键部署
+
+`deploy.sh` 以普通部署账户执行 locked dependency sync、模型预热与前端构建。系统包、
+Ollama、uv 和 Node 必须预先从受信渠道安装；脚本不会执行远程安装器，也不会覆盖已有 `.env`：
+
+```bash
+./deploy.sh --dry-run
+./deploy.sh
 ```
 
 常用选项：
 
 ```bash
-sudo ./deploy.sh --skip-ollama
-sudo ./deploy.sh --skip-redis
-sudo ./deploy.sh --skip-model
-sudo ./deploy.sh --skip-embedding
-sudo ./deploy.sh --build-offline-bundle
+./deploy.sh --skip-model
+./deploy.sh --skip-embedding
+./deploy.sh --skip-reranker
+./deploy.sh --with-ocr --with-doc
+./deploy.sh --build-offline-bundle
 ```
 
-`deploy.sh` 会预热运行所需的本地资产：Ollama LLM 模型、BGE-M3 Embedding 模型、
-Reranker 模型、PaddleOCR 模型、Python 依赖和前端 `web/dist` 构建产物。
+`deploy.sh` 会预热 BGE-M3、Reranker、Ollama 模型、Python 依赖和 `web/dist`。
 其中 Reranker 会保存到 `models/local_models/reranker/...`，避免离线环境依赖
 用户级 Hugging Face cache。BGE-M3 下载器会校验训练好的 sparse/ColBERT heads；
 ColPali 不属于默认部署资产，只有显式运行 `scripts/download_colpali.py` 才会准备。
 
-部署脚本完成后，使用 `./run.sh` 启动开发模式，或按下一节使用 FastAPI
-托管生产静态文件。
+裸机的服务账户、只读代码、systemd、Nginx 与 TLS 边界见
+[Bare-metal deployment](docs/deployment/bare-metal.md)。
 
 > 上述为**本地推理部署**（含 torch / 本地 LLM / 本地 embedding 权重，需 GPU 或
 > 大内存）。若目标环境**无 GPU、镜像 < 4 GB、仅 API 连接**，请改用
@@ -260,28 +279,29 @@ ColPali 不属于默认部署资产，只有显式运行 `scripts/download_colpa
 在一台有网络的同架构机器上完成预热并打包：
 
 ```bash
-sudo ./deploy.sh --build-offline-bundle
+./deploy.sh --build-offline-bundle
 ```
 
-生成物位于 `offline_bundle/rag_offline_bundle_<timestamp>.tar.gz`。包内包含：
+默认生成 `offline_bundle.tar.gz`。包绑定构建机的 OS/版本、架构、Python patch 与 ABI，包含：
 
 - 项目代码与 `web/dist` 前端静态构建产物
-- `wheelhouse/` Python 离线安装包和 `requirements.lock.txt`
+- bundled uv、专用 uv cache、`uv.lock` 与平台 metadata
 - `models/local_models/` 下的 Embedding、Reranker、Ollama 模型目录快照
-- `paddleocr/official_models/` PaddleOCR 模型缓存
-- `install_offline.sh` 离线安装脚本和 `env.offline`
+- `SHA256SUMS` 和 `install_offline.sh`
 
 在断网目标机上解压并安装：
 
 ```bash
-tar -xzf rag_offline_bundle_<timestamp>.tar.gz
-cd rag_offline_bundle_<timestamp>
+tar -xzf offline_bundle.tar.gz
+cd offline_bundle
 ./install_offline.sh /opt/rag-platform
 ```
 
 目标机仍需预先具备基础系统能力：`python3`、可用的 `ollama` 可执行文件，以及可选的
-Redis。离线脚本不访问网络，会从包内 wheelhouse 安装 Python 依赖，并把 PaddleOCR
-模型缓存恢复到当前用户的 `~/.paddlex/official_models`。启动 Ollama 时请设置：
+系统共享库。安装器会先校验全量 SHA-256 与平台/ABI，再执行 `uv sync --frozen --offline`。
+升级必须停服并显式增加 `--upgrade`，详细流程见 [Offline deployment](docs/deployment/offline.md)。
+
+启动 Ollama 时请设置：
 
 ```bash
 export OLLAMA_MODELS=/opt/rag-platform/models/local_models/ollama
@@ -290,19 +310,18 @@ ollama serve
 
 ## 生产静态部署
 
-生产环境不需要运行 Vite 开发服务器。先构建前端：
+生产环境不运行 Vite 开发服务器。裸机和容器方案均只把应用发布到 loopback，再由 Nginx/TLS
+入口代理；完整、可验证的命令见 [Deployment guide](docs/deployment/README.md)。手工构建前端：
 
 ```bash
-cd web
 npm ci
-npm run build
-cd ..
+npm run build --workspace web
 ```
 
 然后只启动 FastAPI：
 
 ```bash
-uv run --frozen uvicorn api.main:app --host 0.0.0.0 --port 8000
+DEPLOYMENT_ENV=production uv run --frozen --no-sync uvicorn api.main:app --host 127.0.0.1 --port 8000
 ```
 
 构建输出位于 `web/dist/`。FastAPI 会托管前端资源，并为 Vue Router 提供
@@ -313,10 +332,9 @@ SPA fallback。此时前端与 API 均通过 `http://localhost:8000` 访问。
 构建时设置前端公共路径：
 
 ```bash
-cd web
-VITE_BASE_PATH=/rag/ npm run build
-cd ..
-APP_ROOT_PATH=/rag uv run --frozen uvicorn api.main:app --host 0.0.0.0 --port 8000
+VITE_BASE_PATH=/rag npm run build --workspace web
+APP_ROOT_PATH=/rag DEPLOYMENT_ENV=production uv run --frozen --no-sync \
+  uvicorn api.main:app --host 127.0.0.1 --port 8000
 ```
 
 Nginx 配置示例：
@@ -331,12 +349,18 @@ location /rag/ {
 ```
 
 该配置会移除 `/rag` 前缀后再转发给 FastAPI。浏览器请求
-`/rag/api/chat` 时，FastAPI 实际收到 `/api/chat`。
+`/rag/api/chat` 时，FastAPI 实际收到 `/api/chat`。生产直接使用经过测试的
+`deploy/nginx/rag-platform-prefix.conf`，并保证 Vite base、`APP_ROOT_PATH` 与 proxy stripping
+三者成对发布。
 
 ## 配置说明
 
 | 环境变量 | 默认值 | 说明 |
 |----------|--------|------|
+| `DEPLOYMENT_ENV` | 必须显式设置 | `development` 或 `production`；生产启用 fail-closed 校验 |
+| `ALLOWED_ORIGINS` | 本地 loopback origins | 生产必须为明确的非 loopback HTTP(S) origin，禁止 `*` |
+| `ADMIN_API_KEY` | 空（仅开发） | 生产必填；Admin 端点不再允许 loopback 兜底 |
+| `DOMAIN_PROFILES_DIR` | `data/profiles` | immutable domain profile 目录；容器为 `/app/config/profiles` |
 | `OPENAI_BASE_URL` | `http://localhost:11434/v1` | LLM OpenAI 兼容接口 |
 | `OPENAI_API_KEY` | `ollama` | LLM API Key |
 | `LLM_MODEL` | `qwen3:14b` | 问答模型名称 |
@@ -453,8 +477,8 @@ uv run --frozen python scripts/migrate_embedding_collection.py \
 
 验证输出后显式切换 `COLLECTION_NAME`；旧 collection 与对应 embedding 配置应保留用于回滚。
 不要原地 drop 旧 collection；迁移命令会校验 indexed source 覆盖、写入完整性、目标 schema
-和抽样非零召回，失败时清理不完整目标。使用 `./run.sh` 或 `deploy.sh` 时，脚本会按照当前
-`.env` 下载配置的本地 Embedding 模型。
+和抽样非零召回，失败时清理不完整目标。`deploy.sh` 会按照当前 `.env` 准备本地 Embedding；
+`run.sh` 只负责 locked dependency sync 与开发生命周期，不隐式下载模型资产。
 
 若要实验 contextual index，必须创建另一个新 collection，并显式加
 `--contextual-index`；不要原地改写当前 collection：
@@ -468,44 +492,27 @@ uv run --frozen python scripts/migrate_embedding_collection.py \
 
 ### API-only 部署（DashScope，零 torch）
 
-适用于**镜像 < 4 GB、无 GPU、不可跑本地大模型**的内网/气隙场景。该模式下
+适用于**镜像 < 4 GB、无 GPU、不可跑本地模型**的联网 API 节点。该模式下
 所有推理走远程 API：LLM 走 DashScope Qwen（OpenAI 兼容），embedding 走 DashScope
 `text-embedding-v3`，reranker 关闭（检索回退 RRF 顺序）。torch/
 sentence-transformers/transformers/langchain-huggingface 不进入镜像。
 
-```dotenv
-# .env（API-only 模式）
-EMBEDDING_PROVIDER=api
-EMBEDDING_MODEL=text-embedding-v3
-EMBEDDING_DIMENSION=512          # 必须是 v3 合法集合 {1024,768,512,256,128,64} 之一
-DASHSCOPE_API_KEY=sk-...         # 运行时注入，勿入库
-DASHSCOPE_BASE_URL=https://dashscope.aliyuncs.com
-OPENAI_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-OPENAI_API_KEY=${DASHSCOPE_API_KEY}
-LLM_MODEL=qwen-plus
-RERANKER_ENABLED=false
-```
-
-依赖安装与镜像构建：
+配置和镜像启动统一使用无 secret 示例、文件型 secret 与 Compose：
 
 ```bash
-# 依赖（零 torch）
-uv sync --extra api-only            # 或裸 uv sync
-
-# 容器镜像（多阶段，< 4 GB；见 Dockerfile / .dockerignore）
-docker build -t rag-platform:api-only .
-# 运行：secrets 走 -e 注入，不烘进镜像
-docker run -p 8000:8000 \
-  -e DASHSCOPE_API_KEY=sk-... -e OPENAI_API_KEY=sk-... -e ADMIN_API_KEY=... \
-  rag-platform:api-only
+cp deploy/env/api-only.env.example deploy/env/api-only.env
+mkdir -m 700 -p deploy/secrets
+# 由当前安全终端或 secret manager 写入三个非空 secret 文件
+docker compose -f deploy/compose.api-only.yaml up -d --build
 ```
 
 > **PII 合规提醒**：embedding API 会把上传的文档原文发送到 DashScope。对话层
 > 的输入脱敏（`agent/guardrails/pii.py`）**不覆盖摄入路径**——若部署合规要求
 > PII 不出域，需在摄入前另行脱敏（见 `docs/specs/api-only-deploy/design.md` §9）。
 
-完整设计、对抗式评审与迁移说明见 `docs/specs/api-only-deploy/`，依赖拆分变更见
-`CHANGELOG.md [Unreleased]`。
+完整操作、`/rag/` 前缀和验证命令见
+[API-only Docker deployment](docs/deployment/api-only-docker.md)；历史设计见
+`docs/specs/api-only-deploy/`。
 
 ### 两阶段重排序（默认开启）
 
@@ -603,6 +610,7 @@ curl http://localhost:8000/api/admin/config
 | 提交反馈 | `POST /api/feedback` |
 | 系统配置 | `GET /api/admin/config` |
 | 详细健康检查 | `GET /api/admin/health` |
+| 进程存活 | `GET /live` |
 
 完整 HTTP 请求和响应格式见 [API 文档](docs/API.md)；进程内 MCP 工具契约见
 [MCP 文档](docs/MCP.md)。
@@ -613,7 +621,7 @@ curl http://localhost:8000/api/admin/config
 `--extra api-only` 替代 `--extra local-models`）：
 
 ```bash
-uv sync --extra dev --extra local-models
+uv sync --frozen --extra dev --extra local-models
 uv run --frozen pytest
 ```
 
@@ -632,8 +640,8 @@ uv run --frozen python tests/integration/test_system.py
 验证前端生产构建：
 
 ```bash
-cd web
-npm run build
+npm ci
+npm run build --workspace web
 ```
 
 ### 并发压测
@@ -900,12 +908,20 @@ Redis 是可选组件。连接失败时，系统会自动降级到 `data/session
 
 ### 修改了反代前缀但前端资源仍然 404
 
-`VITE_BASE_PATH` 是构建时变量。修改后必须重新执行 `npm run build`。
+`VITE_BASE_PATH` 是构建时变量。修改后必须重新构建；同时设置 `APP_ROOT_PATH` 并使用 stripping
+proxy 模板。三者的完整契约见 [API-only Docker deployment](docs/deployment/api-only-docker.md)。
 
 ## 更多文档
 
 - [API 接口文档](docs/API.md)
 - [MCP 工具契约](docs/MCP.md)
 - [系统技术报告](docs/technical_report.md)
+- [部署总览](docs/deployment/README.md)
+- [WSL 完整部署（本地模型、systemd、localhost）](docs/deployment/WSL_DEPLOYMENT.md)
+- [开发部署](docs/deployment/development.md)
+- [裸机生产部署](docs/deployment/bare-metal.md)
+- [API-only Docker 部署](docs/deployment/api-only-docker.md)
+- [离线与气隙部署](docs/deployment/offline.md)
+- [生产运维手册](docs/deployment/operations.md)
 - [Agent Skills 说明](agent/skills/README.md)
 - [测试说明](tests/README.md)

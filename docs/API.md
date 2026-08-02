@@ -4,6 +4,8 @@
 >
 > 本文档供外部系统集成使用，涵盖所有 HTTP 接口、请求/响应格式及 SSE 流式协议。
 > 当前进程内 MCP 工具不是 HTTP 接口，其独立契约见 [MCP.md](MCP.md)。
+> Windows 11 + WSL2 的逐步部署、localhost URL、全部 endpoint 清单与可复制调用示例见
+> [WSL Complete Guide](deployment/WSL_DEPLOYMENT.md)。
 
 ---
 
@@ -486,8 +488,9 @@ PDF 上传支持带图片、表格、图表或扫描页的混合 PDF。系统会
 
 当前本地 OCR 引擎为 PaddleOCR（`paddlepaddle` + `paddleocr`）。首次 OCR 会
 下载官方模型到 `~/.paddlex/official_models/`；CPU 环境默认禁用 PaddleX
-MKLDNN 路径以提升兼容性。执行 `deploy.sh --build-offline-bundle` 时，该模型
-缓存会被复制到离线部署包中的 `paddleocr/official_models/`。
+MKLDNN 路径以提升兼容性。执行 `deploy.sh --with-ocr --build-offline-bundle` 时，已经预热的
+模型缓存会被复制到离线部署包中的 `paddleocr/official_models/`；请求 OCR bundle 但缓存缺失
+会 fail closed。
 
 可选摄入通道均默认关闭：
 
@@ -1001,6 +1004,16 @@ POST /api/feedback/escalations/{escalation_id}/resolve
 
 ## 7. 系统监控
 
+### 7.0 进程存活检查
+
+```
+GET /live
+```
+
+返回 `{"status":"alive","timestamp":...}`。该端点只证明 ASGI 进程能响应，供容器或
+systemd liveness 使用；它不探测向量库、模型或外部服务。流量就绪与安全降级必须读取
+`GET /health`。
+
 ### 7.1 基础健康检查
 
 ```
@@ -1016,9 +1029,14 @@ GET /health
   "circuits": {
     "llm": "closed",
     "retriever": "closed"
-  }
+  },
+  "embedding_compatible": true,
+  "runtime_config": { "...": "不含 secret 的配置指纹" }
 }
 ```
+
+`status=degraded` 仍是有效响应，表示系统保留较弱但安全的路径；不得把 unavailable 当作 0 分，
+也不应把 degraded 用作 liveness 失败条件。
 
 ---
 
@@ -1433,6 +1451,7 @@ interface RetrievalResponse {
 ### 1. 健康检查
 
 ```bash
+curl http://localhost:8000/live
 curl http://localhost:8000/health
 ```
 
@@ -1526,17 +1545,21 @@ curl -X POST http://localhost:8000/api/feedback \
 
 | 维度 | 本地推理（默认） | API-only |
 |------|------------------|----------|
-| 依赖安装 | `uv sync --extra ocr --extra local-models` | `uv sync --extra api-only`（或裸 sync） |
+| 依赖安装 | `uv sync --frozen --extra local-models`（按需加 `--extra ocr`） | `uv sync --frozen --extra api-only` |
 | torch / 本地权重 | ✅ 含（embedding + reranker 本地推理） | ❌ 不含（镜像 ~0.43 GB，无 GPU 友好） |
 | LLM | 本地 Ollama（`OPENAI_BASE_URL=http://localhost:11434/v1`） | DashScope Qwen 或任意 OpenAI 兼容端点 |
 | Embedding | 本地 BGE-M3 1024 维（`EMBEDDING_PROVIDER=local`） | DashScope `text-embedding-v3`（`EMBEDDING_PROVIDER=api`） |
 | Reranker | 本地 bge-reranker-v2-m3（`RERANKER_ENABLED=true`） | 关闭，回退 RRF 顺序（`RERANKER_ENABLED=false`） |
-| 镜像 | `deploy.sh` 裸机部署（≥ 8 GB 含权重） | `docker build -t rag-platform:api-only .`（< 4 GB） |
+| 发布入口 | systemd + stripping/根路径 Nginx | `deploy/compose.api-only.yaml` + Nginx |
 
 ### 关键环境变量
 
 | 变量 | 本地推理 | API-only | 说明 |
 |------|----------|----------|------|
+| `DEPLOYMENT_ENV` | `production` | `production` | 生产必须显式声明，错误配置启动失败 |
+| `LOCAL_ONLY_DEPLOYMENT` | WSL localhost 时 `true`，常规裸机 `false` | `false` | `true` 只允许全部 loopback origin，并启用 Trusted Host；不得用于 LAN/public |
+| `ALLOWED_ORIGINS` | WSL 为 literal loopback；常规裸机为真实 HTTPS origin | 真实 HTTPS origin | 禁止 `*`；常规生产拒绝纯 loopback，显式 local-only 则拒绝任何 non-loopback |
+| `ADMIN_API_KEY` | **必填** | **必填** | 生产禁用 Admin loopback 兜底 |
 | `EMBEDDING_PROVIDER` | `local`（或 `auto`） | `api` | `auto` = torch 可导入则 `local` 否则 `api` |
 | `DASHSCOPE_API_KEY` | — | **必填**（运行时注入） | DashScope embedding 鉴权；空值会 fail-fast |
 | `DASHSCOPE_BASE_URL` | — | `https://dashscope.aliyuncs.com` | 可覆盖为内网网关 |
@@ -1548,9 +1571,13 @@ curl -X POST http://localhost:8000/api/feedback \
 | `COLBERT_RERANK_ENABLED` / `RAPTOR_ENABLED` / `GRAPH_PPR_ENABLED` / `COLPALI_ENABLED` | `false` | `false` | 真实模型/私域 promotion 前保持关闭 |
 
 > **安全**：`DASHSCOPE_API_KEY` / `OPENAI_API_KEY` / `ADMIN_API_KEY` 均为运行时 secret，
-> 通过 `docker run -e` 或 secret 挂载注入，**绝不烘进镜像**。`/api/admin/config` 响应中
+> 容器通过 `deploy/secrets/` 的文件型 secret 挂载注入，**绝不写入 Compose 插值、Git、
+> 镜像或离线包**。`/api/admin/config` 响应中
 > `embedding.api_base_url` 仅在 `provider=api` 时返回端点，永不返回 key。
 >
 > **PII 合规**：API-only 模式下，文档原文会发送到 DashScope 做 embedding；对话层的输入
 > 脱敏不覆盖摄入路径，数据驻留要求由部署方负责。详见
-> `docs/specs/api-only-deploy/design.md` §9 与 `README.md`「API-only 部署」节。
+> `docs/specs/api-only-deploy/design.md` §9 与 `docs/deployment/api-only-docker.md`。
+
+完整开发、裸机、容器、气隙和运维命令以 [Deployment Guide](deployment/README.md) 为准；
+`docs/specs/*` 保留历史设计与决策，不作为操作手册。

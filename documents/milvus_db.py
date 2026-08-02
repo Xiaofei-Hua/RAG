@@ -669,7 +669,7 @@ class MilvusManager:
                     for k, v in doc.metadata.items():
                         if k == "_late_chunk_dense":
                             continue
-                        if k not in row and isinstance(v, (str, int, float, bool)):
+                        if k not in row and isinstance(v, str | int | float | bool):
                             row[k] = v
                     data.append(row)
 
@@ -715,7 +715,7 @@ class MilvusManager:
 
         Memory-efficient search with explicit cleanup.
         """
-        log.debug(f"Searching: '{query[:50]}...' (top_k={top_k})")
+        log.debug(f"Searching: query_length={len(query)}, top_k={top_k}")
         self._ensure_collection_loaded()
         self._assert_collection_compatible()
         query_embedding = self.embedding_function.embed_query(query)

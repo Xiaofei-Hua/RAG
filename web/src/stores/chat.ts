@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { apiUrl } from '@/utils/api'
 
 export interface ChatMessage {
   role: 'user' | 'assistant' | 'system'
@@ -92,7 +93,7 @@ export const useChatStore = defineStore('chat', () => {
     error.value = null
 
     try {
-      const response = await fetch('/api/chat', {
+      const response = await fetch(apiUrl('api/chat'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -173,7 +174,7 @@ export const useChatStore = defineStore('chat', () => {
     currentNode.value = ''
 
     try {
-      const response = await fetch('/api/chat/stream', {
+      const response = await fetch(apiUrl('api/chat/stream'), {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -304,7 +305,7 @@ export const useChatStore = defineStore('chat', () => {
 
   async function loadHistory(sid: string) {
     try {
-      const response = await fetch(`/api/chat/history/${sid}?limit=50`)
+      const response = await fetch(apiUrl(`api/chat/history/${sid}?limit=50`))
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`)
       }
@@ -357,7 +358,7 @@ export const useChatStore = defineStore('chat', () => {
       corrected_answer: correctedAnswer || '',
     }
     try {
-      const resp = await fetch('/api/feedback', {
+      const resp = await fetch(apiUrl('api/feedback'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

@@ -1,14 +1,6 @@
-import os
 import sys
 
 from loguru import logger
-
-# 获取当前项目的绝对路径
-root_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-log_dir = os.path.join(root_dir, "logs")  # 存放项目日志目录的绝对路径
-
-if not os.path.exists(log_dir):  # 如果日志不存在，则创建
-    os.mkdir(log_dir)
 
 # LOG_FILE = "translation.log" 存储日志的文件
 # Trace < Debug < Info < Success < Warning < Error < Critical
@@ -16,7 +8,6 @@ if not os.path.exists(log_dir):  # 如果日志不存在，则创建
 
 class MyLogger:
     def __init__(self):
-        # log_file_path = os.path.join(log_dir, LOG_FILE)
         self.logger = logger  # 写日志的对象
 
         # 清空所有设置

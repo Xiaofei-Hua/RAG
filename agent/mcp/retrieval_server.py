@@ -201,15 +201,17 @@ class MCPRetrievalServer(InProcessMCPServer):
 
             log.info(
                 f"MCP rag_retrieve: {len(documents)} docs, "
-                f"{elapsed_ms:.0f}ms, query='{query[:50]}...'"
+                f"{elapsed_ms:.0f}ms"
                 f"{', filtered=true' if filter_expr else ''}"
                 f"{f', transform={transform}' if transform else ''}"
             )
             return self._format_documents(documents)
 
-        except Exception as e:
+        except Exception as exc:
             elapsed_ms = (time.perf_counter() - start) * 1000
-            log.error(f"MCP rag_retrieve failed ({elapsed_ms:.0f}ms): {e}")
+            log.error(
+                f"MCP rag_retrieve failed ({elapsed_ms:.0f}ms), " f"error_type={type(exc).__name__}"
+            )
             raise
 
     def _dense_search(self, query: str, top_k: int | None = None) -> list[dict[str, Any]]:
@@ -225,15 +227,15 @@ class MCPRetrievalServer(InProcessMCPServer):
                 documents = manager.search(query, top_k=top_k)
             elapsed_ms = (time.perf_counter() - start) * 1000
 
-            log.info(
-                f"MCP rag_search_dense: {len(documents)} docs, "
-                f"{elapsed_ms:.0f}ms, query='{query[:50]}...'"
-            )
+            log.info(f"MCP rag_search_dense: {len(documents)} docs, " f"{elapsed_ms:.0f}ms")
             return self._format_documents(documents)
 
-        except Exception as e:
+        except Exception as exc:
             elapsed_ms = (time.perf_counter() - start) * 1000
-            log.error(f"MCP rag_search_dense failed ({elapsed_ms:.0f}ms): {e}")
+            log.error(
+                f"MCP rag_search_dense failed ({elapsed_ms:.0f}ms), "
+                f"error_type={type(exc).__name__}"
+            )
             raise
 
     def _sparse_search(self, query: str, top_k: int | None = None) -> list[dict[str, Any]]:
@@ -255,15 +257,15 @@ class MCPRetrievalServer(InProcessMCPServer):
             documents = [r.document for r in results]
             elapsed_ms = (time.perf_counter() - start) * 1000
 
-            log.info(
-                f"MCP rag_search_sparse: {len(documents)} docs, "
-                f"{elapsed_ms:.0f}ms, query='{query[:50]}...'"
-            )
+            log.info(f"MCP rag_search_sparse: {len(documents)} docs, " f"{elapsed_ms:.0f}ms")
             return self._format_documents(documents)
 
-        except Exception as e:
+        except Exception as exc:
             elapsed_ms = (time.perf_counter() - start) * 1000
-            log.error(f"MCP rag_search_sparse failed ({elapsed_ms:.0f}ms): {e}")
+            log.error(
+                f"MCP rag_search_sparse failed ({elapsed_ms:.0f}ms), "
+                f"error_type={type(exc).__name__}"
+            )
             raise
 
     # ------------------------------------------------------------------
@@ -307,6 +309,6 @@ class MCPRetrievalServer(InProcessMCPServer):
             source = meta.get("source", "unknown")
             title = meta.get("title", "unknown")
             score = meta.get("score")
-            score_text = f"{float(score):.4f}" if isinstance(score, (int, float)) else "N/A"
+            score_text = f"{float(score):.4f}" if isinstance(score, int | float) else "N/A"
             parts.append(f"[证据{idx}] 来源={source} | 标题={title} | 相关度={score_text}\n{text}")
         return "\n\n".join(parts)

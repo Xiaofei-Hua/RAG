@@ -82,10 +82,10 @@ Embedding 模型 ID、本地路径、向量维度、设备和批大小同样可�
 
 ### 2.4 离线资产预热与打包
 
-`deploy.sh` 支持在线预热后生成离线部署包：
+`deploy.sh` 支持在与目标机 OS/版本、架构、Python patch/ABI 完全一致的联网主机上生成离线包：
 
 ```bash
-sudo ./deploy.sh --build-offline-bundle
+./deploy.sh --build-offline-bundle
 ```
 
 预热阶段会下载或验证以下资产：
@@ -94,22 +94,25 @@ sudo ./deploy.sh --build-offline-bundle
 2. BGE-M3 Embedding 模型，存放于 `models/local_models/bge-m3`；下载器校验训练好的
    `sparse_linear.pt` 与 `colbert_linear.pt`，不允许随机初始化 head 进入索引。
 3. Reranker 模型，存放于 `models/local_models/reranker/...`，避免依赖用户级 Hugging Face cache。
-4. PaddleOCR 官方模型，默认缓存于 `~/.paddlex/official_models`。
-5. Python wheelhouse 和前端 `web/dist` 构建产物。
+4. frozen Python dependency closure 的专用 uv cache，以及固定 uv 0.11.8。
+5. 前端 `web/dist` 构建产物；OCR/Office extra 只在显式 `--with-ocr`/`--with-doc` 时加入。
 
 ColPali 是默认关闭的实验通道，不属于标准运行资产。需要时由操作员显式执行
 `uv run --frozen python scripts/download_colpali.py`；运行时不会联网下载。
 
-离线包输出为 `offline_bundle/rag_offline_bundle_<timestamp>.tar.gz`，包含项目代码、
-`requirements.lock.txt`、`wheelhouse/`、`models/local_models/`、PaddleOCR cache、
-`env.offline` 与 `install_offline.sh`。目标机解压后运行：
+离线包包含 Git allowlist 项目代码、`uv.lock`、专用 uv cache、`models/local_models/`、
+固定 uv、平台 metadata、全文件 `SHA256SUMS` 与 `install_offline.sh`；真实 `.env` 和 secret
+目录不会进入制品。目标机解压后运行：
 
 ```bash
 ./install_offline.sh /opt/rag-platform
 ```
 
-离线安装脚本不访问网络；它会从包内 wheelhouse 安装 Python 依赖，并恢复 PaddleOCR
-模型缓存。目标机仍需预先具备 `python3` 和 Ollama 可执行文件；Redis 仍是可选组件。
+安装器在写目标前校验 hash 与平台/ABI，再执行 `uv sync --frozen --offline`。目标机仍需预装
+匹配 Python、系统共享库、驱动与 Ollama；升级必须停服、显式 `--upgrade`，并先生成完整备份。
+操作细节见 `docs/deployment/offline.md`。Windows 11 WSL2 的非 Docker 本地模型路径使用
+`deploy_wsl.sh` + versioned inactive release + systemd，完整步骤和全部接口见
+`docs/deployment/WSL_DEPLOYMENT.md`。
 
 ### 2.5 推理性能实测
 
@@ -467,8 +470,9 @@ Fast 模式仍只调用一次生成 LLM。2026-05-27 历史基线中，单次本
 | POST | `/api/retrieval/sparse` | BM25-only baseline |
 | GET | `/api/sessions` | 会话列表 |
 | POST | `/api/sessions` | 创建会话 |
+| GET | `/live` | 进程存活检查（不探测依赖） |
 | GET | `/health` | 健康检查 |
-| GET | `/metrics` | 系统指标 |
+| GET | `/api/admin/metrics` | 系统指标 |
 
 ---
 

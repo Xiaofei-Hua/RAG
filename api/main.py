@@ -10,7 +10,9 @@ Provides REST API and WebSocket endpoints for:
 
 import hashlib
 import os
+import re
 import time
+from collections.abc import Mapping
 
 # Browser E2E fake injection (gated, production no-op). When RAG_E2E_FAKES=1 is
 # set (only by the Playwright webServer command), install deterministic fakes
@@ -24,11 +26,13 @@ if os.getenv("RAG_E2E_FAKES", "") == "1":
     _install_e2e_fakes()
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from api.middleware.error_handler import ErrorHandlerMiddleware
 from api.middleware.tracing import TracingMiddleware
@@ -40,6 +44,116 @@ from core.prompts.profile_prompts import (
     PER_DOC_GRADE_SYSTEM_PROMPT,
 )
 from utils.log_utils import log
+
+_DEFAULT_CORS = "http://localhost:5173,http://127.0.0.1:5173"
+_DEPLOYMENT_ENVS = frozenset({"development", "production"})
+_TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+_FALSE_VALUES = frozenset({"0", "false", "no", "off"})
+_LOCAL_ONLY_HOSTS = ["localhost", "127.0.0.1", "[::1]"]
+
+
+def _parse_allowed_origins(raw: str) -> list[str]:
+    origins = [item.strip() for item in raw.split(",") if item.strip()]
+    if not origins:
+        raise RuntimeError("ALLOWED_ORIGINS must contain at least one origin")
+    if "*" in origins:
+        raise RuntimeError("ALLOWED_ORIGINS cannot contain '*' when credentials are enabled")
+    for origin in origins:
+        parsed = urlsplit(origin)
+        try:
+            _ = parsed.port
+        except ValueError as exc:
+            raise RuntimeError("ALLOWED_ORIGINS contains an invalid HTTP(S) origin") from exc
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise RuntimeError("ALLOWED_ORIGINS contains an invalid HTTP(S) origin")
+    return origins
+
+
+def _is_loopback_origin(origin: str) -> bool:
+    import ipaddress
+
+    host = urlsplit(origin).hostname or ""
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _parse_boolean(environment: Mapping[str, str], name: str, *, default: bool) -> bool:
+    raw = environment.get(name)
+    if raw is None:
+        return default
+    normalized = raw.strip().lower()
+    if normalized in _TRUE_VALUES:
+        return True
+    if normalized in _FALSE_VALUES:
+        return False
+    raise RuntimeError(f"{name} must be an explicit boolean value")
+
+
+def _validate_production_profile(environment: Mapping[str, str]) -> None:
+    profile_name = (environment.get("DOMAIN_PROFILE") or "general").strip()
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", profile_name):
+        raise RuntimeError("DOMAIN_PROFILE must be a simple profile name")
+    profiles_dir = Path(
+        environment.get("DOMAIN_PROFILES_DIR")
+        or Path(__file__).resolve().parents[1] / "data" / "profiles"
+    ).resolve()
+    profile_path = (profiles_dir / f"{profile_name}.yaml").resolve()
+    if not profile_path.is_relative_to(profiles_dir):
+        raise RuntimeError("DOMAIN_PROFILE resolves outside the profile directory")
+    if not profile_path.is_file():
+        raise RuntimeError("DOMAIN_PROFILE does not resolve to an existing profile")
+    try:
+        import yaml
+
+        payload = yaml.safe_load(profile_path.read_text(encoding="utf-8")) or {}
+    except Exception as exc:
+        raise RuntimeError("DOMAIN_PROFILE could not be parsed") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError("DOMAIN_PROFILE must contain a YAML mapping")
+    loaded_name = str(payload.get("name") or "").strip()
+    if loaded_name != profile_name:
+        raise RuntimeError("DOMAIN_PROFILE requested name does not match the loaded profile")
+
+
+def validate_deployment_config(environment: Mapping[str, str] | None = None) -> str:
+    """Validate deployment-only security invariants without logging secret values."""
+    selected = os.environ if environment is None else environment
+    deployment_env = (selected.get("DEPLOYMENT_ENV") or "").strip().lower()
+    if selected.get("PYTEST_RUN", "") == "1" and deployment_env in {"", "development"}:
+        return "test"
+
+    if deployment_env not in _DEPLOYMENT_ENVS:
+        raise RuntimeError("DEPLOYMENT_ENV must be explicitly set to development or production")
+
+    local_only = _parse_boolean(selected, "LOCAL_ONLY_DEPLOYMENT", default=False)
+    origins_raw = selected.get("ALLOWED_ORIGINS", _DEFAULT_CORS)
+    origins = _parse_allowed_origins(origins_raw)
+    if deployment_env == "development":
+        if not all(_is_loopback_origin(origin) for origin in origins):
+            raise RuntimeError("ALLOWED_ORIGINS must remain loopback-only in development")
+        return deployment_env
+
+    if not (selected.get("ADMIN_API_KEY") or "").strip():
+        raise RuntimeError("ADMIN_API_KEY must be set in production")
+    all_loopback = all(_is_loopback_origin(origin) for origin in origins)
+    if local_only and not all_loopback:
+        raise RuntimeError("ALLOWED_ORIGINS must remain loopback-only in local production")
+    if not local_only and all_loopback:
+        raise RuntimeError("ALLOWED_ORIGINS must name a non-loopback production origin")
+    _validate_production_profile(selected)
+    return deployment_env
 
 
 @asynccontextmanager
@@ -54,24 +168,8 @@ async def lifespan(app: FastAPI):
     log.info("Enterprise RAG Platform Starting...")
     log.info("=" * 50)
 
-    # Production hardening gate (F05): refuse to start in a wide-open
-    # configuration. Admin endpoints fall open to loopback-adjacent callers when
-    # ADMIN_API_KEY is unset, and the CORS default is localhost-only — both are
-    # fine for local dev but unsafe in production. We raise (uvicorn logs once
-    # and exits non-zero) rather than sys.exit so a misconfigured container does
-    # not restart-loop. Skipped under PYTEST_RUN=1 (set by tests/conftest.py at
-    # collection time, before this lifespan runs).
-    _DEFAULT_CORS = "http://localhost:5173,http://127.0.0.1:5173"
-    _is_test = os.getenv("PYTEST_RUN", "") == "1"
-    _admin_key_set = bool(os.getenv("ADMIN_API_KEY", "").strip())
-    _origins_default = os.getenv("ALLOWED_ORIGINS", _DEFAULT_CORS) == _DEFAULT_CORS
-    if (not _is_test) and (not _admin_key_set) and _origins_default:
-        raise RuntimeError(
-            "Refusing to start: production-unsafe configuration. "
-            "Set ADMIN_API_KEY and a production ALLOWED_ORIGINS, "
-            "or set PYTEST_RUN=1 for the test suite. "
-            "(Deploy note: use restart_policy.condition=on-failure with max-attempts.)"
-        )
+    deployment_env = validate_deployment_config()
+    log.info(f"Deployment environment: {deployment_env}")
 
     # Initialize core components (lazy)
     from core.fallback.circuit_breaker import get_llm_circuit, get_retriever_circuit
@@ -229,12 +327,13 @@ def create_app() -> FastAPI:
     modules. The module-level ``app = create_app()`` below preserves the
     ``uvicorn api.main:app`` entrypoint.
     """
+    configured_root_path = os.getenv("APP_ROOT_PATH", "")
     application = FastAPI(
         title="Enterprise RAG Platform",
         description="企业级RAG智能平台API",
         version="1.0.0",
         lifespan=lifespan,
-        root_path=os.getenv("APP_ROOT_PATH", ""),
+        root_path=configured_root_path,
         docs_url="/docs",
         redoc_url="/redoc",
     )
@@ -247,10 +346,7 @@ def create_app() -> FastAPI:
     # driven by the ``ALLOWED_ORIGINS`` env var (comma-separated). When unset, a
     # safe local-dev default is used; production deployments MUST set it
     # explicitly.
-    _default_origins = "http://localhost:5173,http://127.0.0.1:5173"
-    _allowed_origins = [
-        o.strip() for o in os.getenv("ALLOWED_ORIGINS", _default_origins).split(",") if o.strip()
-    ]
+    _allowed_origins = _parse_allowed_origins(os.getenv("ALLOWED_ORIGINS", _DEFAULT_CORS))
     # ``allow_credentials`` is only meaningful with a concrete origin list
     # (never with "*"); keep it on so cookies/auth headers work in production.
     application.add_middleware(
@@ -260,6 +356,8 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    if _parse_boolean(os.environ, "LOCAL_ONLY_DEPLOYMENT", default=False):
+        application.add_middleware(TrustedHostMiddleware, allowed_hosts=_LOCAL_ONLY_HOSTS)
 
     # Custom middleware
     application.add_middleware(TracingMiddleware)
@@ -276,6 +374,11 @@ def create_app() -> FastAPI:
     from core.tracing import instrument_fastapi
 
     instrument_fastapi(application)
+
+    @application.get("/live", tags=["Health"])
+    async def liveness_check():
+        """Process liveness; readiness and degradation are reported by /health."""
+        return {"status": "alive", "timestamp": time.time()}
 
     # Health check endpoint
     @application.get("/health", tags=["Health"])
@@ -338,7 +441,11 @@ def create_app() -> FastAPI:
 
     if web_index.is_file():
         assets_dir = web_dist_dir / "assets"
-        if assets_dir.is_dir():
+        # A stripping proxy sends /assets/* while ASGI root_path still records
+        # the public prefix. Starlette's nested StaticFiles mount otherwise
+        # composes root_path twice and returns 404, so the SPA catch-all below
+        # serves real asset files for prefixed deployments.
+        if assets_dir.is_dir() and not configured_root_path:
             application.mount("/assets", StaticFiles(directory=assets_dir), name="frontend-assets")
 
         @application.get("/{full_path:path}", include_in_schema=False)
@@ -378,7 +485,7 @@ if __name__ == "__main__":
 
     uvicorn.run(
         "api.main:app",
-        host="0.0.0.0",
+        host="127.0.0.1",
         port=8000,
         reload=True,
         log_level="info",

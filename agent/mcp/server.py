@@ -128,7 +128,8 @@ class _BaseMCPServer:
         tool = self._tools[name]
 
         try:
-            log.info(f"Executing tool: {name} with args: {arguments}")
+            argument_keys = sorted(str(key) for key in arguments)
+            log.info(f"Executing tool: {name}, argument_keys={argument_keys}")
             import asyncio
 
             if asyncio.iscoroutinefunction(tool.handler):
@@ -136,9 +137,14 @@ class _BaseMCPServer:
             else:
                 result = tool.handler(**arguments)
             return MCPToolResult(success=True, result=result)
-        except Exception as e:
-            log.error(f"Tool execution failed: {e}")
-            return MCPToolResult(success=False, result=None, error=str(e))
+        except Exception as exc:
+            error_type = type(exc).__name__
+            log.error(f"Tool execution failed: tool={name}, error_type={error_type}")
+            return MCPToolResult(
+                success=False,
+                result=None,
+                error=f"{error_type}: tool execution failed",
+            )
 
     def get_tool_schemas_for_llm(self) -> list[dict[str, Any]]:
         schemas = []

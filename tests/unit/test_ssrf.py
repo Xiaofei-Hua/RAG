@@ -17,6 +17,7 @@ Run: pytest tests/unit/test_ssrf.py -v
 
 from __future__ import annotations
 
+import socket
 import sys
 
 import pytest
@@ -82,10 +83,17 @@ class TestSsFBlockedContract:
         assert reason is not None
         assert "允许列表" in reason
 
-    def test_public_host_not_blocked(self):
-        """A real public host resolves to public IPs and is not blocked."""
+    def test_public_host_not_blocked(self, monkeypatch):
+        """A deterministic public DNS answer is not blocked."""
         from agent.mcp.tools_registry import ExternalAPIToolsServer
 
+        monkeypatch.setattr(
+            socket,
+            "getaddrinfo",
+            lambda *_args, **_kwargs: [
+                (socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("93.184.216.34", 0))
+            ],
+        )
         reason = ExternalAPIToolsServer._ssf_blocked("https://example.com/")
         assert reason is None
 

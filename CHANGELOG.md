@@ -7,6 +7,49 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Added — WSL local deployment (`wsl-local-deployment`)
+
+- Added a standalone Windows 11 + WSL2 Ubuntu 24.04 local-model guide covering pinned tool setup,
+  systemd, localhost verification, all 39 explicit HTTP method/path contracts, built-in/optional MCP
+  tools, operations, backup, upgrade, rollback and bounded troubleshooting without Docker.
+- Added `deploy_wsl.sh` with strict WSL/path/tool/GPU preflight, mode-0600 generated configuration,
+  inactive versioned releases, atomic model publication, owned root-staging systemd installation,
+  content-based no-op behavior, consistent SQLite backups and composite Ollama/Torch/application gates;
+  both 8000 and 11434 are verified from their real listening sockets, not configuration alone.
+- Pinned Ollama 0.24.0 in both WSL preflight and model preparation, moved the Torch architecture/CUDA
+  gate before service activation, and made first-install failure rollback remove only newly created owned
+  unit/drop-in files while upgrades restore the previous owned versions.
+- Added a production `LOCAL_ONLY_DEPLOYMENT=true` branch that requires Admin/profile plus all-loopback
+  origins and enables literal-loopback Trusted Host enforcement. Normal production retains its existing
+  non-loopback-origin requirement.
+- `[breaking]` Direct `python api/main.py` startup now binds `127.0.0.1` instead of `0.0.0.0`; reviewed
+  public/proxy deployments must continue to use an explicit Uvicorn bind and production security design.
+- MCP execution and retrieval logging no longer records raw argument values, query snippets or raw
+  exception text; failed `MCPToolResult.error` retains the exception class but not sensitive details.
+- Removed the logger's unused import-time `logs/` directory creation so the application can start from
+  the read-only versioned release enforced by the WSL systemd sandbox.
+
+### Security — Deployment hardening (`deployment-documentation-hardening`)
+
+- `[breaking]` Production startup now requires explicit `DEPLOYMENT_ENV=production`, a non-empty
+  `ADMIN_API_KEY`, a concrete non-loopback `ALLOWED_ORIGINS`, and a valid immutable domain profile.
+  Admin loopback fallback remains development-only; migrate production environment files before restart.
+- Replaced root/remote-installer/legacy package paths with pinned uv/Node/npm, frozen sync, workspace
+  `npm ci`, non-executing environment validation, verified process-group identity, and bounded readiness.
+- Explicit production mode now takes precedence over test markers; offline sources must match a clean
+  `HEAD`, record that commit, exclude untracked files, and reject broad or symlink install targets.
+- Added non-root API-only Compose with file-mounted secrets, isolated profile configuration, finite restart,
+  least-privilege systemd/Nginx assets, platform-bound checksum-verified offline bundles, and separate
+  liveness/readiness contracts.
+- Added authoritative development, bare-metal, API-only Docker, offline and operations guides; `/rag/`
+  frontend API calls now derive from Vite's base path and are covered through a real stripping proxy.
+- Prefixed static assets now avoid Starlette's nested mount/root-path double composition, so stripping
+  `/rag/` deployments serve hashed JS/CSS assets as well as SPA and API routes.
+- Refreshed the transitive PostCSS lock to a patched 8.5.x release without changing the manifest floor;
+  the production dependency audit and registry-provenance contract now fail closed on regressions.
+- Updated the development build chain to Vite 6.4.3 and `vue-tsc` 2.2.12, and refreshed all
+  `brace-expansion` locks; the complete npm dependency audit now reports zero vulnerabilities.
+
 ### Changed — Retrieval documentation closure
 
 - Synchronized the README, HTTP API guide, technical report, engineering contracts, Skill/test guides and

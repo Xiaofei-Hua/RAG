@@ -101,6 +101,7 @@
 import { ref, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useChatStore } from '@/stores/chat'
+import { apiUrl } from '@/utils/api'
 
 const router = useRouter()
 const chatStore = useChatStore()
@@ -112,7 +113,7 @@ onMounted(async () => {
 
 async function loadSessions() {
   try {
-    const response = await fetch('/api/sessions')
+    const response = await fetch(apiUrl('api/sessions'))
     const data = await response.json()
     sessions.value = data.sessions || []
   } catch (e) {
@@ -129,7 +130,7 @@ async function deleteSession(sessionId: string) {
   if (!confirm('确定删除此会话？此操作不可撤销。')) return
 
   try {
-    await fetch(`/api/sessions/${sessionId}`, { method: 'DELETE' })
+    await fetch(apiUrl(`api/sessions/${sessionId}`), { method: 'DELETE' })
     await loadSessions()
   } catch (e) {
     console.error('Delete session error:', e)

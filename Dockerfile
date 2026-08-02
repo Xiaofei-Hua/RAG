@@ -10,6 +10,7 @@
 # ───────────────────────── Stage 1: web builder ──────────────────────────────
 FROM node:20.20.2-bookworm-slim AS web-builder
 WORKDIR /workspace
+ARG VITE_BASE_PATH=/
 
 # `web` is an npm workspace; the canonical lock lives at the repository root.
 # Debian/glibc matches the Rollup native artifact recorded in that lock.
@@ -21,7 +22,7 @@ RUN node --version \
     && npm ls 'dompurify@>=3.4.11' --workspace web \
     && npm ls dompurify --workspace web
 COPY web/ ./web/
-RUN npm run build --workspace web
+RUN VITE_BASE_PATH="$VITE_BASE_PATH" npm run build --workspace web
 
 # ───────────────────────── Stage 2: app ──────────────────────────────────────
 FROM python:3.13-slim AS app
@@ -35,7 +36,9 @@ ARG UV_SYNC_TIMEOUT_SECONDS=600
 ENV UV_PROJECT_ENVIRONMENT=/app/venv \
     UV_PYTHON_DOWNLOADS=never \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    DEPLOYMENT_ENV=production \
+    DOMAIN_PROFILES_DIR=/app/config/profiles
 
 WORKDIR /app
 
@@ -50,6 +53,14 @@ RUN UV_DEFAULT_INDEX="$UV_DEFAULT_INDEX" \
 COPY . .
 COPY --from=web-builder /workspace/web/dist ./web/dist
 
+RUN groupadd --system --gid 10001 rag-platform \
+    && useradd --system --uid 10001 --gid rag-platform --create-home rag-platform \
+    && mkdir -p /app/config /app/data \
+    && cp -a /app/data/profiles /app/config/profiles \
+    && chmod -R u=rwX,go=rX /app \
+    && chmod 0755 /app/scripts/container_entrypoint.sh \
+    && chown -R rag-platform:rag-platform /app/data /home/rag-platform
+
 # Non-secret runtime defaults. Secrets are injected at `docker run`.
 ENV EMBEDDING_PROVIDER=api \
     RERANKER_ENABLED=false \
@@ -61,8 +72,11 @@ ENV EMBEDDING_PROVIDER=api \
 
 EXPOSE 8000
 
-# Healthcheck: the admin health endpoint is the cheapest liveness probe.
+# Liveness only proves that the process can answer; /health is the readiness and
+# degradation contract consumed by operators.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD python -c "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/admin/health',timeout=3).status==200 else 1)" || exit 1
+    CMD python -c "import json,urllib.request,sys; payload=json.load(urllib.request.urlopen('http://127.0.0.1:8000/live',timeout=3)); sys.exit(0 if payload.get('status') == 'alive' else 1)" || exit 1
 
+USER rag-platform
+ENTRYPOINT ["/app/scripts/container_entrypoint.sh"]
 CMD ["uv", "run", "--frozen", "--no-sync", "uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

@@ -142,6 +142,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useToast } from '@/stores/toast'
 import { useUploadStore } from '@/stores/upload'
+import { apiUrl } from '@/utils/api'
 
 interface DocumentInfo {
   id: string
@@ -182,7 +183,7 @@ onMounted(async () => {
 
 async function loadDocuments() {
   try {
-    const response = await fetch('/api/documents')
+    const response = await fetch(apiUrl('api/documents'))
     const data = await response.json()
     documents.value = data.documents || []
   } catch (e) {
@@ -265,7 +266,7 @@ async function uploadSingleFile(file: File): Promise<boolean> {
       xhr.ontimeout = () => reject(new Error('上传超时：请检查后端是否仍在处理或代理超时配置'))
     })
 
-    xhr.open('POST', '/api/documents/upload')
+    xhr.open('POST', apiUrl('api/documents/upload'))
     xhr.send(formData)
 
     await promise
@@ -282,7 +283,7 @@ async function deleteDocument(docId: string) {
   if (!confirm('确定删除此文档？此操作不可撤销。')) return
 
   try {
-    const resp = await fetch(`/api/documents/${docId}`, { method: 'DELETE' })
+    const resp = await fetch(apiUrl(`api/documents/${docId}`), { method: 'DELETE' })
     if (resp.ok) {
       toast.show('文档删除成功', 'success')
     } else {

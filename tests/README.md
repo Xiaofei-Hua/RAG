@@ -70,7 +70,7 @@ uv run --frozen --extra benchmark pytest \
 ### 3. 真实后端测试（需要 Ollama + Milvus）
 
 ```bash
-python -m uvicorn api.main:app --host 0.0.0.0 --port 8000
+DEPLOYMENT_ENV=development python -m uvicorn api.main:app --host 127.0.0.1 --port 8000
 ```
 
 ### 4. 单元测试（不需要后端）
@@ -124,6 +124,27 @@ uv run --frozen --extra benchmark python scripts/prepare_ir_benchmark.py \
   --dataset nano-beir/fiqa \
   --corpus-mode full --offline
 ```
+
+### 8. Deployment contracts
+
+部署静态契约、生产配置 fail-closed 与进程内 smoke：
+
+```bash
+TMPDIR=/tmp TEMP=/tmp TMP=/tmp uv run --frozen pytest \
+  tests/unit/test_deployment_contract.py tests/e2e/test_deployment_smoke.py -q
+
+# WSL local-only、脚本/unit/env、OpenAPI/MCP drift 与日志 canary
+TMPDIR=/tmp TEMP=/tmp TMP=/tmp uv run --frozen pytest \
+  tests/unit/test_wsl_deployment_contract.py \
+  tests/unit/test_mcp_log_redaction.py \
+  tests/e2e/test_wsl_local_production.py -q
+```
+
+真实 Nginx stripping proxy 下的 `/rag/` 浏览器契约位于
+`tests/e2e_ui/deployment-prefix.spec.ts`。Docker/Node 验证方法见
+`docs/deployment/api-only-docker.md`；完整运维 smoke 见 `docs/deployment/operations.md`。
+WSL 真机的只读 preflight、真实 Ollama generation/VRAM 与 Windows localhost 验收见
+`docs/deployment/WSL_DEPLOYMENT.md`；CI fixture 通过不能冒充这些外部真机检查。
 
 真实 benchmark 成本高，不应在每次文档或小改动后重跑。promotion 结论只接受隔离进程、
 corpus/store hash 校验、AB/BA 或 balanced schedule 的结果；synthetic microbenchmark 只证明接线，

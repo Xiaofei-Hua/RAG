@@ -103,6 +103,7 @@
 import { ref, onMounted } from 'vue'
 import { useChatStore } from '@/stores/chat'
 import { useToast } from '@/stores/toast'
+import { apiUrl } from '@/utils/api'
 
 const chatStore = useChatStore()
 const { toasts } = useToast()
@@ -120,7 +121,7 @@ function toggleSidebar() {
 
 async function checkHealth() {
   try {
-    const response = await fetch('/api/admin/health')
+    const response = await fetch(apiUrl('api/admin/health'))
     const data = await response.json()
     isHealthy.value = data.status === 'healthy'
   } catch {

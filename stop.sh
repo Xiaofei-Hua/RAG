@@ -1,89 +1,70 @@
-#!/bin/bash
-# =============================================================================
-# 领域自适应 RAG 智能问答平台 — 一键停止
-# =============================================================================
+#!/usr/bin/env bash
+set -euo pipefail
 
-PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 PID_DIR="$PROJECT_DIR/.pids"
 
-# Colors
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BOLD='\033[1m'
-NC='\033[0m'
+# Only signal setsid-created process groups after PID, PGID, start time, command,
+# and working-directory identity all match the recorded .meta contract.
 
-ok()   { echo -e "${GREEN}[ OK ]${NC}  $1"; }
-warn() { echo -e "${YELLOW}[WARN]${NC}  $1"; }
+warn() { echo "stop: $*" >&2; }
+info() { echo "stop: $*"; }
 
-echo ""
-echo -e "${BOLD}============================================${NC}"
-echo -e "${BOLD}  领域自适应 RAG 智能问答平台 — 停止中${NC}"
-echo -e "${BOLD}============================================${NC}"
-echo ""
+read_metadata() {
+  local file="$1" key value
+  service="" pid="" pgid="" start_ticks="" marker=""
+  while IFS='=' read -r key value; do
+    case "$key" in
+      service) service="$value" ;;
+      pid) pid="$value" ;;
+      pgid) pgid="$value" ;;
+      start_ticks) start_ticks="$value" ;;
+      marker) marker="$value" ;;
+      *) return 1 ;;
+    esac
+  done <"$file"
+  [[ "$service" =~ ^(backend|frontend)$ ]]
+  [[ "$pid" =~ ^[0-9]+$ && "$pgid" =~ ^[0-9]+$ && "$start_ticks" =~ ^[0-9]+$ ]]
+  [[ -n "$marker" ]]
+}
 
-STOPPED=0
+stop_service() {
+  local expected_service="$1" file="$PID_DIR/$1.meta" actual_ticks actual_pgid cmdline cwd
+  if [[ ! -f "$file" ]]; then
+    warn "$expected_service is not tracked"
+    return
+  fi
+  if ! read_metadata "$file" || [[ "$service" != "$expected_service" ]]; then
+    warn "refusing malformed metadata: $file"
+    return 1
+  fi
+  if [[ ! -r "/proc/$pid/stat" ]]; then
+    warn "$expected_service is already stopped"
+    rm -f "$file"
+    return
+  fi
+  actual_ticks="$(awk '{print $22}' "/proc/$pid/stat")"
+  actual_pgid="$(ps -o pgid= -p "$pid" | tr -d ' ')"
+  cmdline="$(tr '\0' ' ' <"/proc/$pid/cmdline")"
+  cwd="$(readlink -f "/proc/$pid/cwd")"
+  if [[ "$actual_ticks" != "$start_ticks" || "$actual_pgid" != "$pgid" \
+      || "$cmdline" != *"$marker"* || "$cwd" != "$PROJECT_DIR" ]]; then
+    warn "refusing to signal $expected_service: process identity does not match metadata"
+    return 1
+  fi
+  info "stopping $expected_service process group $pgid"
+  kill -TERM -- "-$pgid"
+  for _ in $(seq 1 15); do
+    kill -0 "$pid" 2>/dev/null || break
+    sleep 1
+  done
+  if kill -0 "$pid" 2>/dev/null; then
+    warn "$expected_service did not exit after 15s; sending KILL"
+    kill -KILL -- "-$pgid"
+  fi
+  rm -f "$file"
+}
 
-# ─── Stop frontend ──────────────────────────────────────────────────────────
-
-if [ -f "$PID_DIR/frontend.pid" ]; then
-    PID=$(cat "$PID_DIR/frontend.pid")
-    if kill -0 "$PID" 2>/dev/null; then
-        kill "$PID" 2>/dev/null
-        # Wait up to 5 seconds for graceful shutdown
-        for i in $(seq 1 5); do
-            kill -0 "$PID" 2>/dev/null || break
-            sleep 1
-        done
-        # Force kill if still alive
-        kill -9 "$PID" 2>/dev/null
-        ok "前端已停止 (PID: $PID)"
-        STOPPED=$((STOPPED + 1))
-    else
-        warn "前端进程已不存在 (PID: $PID)"
-    fi
-    rm -f "$PID_DIR/frontend.pid"
-else
-    warn "前端未在运行"
-fi
-
-# ─── Stop backend ───────────────────────────────────────────────────────────
-
-if [ -f "$PID_DIR/backend.pid" ]; then
-    PID=$(cat "$PID_DIR/backend.pid")
-    if kill -0 "$PID" 2>/dev/null; then
-        kill "$PID" 2>/dev/null
-        for i in $(seq 1 5); do
-            kill -0 "$PID" 2>/dev/null || break
-            sleep 1
-        done
-        kill -9 "$PID" 2>/dev/null
-        ok "后端已停止 (PID: $PID)"
-        STOPPED=$((STOPPED + 1))
-    else
-        warn "后端进程已不存在 (PID: $PID)"
-    fi
-    rm -f "$PID_DIR/backend.pid"
-else
-    warn "后端未在运行"
-fi
-
-# ─── Cleanup orphan processes on the ports ──────────────────────────────────
-
-for PORT in 8000 3000; do
-    PIDS=$(lsof -ti:$PORT 2>/dev/null)
-    if [ -n "$PIDS" ]; then
-        echo "$PIDS" | xargs kill 2>/dev/null
-        ok "清理端口 $PORT 上的残留进程"
-        STOPPED=$((STOPPED + 1))
-    fi
-done
-
-# ─── Summary ────────────────────────────────────────────────────────────────
-
-echo ""
-if [ $STOPPED -gt 0 ]; then
-    echo -e "  ${GREEN}所有服务已停止${NC}"
-else
-    echo "  没有正在运行的服务"
-fi
-echo ""
+stop_service frontend
+stop_service backend
+info "tracked services are stopped"

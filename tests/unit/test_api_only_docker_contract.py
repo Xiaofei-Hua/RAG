@@ -11,5 +11,7 @@ def test_api_only_image_keeps_versioned_domain_profiles() -> None:
     assert "!data/profiles/**" in dockerignore
 
     workflow = (ROOT / ".github" / "workflows" / "docker-api-only.yml").read_text(encoding="utf-8")
-    assert "/app/data/profiles/general.yaml" in workflow
-    assert "/app/data/profiles/aviation_phm.yaml" in workflow
+    assert "/app/config/profiles/general.yaml" in workflow
+    assert "/app/config/profiles/aviation_phm.yaml" in workflow
+    assert "Smoke-test non-root container health" in workflow
+    assert "127.0.0.1:18080:8000" in workflow
