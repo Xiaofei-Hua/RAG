@@ -7,6 +7,18 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Fixed — Frontend contract hardening (`frontend-contract-hardening`)
+
+- `[breaking]` Public chat contract v2 removes raw `reasoning`, `intent_reasoning` and exception text,
+  rejects empty post-filter model output, and makes `include_sources=false` authoritative for synchronous
+  and SSE Thinking/Fast responses. Deploy RAG v2 before PHM; older or mixed clients must treat missing v2
+  fields as unknown rather than saved or complete.
+- Chat persistence now writes stable, atomic, replay-safe exchanges, merges Redis/SQLite history with
+  deduplication, and exposes `history_persisted` plus history `complete/degraded/backend` availability.
+  Storage failure still degrades safely and never becomes a synthetic zero-confidence result.
+- Feedback keyed by non-empty session/message IDs is atomic and idempotent, so retries return the original
+  record and do not repeat correction-memory or evaluation-flywheel side effects.
+
 ### Added — WSL local deployment (`wsl-local-deployment`)
 
 - Added a standalone Windows 11 + WSL2 Ubuntu 24.04 local-model guide covering pinned tool setup,
