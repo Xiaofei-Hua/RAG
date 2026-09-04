@@ -4,6 +4,8 @@ Feedback and Escalation API Endpoints
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
@@ -52,10 +54,10 @@ async def submit_feedback(request: FeedbackRequest):
         original_answer=request.original_answer,
         corrected_answer=request.corrected_answer,
     )
-    entry_id = collector.record(entry)
+    entry_id, created = await asyncio.to_thread(collector.record_once, entry)
 
     # If it's a correction, also store in memory
-    if ft == FeedbackType.CORRECTION and request.corrected_answer:
+    if created and ft == FeedbackType.CORRECTION and request.corrected_answer:
         try:
             from agent.memory.extractor import MemoryExtractor
             from agent.memory.store import get_memory_store
@@ -63,14 +65,14 @@ async def submit_feedback(request: FeedbackRequest):
             extractor = MemoryExtractor()
             mem = extractor.extract_correction(request.original_answer, request.corrected_answer)
             get_memory_store().store(mem)
-        except Exception as e:
-            log.warning(f"Failed to store correction in memory: {e}")
+        except Exception as exc:
+            log.warning("Failed to store correction in memory: {}", type(exc).__name__)
 
     # Evaluation flywheel: on negative feedback, promote the inference to the
     # candidate pool, re-evaluate it with the judge, and record retrieval
     # misses. Best-effort — never blocks feedback submission.
     NEGATIVE = {FeedbackType.THUMBS_DOWN, FeedbackType.CORRECTION, FeedbackType.FLAG}
-    if ft in NEGATIVE:
+    if created and ft in NEGATIVE:
         try:
             from agent.eval.flywheel import on_negative_feedback
 
@@ -80,8 +82,8 @@ async def submit_feedback(request: FeedbackRequest):
                 feedback_type=ft.value,
                 corrected_answer=request.corrected_answer,
             )
-        except Exception as e:
-            log.debug(f"Flywheel trigger skipped: {e}")
+        except Exception as exc:
+            log.debug("Flywheel trigger skipped: {}", type(exc).__name__)
 
     return {"status": "ok", "id": entry_id}
 

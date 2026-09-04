@@ -396,6 +396,18 @@ class _FakeSessionMemory:
 
     async def save_message(self, session_id, message):
         self._store.setdefault(session_id, []).append(message)
+        return True
+
+    async def save_exchange(self, session_id, user_message, assistant_message, **kwargs):
+        from types import SimpleNamespace
+
+        self._store.setdefault(session_id, []).extend([user_message, assistant_message])
+        return SimpleNamespace(
+            persisted=True,
+            backend="fake",
+            degraded=False,
+            exchange_id=kwargs.get("exchange_id", "fake-exchange"),
+        )
 
     async def get_messages(self, session_id, limit=50):
         from langchain_core.messages import AIMessage, HumanMessage
@@ -407,6 +419,17 @@ class _FakeSessionMemory:
             cls = HumanMessage if type(m).__name__ == "HumanMessage" else AIMessage
             out.append(cls(content=content, additional_kwargs={"_timestamp": self._time.time()}))
         return out
+
+    async def read_messages(self, session_id, limit=50):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(
+            messages=await self.get_messages(session_id, limit),
+            available=True,
+            complete=True,
+            degraded=False,
+            backend="fake",
+        )
 
     async def get_session_info(self, session_id):
         msgs = self._store.get(session_id, [])

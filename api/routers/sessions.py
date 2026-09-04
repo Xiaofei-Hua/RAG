@@ -95,8 +95,8 @@ async def list_sessions(
             ],
             total=total,
         )
-    except Exception as e:
-        log.error(f"Failed to list sessions: {e}")
+    except Exception as exc:
+        log.error("Failed to list sessions: {}", type(exc).__name__)
         raise HTTPException(status_code=500, detail="服务暂时不可用，请稍后重试")
 
 
@@ -119,8 +119,8 @@ async def get_session(
 
     except HTTPException:
         raise
-    except Exception as e:
-        log.error(f"Failed to get session: {e}")
+    except Exception as exc:
+        log.error("Failed to get session: {}", type(exc).__name__)
         raise HTTPException(status_code=500, detail="服务暂时不可用，请稍后重试")
 
 
@@ -137,8 +137,8 @@ async def extend_session(
         return {"status": "success", "message": f"Session {session_id} extended"}
     except HTTPException:
         raise
-    except Exception as e:
-        log.error(f"Failed to extend session: {e}")
+    except Exception as exc:
+        log.error("Failed to extend session: {}", type(exc).__name__)
         raise HTTPException(status_code=500, detail="服务暂时不可用，请稍后重试")
 
 
@@ -152,6 +152,6 @@ async def delete_session(
         await session_memory.clear_session(session_id)
         return {"status": "success", "message": f"Session {session_id} deleted"}
 
-    except Exception as e:
-        log.error(f"Failed to delete session: {e}")
+    except Exception as exc:
+        log.error("Failed to delete session: {}", type(exc).__name__)
         raise HTTPException(status_code=500, detail="服务暂时不可用，请稍后重试")

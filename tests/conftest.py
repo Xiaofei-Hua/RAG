@@ -64,6 +64,7 @@ def _close_sqlite_singletons_after_test():
     # and surface as ResourceWarning: unclosed database.
     for _reset in (
         "agent.eval.judge.reset_judge",
+        "agent.eval.inference_store.reset_inference_store",
         "agent.memory.store.reset_memory_store",
         "agent.feedback.collector.reset_feedback_collector",
         "agent.feedback.escalation.reset_escalation_manager",
@@ -459,6 +460,18 @@ def fake_session_memory():
 
         async def save_message(self, session_id, message):
             self._store.setdefault(session_id, []).append(message)
+            return True
+
+        async def save_exchange(self, session_id, user_message, assistant_message, **kwargs):
+            from types import SimpleNamespace
+
+            self._store.setdefault(session_id, []).extend([user_message, assistant_message])
+            return SimpleNamespace(
+                persisted=True,
+                backend="fake",
+                degraded=False,
+                exchange_id=kwargs.get("exchange_id", "fake-exchange"),
+            )
 
         async def get_messages(self, session_id, limit=50):
             from langchain_core.messages import AIMessage, HumanMessage
@@ -476,6 +489,17 @@ def fake_session_memory():
                     )
                 )
             return out
+
+        async def read_messages(self, session_id, limit=50):
+            from types import SimpleNamespace
+
+            return SimpleNamespace(
+                messages=await self.get_messages(session_id, limit),
+                available=True,
+                complete=True,
+                degraded=False,
+                backend="fake",
+            )
 
         async def get_session_info(self, session_id):
             msgs = self._store.get(session_id, [])

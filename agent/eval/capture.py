@@ -112,6 +112,6 @@ def maybe_capture_inference(
         metadata["trace_id"] = tid
         metadata["message_id"] = record.message_id
         return tid
-    except Exception as e:  # noqa: BLE001 - capture must never break chat
-        log.warning(f"inference capture failed: {e}")
+    except Exception as exc:  # noqa: BLE001 - capture must never break chat
+        log.warning("inference capture failed: {}", type(exc).__name__)
         return None

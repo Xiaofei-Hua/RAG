@@ -28,7 +28,7 @@ from agent.skills.generate.prompts import (
 )
 from core.prompts.domain_profile import get_active_profile
 from utils.log_utils import log
-from utils.think_tag_utils import strip_think_tags
+from utils.think_tag_utils import IncrementalThinkFilter, strip_think_tags
 
 __all__ = ["GenerateSkill", "GenerateSkillConfig"]
 
@@ -243,8 +243,8 @@ class GenerateSkill(BaseSkill):
                         if not reflection.confident and reflection.caveat:
                             reflection_caveat = reflection.caveat
                             answer = answer + reflection_caveat
-                    except Exception as e:  # noqa: BLE001
-                        log.debug(f"self-reflection skipped: {e}")
+                    except Exception as exc:  # noqa: BLE001
+                        log.debug("self-reflection skipped: {}", type(exc).__name__)
 
                 extra_kwargs: dict[str, Any] = {"confidence": confidence}
                 if reasoning:
@@ -297,15 +297,17 @@ class GenerateSkill(BaseSkill):
                     },
                 )
 
-            except Exception as e:
-                log.warning(f"Generate attempt {attempt + 1} failed: {e}")
+            except Exception as exc:
+                log.warning(
+                    "Generate attempt {} failed: {}", attempt + 1, type(exc).__name__
+                )
                 if attempt < self._skill_config.max_retries:
                     time.sleep(self._skill_config.retry_delay * (attempt + 1))
                 else:
                     return SkillResult(
                         status=SkillStatus.FAILURE,
                         skill_name=self.name,
-                        error=str(e),
+                        error="generation_failed",
                         messages=[AIMessage(content="抱歉，生成回答时遇到问题，请稍后重试。")],
                         state_updates={"shared_state": _cleared_generation_state()},
                     )
@@ -330,8 +332,8 @@ class GenerateSkill(BaseSkill):
                 return None
             result = check_grounding(answer, contexts)
             return result.faithfulness  # None when degraded
-        except Exception as e:  # noqa: BLE001
-            log.debug(f"grounding faithfulness skipped: {e}")
+        except Exception as exc:  # noqa: BLE001
+            log.debug("grounding faithfulness skipped: {}", type(exc).__name__)
             return None
 
     async def _agrounding_faithfulness(self, answer: str, contexts: list[str]) -> float | None:
@@ -347,8 +349,8 @@ class GenerateSkill(BaseSkill):
                 return None
             result = await acheck_grounding(answer, contexts)
             return result.faithfulness  # None when degraded
-        except Exception as e:  # noqa: BLE001
-            log.debug(f"async grounding faithfulness skipped: {e}")
+        except Exception as exc:  # noqa: BLE001
+            log.debug("async grounding faithfulness skipped: {}", type(exc).__name__)
             return None
 
     @staticmethod
@@ -572,16 +574,28 @@ class GenerateSkill(BaseSkill):
 
         writer = get_stream_writer()
         for attempt in range(self._skill_config.max_retries + 1):
+            public_emitted = False
             try:
+                parser = IncrementalThinkFilter()
                 chunks: list[str] = []
                 async for chunk in self.chain.astream({"question": question, "context": ctx}):
                     text = str(chunk)
                     if not text:
                         continue
-                    chunks.append(text)
-                    writer({"type": "token", "content": text, "node": self.name})
+                    public = parser.push(text)
+                    if public:
+                        public_emitted = True
+                        chunks.append(public)
+                        writer({"type": "token", "content": public, "node": self.name})
+                tail = parser.finish()
+                if tail:
+                    public_emitted = True
+                    chunks.append(tail)
+                    writer({"type": "token", "content": tail, "node": self.name})
 
-                answer = strip_think_tags("".join(chunks))
+                answer = "".join(chunks).strip()
+                if not answer:
+                    raise ValueError("empty public generation")
                 # Grounding + confidence (best-effort). Async path fans out
                 # per-claim entailment concurrently instead of blocking the
                 # event loop with N sequential judge round-trips.
@@ -629,18 +643,34 @@ class GenerateSkill(BaseSkill):
                         "refused": False,
                     },
                 )
-            except Exception as e:
-                log.warning(f"Async generate attempt {attempt + 1} failed: {e}")
-                if attempt < self._skill_config.max_retries:
+            except Exception as exc:
+                log.warning(
+                    "Async generate attempt {} failed: {}",
+                    attempt + 1,
+                    type(exc).__name__,
+                )
+                # Once public bytes have been emitted, retrying would append a
+                # second answer to the same stream. Surface a terminal failure
+                # so the HTTP layer emits error-without-done instead.
+                if not public_emitted and attempt < self._skill_config.max_retries:
                     await asyncio.sleep(self._skill_config.retry_delay * (attempt + 1))
                     continue
                 elapsed = (time.perf_counter() - start) * 1000
-                log.error(f"GenerateSkill async failed ({elapsed:.0f}ms): {e}")
+                log.error(
+                    "GenerateSkill async failed ({:.0f}ms): {}",
+                    elapsed,
+                    type(exc).__name__,
+                )
                 return SkillResult(
                     status=SkillStatus.FAILURE,
                     skill_name=self.name,
-                    error=str(e),
-                    messages=[AIMessage(content="抱歉，生成回答时遇到问题，请稍后重试。")],
+                    error="generation_failed",
+                    messages=[
+                        AIMessage(
+                            content="",
+                            additional_kwargs={"generation_failed": True},
+                        )
+                    ],
                     state_updates={"shared_state": _cleared_generation_state()},
                 )
 
@@ -736,8 +766,11 @@ class GenerateSkill(BaseSkill):
 
             return content, reasoning
 
-        except Exception as e:
-            log.warning(f"Direct OpenAI call failed, falling back to LangChain: {e}")
+        except Exception as exc:
+            log.warning(
+                "Direct OpenAI call failed, falling back to LangChain: {}",
+                type(exc).__name__,
+            )
             answer = self.chain.invoke({"question": question, "context": context})
             return answer, ""
 

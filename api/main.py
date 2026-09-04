@@ -261,6 +261,12 @@ async def lifespan(app: FastAPI):
         reset_judge()
     except Exception as e:  # noqa: BLE001
         log.debug(f"Judge close skipped: {e}")
+    try:
+        from agent.eval.inference_store import reset_inference_store
+
+        reset_inference_store()
+    except Exception as e:  # noqa: BLE001
+        log.debug("Inference store close skipped: {}", type(e).__name__)
 
     # Close the agent-memory / feedback SQLite singletons. They share
     # agent_memory.db; without these closes their connections leak on shutdown.

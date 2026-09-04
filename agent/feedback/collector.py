@@ -15,7 +15,12 @@ DEFAULT_DB_PATH = "./data/agent_memory.db"
 
 
 class FeedbackCollector:
-    def __init__(self, db_path: str = DEFAULT_DB_PATH):
+    def __init__(self, db_path: str | None = None):
+        # Resolve the module-level path at construction time.  Tests and
+        # embedders intentionally redirect this attribute before creating the
+        # singleton; a default argument would otherwise retain the import-time
+        # path and leak writes into the real data directory.
+        db_path = db_path or DEFAULT_DB_PATH
         self._db_path = db_path
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
         self._conn = sqlite3.connect(db_path, check_same_thread=False)
@@ -26,8 +31,8 @@ class FeedbackCollector:
         # "database is locked". See agent/memory/store.py for the same fix.
         try:
             self._conn.execute("PRAGMA journal_mode=WAL")
-        except Exception as e:  # noqa: BLE001
-            log.debug(f"FeedbackCollector: WAL mode unavailable: {e}")
+        except Exception as exc:  # noqa: BLE001
+            log.debug("FeedbackCollector: WAL mode unavailable: {}", type(exc).__name__)
         self._lock = threading.RLock()
         with self._lock:
             self._init_table()
@@ -50,6 +55,10 @@ class FeedbackCollector:
                 timestamp REAL
             )
         """)
+        self._conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_feedback_message "
+            "ON feedback (session_id, message_id, timestamp, id)"
+        )
         self._conn.commit()
 
     def record(self, entry: FeedbackEntry) -> str:
@@ -70,6 +79,53 @@ class FeedbackCollector:
             self._conn.commit()
         log.debug(f"FeedbackCollector: recorded feedback {entry.id}")
         return entry.id
+
+    def record_once(self, entry: FeedbackEntry) -> tuple[str, bool]:
+        """Record one feedback per non-empty session/message pair.
+
+        ``BEGIN IMMEDIATE`` serializes the lookup+insert across independent
+        SQLite connections without imposing a migration-breaking UNIQUE
+        constraint on databases that may already contain legacy duplicates.
+        """
+        session_id = entry.session_id.strip()
+        message_id = entry.message_id.strip()
+        if not session_id or not message_id:
+            return self.record(entry), True
+
+        with self._locked():
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                existing = self._conn.execute(
+                    "SELECT id FROM feedback "
+                    "WHERE session_id = ? AND message_id = ? "
+                    "ORDER BY timestamp ASC, id ASC LIMIT 1",
+                    (session_id, message_id),
+                ).fetchone()
+                if existing:
+                    self._conn.commit()
+                    return str(existing["id"]), False
+                self._conn.execute(
+                    "INSERT INTO feedback "
+                    "(id, session_id, message_id, feedback_type, content, "
+                    "original_answer, corrected_answer, timestamp) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        entry.id,
+                        session_id,
+                        message_id,
+                        entry.feedback_type.value,
+                        entry.content,
+                        entry.original_answer,
+                        entry.corrected_answer,
+                        entry.timestamp,
+                    ),
+                )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+        log.debug(f"FeedbackCollector: recorded feedback {entry.id}")
+        return entry.id, True
 
     def get_feedback(self, session_id: str) -> list[FeedbackEntry]:
         with self._locked():

@@ -73,6 +73,16 @@
 
 HTTP 状态码：`4xx` 客户端错误，`5xx` 服务端错误。
 
+### Public chat contract v2
+
+聊天成功响应与 SSE `done.metadata` 通过 `contract_version: 2` 标识公开契约。模型原始
+`reasoning`、`intent_reasoning` 和内部异常不属于公开接口；所有公开回答在发送、持久化和评测
+采集前经过同一过滤边界。过滤后没有可展示正文时，非流式接口返回 HTTP 502，流式接口发送
+`error` 且不再发送 `done`。
+
+`history_persisted` 是三态字段：`true` 表示本次问答已明确保存，`false` 表示明确未保存，`null`
+表示存储 deadline 后结果仍未决。客户端不得把 `false`、`null` 或缺失字段显示为已保存。
+
 ---
 
 ## 2. 智能问答
@@ -124,8 +134,8 @@ POST /api/chat
   ],
   "processing_time_ms": 3520.5,
   "metadata": {
+    "contract_version": 2,
     "intent_confidence": 0.95,
-    "intent_reasoning": "知识库检索类问题",
     "source_count": 3,
     "structured_answer": {
       "summary": "git 合并冲突需手动编辑...",
@@ -139,12 +149,12 @@ POST /api/chat
     "route": "rag",
     "prompt_profile": "general_v1",
     "force_rag": false,
-    "reasoning": "...",
     "confidence": 0.86,
     "confidence_level": "high",
     "refused": false,
     "message_id": "msg_abc123",
-    "trace_id": "trace_abc123"
+    "trace_id": "trace_abc123",
+    "history_persisted": true
   }
 }
 ```
@@ -158,21 +168,25 @@ POST /api/chat
 | `intent` | string | 检测到的意图：`rag_query` / `general_chat` / `degraded` |
 | `sources` | SourceDocument[] | 参考来源文档列表 |
 | `processing_time_ms` | float | 总处理耗时（毫秒） |
+| `metadata.contract_version` | integer | 公开契约版本；当前为 `2` |
+| `metadata.intent_confidence` | float \| null | 意图置信度；不可用时为 `null`，不得按 0 解读 |
 | `metadata.route` | string | 路由类型：`rag` / `general_chat` / `fast` |
 | `metadata.prompt_profile` | string | Prompt 配置标识 |
 | `metadata.structured_answer` | StructuredAnswer \| null | 结构化回答数据（仅当 active profile 定义了 `section_template` 时返回；字段为通用位置槽位，展示标签见 `section_labels`） |
 | `metadata.section_labels` | string[] | active profile 的 section_template 标签，按位置对应 `structured_answer` 字段（用于 UI 渲染领域相关标题） |
-| `metadata.reasoning` | string | Thinking 模式捕获的 Qwen3 reasoning；其它路径通常为空字符串 |
 | `metadata.confidence` | float \| null | 可用时的复合置信度；不可用保持 `null`，不会伪造为 0 |
 | `metadata.confidence_level` | string | `high` / `medium` / `low` / `unknown` |
 | `metadata.refused` | boolean | 是否因证据不足、冲突或安全边界拒绝正常生成 |
 | `metadata.message_id` | string | 消息标识，用于反馈关联 |
 | `metadata.trace_id` | string | 推理 trace 标识，用于评测飞轮和排障 |
-| `metadata.retrieval_time_ms` | float | 仅 Fast 路径附带的检索耗时 |
-| `metadata.generation_time_ms` | float | 仅 Fast 路径附带的生成耗时；安全终止时为 0 |
+| `metadata.history_persisted` | boolean \| null | 本次完整 exchange 的保存结果：成功、失败或未决 |
+| `metadata.degradation_code` | string | 仅降级路径可用的稳定机器码，不包含原始异常文本 |
+| `metadata.retrieval_time_ms` | float | 仅非流式 Fast 路径附带的检索耗时 |
+| `metadata.generation_time_ms` | float | 仅非流式 Fast 路径附带的生成耗时；未调用生成时为 0 |
 
-正常 `rag` / `general_chat` / `fast` 路径返回上述统一字段集合；极端异常进入 `degraded`
-路径时，`metadata` 只保证 `route`，并尽量提供 `error`、`message_id`、`trace_id`。
+`include_sources=false` 时公开 `sources` 始终为空，但 `metadata.source_count` 仍表示内部实际证据数。
+正常 `rag` / `general_chat` / `fast` 与 `degraded` 路径均使用同一公开 allowlist；降级路径不返回
+原始异常或内部推理。
 
 **`metadata.route` 取值说明：**
 
@@ -296,19 +310,21 @@ data: {JSON}\n\n
   ],
   "processing_time_ms": 3520.5,
   "metadata": {
+    "contract_version": 2,
     "intent_confidence": 0.95,
-    "intent_reasoning": "...",
     "source_count": 3,
     "structured_answer": null,
     "section_labels": [],
     "route": "rag",
     "prompt_profile": "general_v1",
-    "force_rag": false
+    "force_rag": false,
+    "history_persisted": true
   }
 }
 ```
 
-> 收到 `done` 事件后流结束。`full_response` 为完整回答，可用其替换之前累积的 token。
+> 收到 `done` 事件后流结束。`full_response` 是过滤后的完整公开回答。若收到 `error`，客户端必须
+> 保留已收到的片段并标记为未完成，不得自行合成成功态。
 
 ##### error — 错误
 
@@ -408,14 +424,21 @@ GET /api/chat/history/{session_id}
 
 ```json
 {
+  "contract_version": 2,
   "session_id": "session_abc123",
   "messages": [
-    { "role": "user", "content": "git 合并冲突如何解决？" },
-    { "role": "assistant", "content": "根据知识库检索结果..." }
+    { "role": "user", "content": "git 合并冲突如何解决？", "timestamp": 1788530400.0 },
+    { "role": "assistant", "content": "根据知识库检索结果...", "timestamp": 1788530400.0 }
   ],
-  "total_messages": 4
+  "total_messages": 2,
+  "complete": true,
+  "degraded": false,
+  "backend": "combined"
 }
 ```
+
+`complete=false` 表示至少一个已配置存储源不可读，响应仅是可用子集；`degraded=true` 时客户端
+应提示历史可能不完整。所有配置源均不可读时接口返回 HTTP 503，真实空会话仍返回 200 和空数组。
 
 ---
 
@@ -831,6 +854,7 @@ POST /api/feedback
 |------|------|------|------|
 | `session_id` | string | 是 | 关联的会话 ID |
 | `message_id` | string | 否 | 被反馈的消息 ID |
+| `trace_id` | string | 否 | 关联推理采集记录的 trace ID |
 | `feedback_type` | string | 是 | 反馈类型，见下表 |
 | `content` | string | 否 | 反馈文字内容 |
 | `original_answer` | string | 否 | 原始回答（纠正时使用） |
@@ -853,6 +877,9 @@ POST /api/feedback
   "id": "fb_abc123"
 }
 ```
+
+当 `session_id` 与 `message_id` 均非空时，重复或并发提交返回首条记录的同一 `id`，不会重复触发
+纠正记忆或负反馈评测副作用。缺少 `message_id` 的遗留调用继续采用追加语义。
 
 #### cURL 示例
 
@@ -1297,23 +1324,42 @@ interface ChatResponse {
   sources: SourceDocument[]
   processing_time_ms: number
   metadata: {
-    intent_confidence?: number
-    intent_reasoning?: string
+    contract_version: 2
+    intent_confidence: number | null
     source_count?: number
     structured_answer?: StructuredAnswer | null
     section_labels?: string[]
     route: "rag" | "general_chat" | "fast" | "degraded"
     prompt_profile?: string
     force_rag?: boolean
-    reasoning?: string
     confidence?: number | null
     confidence_level?: "high" | "medium" | "low" | "unknown"
     refused?: boolean
     message_id?: string
     trace_id?: string
-    retrieval_time_ms?: number
-    generation_time_ms?: number
+    history_persisted: boolean | null
+    degradation_code?: string
+    retrieval_time_ms?: number       // 仅非流式 Fast
+    generation_time_ms?: number      // 仅非流式 Fast
   }
+}
+```
+
+### ChatHistoryResponse
+
+```typescript
+interface ChatHistoryResponse {
+  contract_version: 2
+  session_id: string
+  messages: Array<{
+    role: "user" | "assistant"
+    content: string
+    timestamp: number | null
+  }>
+  total_messages: number
+  complete: boolean
+  degraded: boolean
+  backend: "primary" | "fallback" | "combined" | "legacy" | string
 }
 ```
 
@@ -1380,6 +1426,7 @@ interface SessionInfo {
 interface FeedbackRequest {
   session_id: string                          // 必填，关联会话 ID
   message_id?: string                         // 可选，被反馈的消息 ID
+  trace_id?: string                           // 可选，关联推理 trace
   feedback_type: "THUMBS_UP" | "THUMBS_DOWN" | "CORRECTION" | "FLAG"  // 必填
   content?: string                            // 可选，反馈文字
   original_answer?: string                    // 可选，原始回答（纠正时）

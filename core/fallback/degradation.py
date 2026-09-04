@@ -16,6 +16,7 @@ from typing import Any
 from langchain_core.messages import AIMessage
 
 from utils.log_utils import log
+from utils.think_tag_utils import sanitize_model_text
 
 __all__ = [
     "DegradationHandler",
@@ -156,9 +157,11 @@ class DegradationHandler:
         if self._mode == FallbackMode.CACHED_ONLY:
             cached = self.get_cached_response(query)
             if cached:
-                return AIMessage(
-                    content=f"[缓存响应] {cached}\n\n(服务暂时受限，以上为历史缓存回答)"
-                )
+                public = sanitize_model_text(cached)
+                if public:
+                    return AIMessage(
+                        content=f"[缓存响应] {public}\n\n(服务暂时受限，以上为历史缓存回答)"
+                    )
 
         if self._mode == FallbackMode.SIMPLIFIED:
             return AIMessage(content=self._generate_simplified_response(query))
@@ -174,11 +177,7 @@ class DegradationHandler:
             )
 
         # Default error response
-        return AIMessage(
-            content=f"抱歉，处理您的请求时遇到问题。\n\n"
-            f"错误信息: {error or '未知错误'}\n\n"
-            f"请稍后重试。"
-        )
+        return AIMessage(content="服务暂时受限，当前无法完成请求。请稍后重试。")
 
     def _generate_simplified_response(self, query: str) -> str:
         """Generate a simplified response without full processing."""

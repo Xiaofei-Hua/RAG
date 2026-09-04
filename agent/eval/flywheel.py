@@ -98,8 +98,8 @@ def _record_retrieval_miss(
             f"Retrieval miss recorded: trace={inference.trace_id[:12]}... "
             f"faithfulness={metrics.faithfulness}"
         )
-    except Exception as e:  # noqa: BLE001
-        log.warning(f"Failed to record retrieval miss: {e}")
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Failed to record retrieval miss: {}", type(exc).__name__)
 
 
 def get_retrieval_misses(limit: int = 100) -> list:
@@ -181,7 +181,7 @@ def on_negative_feedback(
                 result["miss_recorded"] = True
 
         return result
-    except Exception as e:  # noqa: BLE001
-        result["error"] = str(e)
-        log.warning(f"Flywheel on_negative_feedback failed: {e}")
+    except Exception as exc:  # noqa: BLE001
+        result["error"] = type(exc).__name__
+        log.warning("Flywheel on_negative_feedback failed: {}", type(exc).__name__)
         return result

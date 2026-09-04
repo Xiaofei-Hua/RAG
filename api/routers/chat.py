@@ -6,6 +6,7 @@ Handles conversation/chat endpoints.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -13,7 +14,7 @@ import time
 import uuid
 from typing import Literal
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from pydantic import BaseModel, Field
@@ -26,9 +27,13 @@ from core.prompts.profile_prompts import (
     PER_DOC_GRADE_SYSTEM_PROMPT,
 )
 from utils.log_utils import log
-from utils.think_tag_utils import strip_think_tags
+from utils.think_tag_utils import IncrementalThinkFilter, sanitize_model_text
 
 router = APIRouter()
+
+PUBLIC_CONTRACT_VERSION = 2
+EMPTY_PUBLIC_MESSAGE = "模型未返回可展示内容，请重试"
+SAFE_DEGRADED_MESSAGE = "服务暂时受限，当前无法完成请求。请稍后重试。"
 
 
 def _profile():
@@ -118,6 +123,10 @@ class ChatHistoryResponse(BaseModel):
     session_id: str
     messages: list[ChatMessage]
     total_messages: int
+    contract_version: int = PUBLIC_CONTRACT_VERSION
+    complete: bool
+    degraded: bool
+    backend: str
 
 
 # =============================================================================
@@ -136,8 +145,8 @@ def _confidence_level(confidence: float | None) -> str:
     return "low"
 
 
-def _capture(
-    http_request: Request,
+async def _capture(
+    http_request: Request | None,
     request_message: str,
     answer: str,
     sources: list,
@@ -160,11 +169,14 @@ def _capture(
     try:
         from agent.eval.capture import maybe_capture_inference
 
-        maybe_capture_inference(
+        await asyncio.to_thread(
+            maybe_capture_inference,
             request_message=request_message,
             answer=answer,
             sources=sources,
-            reasoning=reasoning,
+            # Reasoning is deliberately excluded from the public/evaluation
+            # boundary; only the sanitized answer is persisted here.
+            reasoning="",
             route=route,
             prompt_profile=prompt_profile,
             intent=intent,
@@ -174,7 +186,7 @@ def _capture(
             session_id=session_id,
         )
     except Exception as exc:  # noqa: BLE001 - capture must not break chat
-        log.debug(f"inference capture skipped: {exc}")
+        log.debug("inference capture skipped: {}", type(exc).__name__)
 
 
 def _extract_sources(messages: list) -> list[SourceDocument]:
@@ -449,8 +461,40 @@ async def _run_general_chat(
         history_msgs.append(hm)
     history_msgs.append(HumanMessage(content=message))
     response = await llm.ainvoke(history_msgs)
-    answer = strip_think_tags(response.content)
+    answer = sanitize_model_text(response.content)
     return answer, [], None, False, ""
+
+
+async def _save_exchange(session_memory, session_id: str, question: str, answer: str):
+    """Persist one complete exchange and return true/false/unknown."""
+    try:
+        result = await session_memory.save_exchange(
+            session_id,
+            HumanMessage(content=question),
+            AIMessage(content=answer),
+        )
+        persisted = getattr(result, "persisted", None)
+        return persisted if persisted is True or persisted is False else None
+    except Exception as exc:  # noqa: BLE001 - history never breaks an answer
+        log.warning("Session exchange save failed: {}", type(exc).__name__)
+        return None
+
+
+def _public_answer_or_502(value: str) -> str:
+    answer = sanitize_model_text(value)
+    if not answer.strip():
+        raise HTTPException(status_code=502, detail=EMPTY_PUBLIC_MESSAGE)
+    return answer
+
+
+def _safe_degraded_answer(handler, query: str) -> str:
+    """Build a non-empty degraded body without echoing internal exceptions."""
+    try:
+        candidate = handler.generate_degraded_response(query).content
+    except Exception as exc:  # noqa: BLE001 - fixed safe fallback below
+        log.warning("Degraded response builder failed: {}", type(exc).__name__)
+        candidate = ""
+    return sanitize_model_text(candidate) or SAFE_DEGRADED_MESSAGE
 
 
 def _sse(event: dict) -> str:
@@ -464,7 +508,7 @@ def _build_metadata(
     prompt_profile: str,
     message_id: str,
     trace_id: str,
-    intent_confidence: float,
+    intent_confidence: float | None,
     intent_reasoning: str,
     source_count: int,
     structured_answer,
@@ -473,6 +517,8 @@ def _build_metadata(
     confidence=None,
     confidence_level: str | None = None,
     refused: bool = False,
+    history_persisted: bool | None = None,
+    degradation_code: str | None = None,
 ) -> dict:
     """Build the per-response metadata dict shared by chat() and chat_stream().
 
@@ -490,8 +536,8 @@ def _build_metadata(
     F-C1).
     """
     meta = {
+        "contract_version": PUBLIC_CONTRACT_VERSION,
         "intent_confidence": intent_confidence,
-        "intent_reasoning": intent_reasoning,
         "source_count": source_count,
         "structured_answer": structured_answer.model_dump() if structured_answer else None,
         "section_labels": _active_sections(),
@@ -500,24 +546,39 @@ def _build_metadata(
         "force_rag": force_rag,
         "message_id": message_id,
         "trace_id": trace_id,
+        "history_persisted": history_persisted,
     }
     # Answer-trustworthiness fields. The pre-refactor chat() always included
     # these (confidence_level defaults to "unknown" when confidence is None),
     # even on general_chat where there is no grounding signal — the refuse test
     # and frontend rely on confidence_level being present on every route. Keep
     # the same shape so the refactor is behavior-preserving.
-    meta["reasoning"] = reasoning
     meta["confidence"] = confidence
     meta["confidence_level"] = (
         confidence_level if confidence_level is not None else _confidence_level(confidence)
     )
     meta["refused"] = refused
+    if degradation_code:
+        meta["degradation_code"] = degradation_code
     return meta
 
 
-def _degraded_metadata(*, message_id: str, trace_id: str, error: str) -> dict:
+def _degraded_metadata(
+    *, message_id: str, trace_id: str, history_persisted: bool | None
+) -> dict:
     """Metadata for the circuit-breaker degraded response path (chat + stream)."""
-    return {"error": error, "message_id": message_id, "trace_id": trace_id, "route": "degraded"}
+    return _build_metadata(
+        route="degraded",
+        prompt_profile="degraded",
+        message_id=message_id,
+        trace_id=trace_id,
+        intent_confidence=None,
+        intent_reasoning="",
+        source_count=0,
+        structured_answer=None,
+        history_persisted=history_persisted,
+        degradation_code="circuit_breaker_open",
+    )
 
 
 # =============================================================================
@@ -577,7 +638,6 @@ async def get_prompt_status():
 async def chat(
     request: ChatRequest,
     http_request: Request,
-    background_tasks: BackgroundTasks,
     session_memory=Depends(get_session_memory),
 ):
     """
@@ -606,17 +666,19 @@ async def chat(
     gen_refused = False
     reasoning_text = ""  # initialised for general_chat / fast branches (RAG fills it)
 
-    log.info(f"Chat request: session={session_id[:8]}... message={request.message[:50]}...")
+    log.info(
+        "Chat request: session={}... chars={} trace={}",
+        session_id[:8],
+        len(request.message),
+        trace_id,
+    )
 
     try:
         if _is_identity_capability_query(request.message):
-            answer = _profile().identity_response
+            answer = _public_answer_or_502(_profile().identity_response)
             processing_time = (time.perf_counter() - start_time) * 1000
-            background_tasks.add_task(
-                session_memory.save_message, session_id, HumanMessage(content=request.message)
-            )
-            background_tasks.add_task(
-                session_memory.save_message, session_id, AIMessage(content=answer)
+            history_persisted = await _save_exchange(
+                session_memory, session_id, request.message, answer
             )
             identity_meta = _build_metadata(
                 route="general_chat",
@@ -627,8 +689,9 @@ async def chat(
                 intent_reasoning="Identity/capability shortcut",
                 source_count=0,
                 structured_answer=None,
+                history_persisted=history_persisted,
             )
-            _capture(
+            await _capture(
                 http_request,
                 request.message,
                 answer,
@@ -656,13 +719,10 @@ async def chat(
             from core.fast_mode import fast_generate_async
 
             result = await fast_generate_async(request.message)
+            answer = _public_answer_or_502(result.answer)
             processing_time = (time.perf_counter() - start_time) * 1000
-
-            background_tasks.add_task(
-                session_memory.save_message, session_id, HumanMessage(content=request.message)
-            )
-            background_tasks.add_task(
-                session_memory.save_message, session_id, AIMessage(content=result.answer)
+            history_persisted = await _save_exchange(
+                session_memory, session_id, request.message, answer
             )
 
             fast_sources = [SourceDocument(**s) for s in result.sources]
@@ -675,14 +735,15 @@ async def chat(
                 intent_reasoning="Fast mode (no classification)",
                 source_count=result.retrieval_count,
                 structured_answer=None,
+                history_persisted=history_persisted,
             )
             # Fast mode surfaces retrieval/generation timing for the client.
             fast_meta["retrieval_time_ms"] = result.retrieval_time_ms
             fast_meta["generation_time_ms"] = result.generation_time_ms
-            _capture(
+            await _capture(
                 http_request,
                 request.message,
-                result.answer,
+                answer,
                 fast_sources,
                 "",
                 "fast",
@@ -694,10 +755,10 @@ async def chat(
                 session_id,
             )
             return ChatResponse(
-                response=result.answer,
+                response=answer,
                 session_id=session_id,
                 intent="rag_query",
-                sources=fast_sources,
+                sources=fast_sources if request.include_sources else [],
                 processing_time_ms=processing_time,
                 metadata=fast_meta,
             )
@@ -776,19 +837,15 @@ async def chat(
                     source_count=0,
                     structured_answer=None,
                 )
-                rag_meta["reasoning"] = reasoning_text
                 rag_meta["confidence"] = gen_conf
                 rag_meta["refused"] = gen_refused
                 processing_time = (time.perf_counter() - start_time) * 1000
-                background_tasks.add_task(
-                    session_memory.save_message,
-                    session_id,
-                    HumanMessage(content=request.message),
+                answer = _public_answer_or_502(answer)
+                history_persisted = await _save_exchange(
+                    session_memory, session_id, request.message, answer
                 )
-                background_tasks.add_task(
-                    session_memory.save_message, session_id, AIMessage(content=answer)
-                )
-                _capture(
+                rag_meta["history_persisted"] = history_persisted
+                await _capture(
                     http_request,
                     request.message,
                     answer,
@@ -821,12 +878,15 @@ async def chat(
                 raw = (
                     last_message.content if hasattr(last_message, "content") else str(last_message)
                 )
-                answer = strip_think_tags(raw)
+                answer = sanitize_model_text(raw)
                 # Extract Qwen3 reasoning from generate node
                 if hasattr(last_message, "additional_kwargs"):
-                    reasoning_text = last_message.additional_kwargs.get("reasoning", "") or ""
-                    gen_confidence = last_message.additional_kwargs.get("confidence")
-                    gen_refused = bool(last_message.additional_kwargs.get("refused", False))
+                    kwargs = last_message.additional_kwargs
+                    if kwargs.get("generation_failed"):
+                        answer = ""
+                    reasoning_text = kwargs.get("reasoning", "") or ""
+                    gen_confidence = kwargs.get("confidence")
+                    gen_refused = bool(kwargs.get("refused", False))
             else:
                 answer = "抱歉，无法生成回答。"
 
@@ -839,15 +899,13 @@ async def chat(
             route = "rag"
             prompt_profile = _profile().prompt_profile_generate
 
+        answer = _public_answer_or_502(answer)
+
         # Calculate processing time
         processing_time = (time.perf_counter() - start_time) * 1000
 
-        # Save to session memory (background task)
-        background_tasks.add_task(
-            session_memory.save_message, session_id, HumanMessage(content=request.message)
-        )
-        background_tasks.add_task(
-            session_memory.save_message, session_id, AIMessage(content=answer)
+        history_persisted = await _save_exchange(
+            session_memory, session_id, request.message, answer
         )
 
         structured_answer = _extract_structured_answer(answer)
@@ -865,8 +923,9 @@ async def chat(
             reasoning=reasoning_text,
             confidence=gen_confidence,
             refused=gen_refused,
+            history_persisted=history_persisted,
         )
-        _capture(
+        await _capture(
             http_request,
             request.message,
             answer,
@@ -884,13 +943,15 @@ async def chat(
             response=answer,
             session_id=session_id,
             intent=intent_result.intent.value,
-            sources=sources,
+            sources=sources if request.include_sources else [],
             processing_time_ms=processing_time,
             metadata=main_meta,
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
-        log.error(f"Chat error: {e}")
+        log.error("Chat error: {}", type(e).__name__)
 
         # Check if circuit breaker is open
         from core.fallback.circuit_breaker import CircuitBreakerError
@@ -898,16 +959,21 @@ async def chat(
 
         if isinstance(e, CircuitBreakerError):
             handler = get_degradation_handler()
-            degraded = handler.generate_degraded_response(request.message, str(e))
+            degraded_answer = _safe_degraded_answer(handler, request.message)
             degraded_time = (time.perf_counter() - start_time) * 1000
+            history_persisted = await _save_exchange(
+                session_memory, session_id, request.message, degraded_answer
+            )
             degraded_meta = _degraded_metadata(
-                message_id=message_id, trace_id=trace_id, error=str(e)
+                message_id=message_id,
+                trace_id=trace_id,
+                history_persisted=history_persisted,
             )
             # Degraded responses are always sampled (importance sampling).
-            _capture(
+            await _capture(
                 http_request,
                 request.message,
-                degraded.content,
+                degraded_answer,
                 [],
                 "",
                 "degraded",
@@ -919,7 +985,7 @@ async def chat(
                 session_id,
             )
             return ChatResponse(
-                response=degraded.content,
+                response=degraded_answer,
                 session_id=session_id,
                 intent="degraded",
                 sources=[],
@@ -938,7 +1004,19 @@ async def get_chat_history(
 ):
     """Get chat history for a session."""
     try:
-        messages = await session_memory.get_messages(session_id, limit=limit)
+        if hasattr(session_memory, "read_messages"):
+            read_result = await session_memory.read_messages(session_id, limit=limit)
+            if not getattr(read_result, "available", False):
+                raise HTTPException(status_code=503, detail="会话历史暂时不可用，请稍后重试")
+            messages = list(getattr(read_result, "messages", []))
+            complete = bool(getattr(read_result, "complete", False))
+            degraded = bool(getattr(read_result, "degraded", not complete))
+            backend = str(getattr(read_result, "backend", "unknown"))
+        else:
+            messages = await session_memory.get_messages(session_id, limit=limit)
+            complete = False
+            degraded = True
+            backend = "legacy"
 
         # Messages are stored newest-first via lpush; reverse to chronological order
         messages = list(reversed(messages))
@@ -946,7 +1024,7 @@ async def get_chat_history(
         chat_messages = []
         for msg in messages:
             role = "user" if msg.type == "human" else "assistant"
-            ts = (msg.additional_kwargs or {}).pop("_timestamp", None)
+            ts = (msg.additional_kwargs or {}).get("_timestamp")
             chat_messages.append(
                 ChatMessage(
                     role=role,
@@ -959,10 +1037,15 @@ async def get_chat_history(
             session_id=session_id,
             messages=chat_messages,
             total_messages=len(chat_messages),
+            complete=complete,
+            degraded=degraded,
+            backend=backend,
         )
 
+    except HTTPException:
+        raise
     except Exception as e:
-        log.error(f"Failed to get chat history: {e}")
+        log.error("Failed to get chat history: {}", type(e).__name__)
         raise HTTPException(status_code=500, detail="服务暂时不可用，请稍后重试")
 
 
@@ -976,7 +1059,7 @@ async def clear_session(
         await session_memory.clear_session(session_id)
         return {"status": "success", "message": f"Session {session_id} cleared"}
     except Exception as e:
-        log.error(f"Failed to clear session: {e}")
+        log.error("Failed to clear session: {}", type(e).__name__)
         raise HTTPException(status_code=500, detail="服务暂时不可用，请稍后重试")
 
 
@@ -1001,20 +1084,17 @@ async def chat_stream(
 
     async def generate():
         start_time = time.perf_counter()
-        # Per-request identifiers, mirrored into every done-payload metadata so
-        # the frontend can POST /api/feedback with the trace_id needed to drive
-        # the eval flywheel (on_negative_feedback) and the message_id to target
-        # the message. The non-stream chat() path sets the same pair.
         message_id = str(uuid.uuid4())
-        trace_id = (
-            getattr(getattr(request, "state", None), "trace_id", "") or str(uuid.uuid4())[:16]
-        )
+        trace_id = str(uuid.uuid4())[:16]
+        public_emitted = False
         try:
-            # Send session info
             yield _sse({"type": "session", "session_id": session_id})
 
             if _is_identity_capability_query(request.message):
-                answer = _profile().identity_response
+                answer = sanitize_model_text(_profile().identity_response)
+                if not answer:
+                    yield _sse({"type": "error", "message": EMPTY_PUBLIC_MESSAGE})
+                    return
                 yield _sse(
                     {
                         "type": "intent",
@@ -1026,24 +1106,43 @@ async def chat_stream(
                 )
                 yield _sse({"type": "status", "message": "正在返回平台能力说明..."})
                 yield _sse({"type": "token", "content": answer})
-                await session_memory.save_message(session_id, HumanMessage(content=request.message))
-                await session_memory.save_message(session_id, AIMessage(content=answer))
+                public_emitted = True
+                history_persisted = await _save_exchange(
+                    session_memory, session_id, request.message, answer
+                )
+                processing_time_ms = (time.perf_counter() - start_time) * 1000
+                identity_meta = _build_metadata(
+                    route="general_chat",
+                    prompt_profile=_profile().prompt_profile_identity,
+                    message_id=message_id,
+                    trace_id=trace_id,
+                    intent_confidence=1.0,
+                    intent_reasoning="Identity/capability shortcut",
+                    source_count=0,
+                    structured_answer=None,
+                    history_persisted=history_persisted,
+                )
+                await _capture(
+                    None,
+                    request.message,
+                    answer,
+                    [],
+                    "",
+                    "general_chat",
+                    _profile().prompt_profile_identity,
+                    "general_chat",
+                    identity_meta,
+                    processing_time_ms,
+                    trace_id,
+                    session_id,
+                )
                 yield _sse(
                     {
                         "type": "done",
                         "full_response": answer,
                         "sources": [],
-                        "processing_time_ms": (time.perf_counter() - start_time) * 1000,
-                        "metadata": _build_metadata(
-                            route="general_chat",
-                            prompt_profile=_profile().prompt_profile_identity,
-                            message_id=message_id,
-                            trace_id=trace_id,
-                            intent_confidence=1.0,
-                            intent_reasoning="Identity/capability shortcut",
-                            source_count=0,
-                            structured_answer=None,
-                        ),
+                        "processing_time_ms": processing_time_ms,
+                        "metadata": identity_meta,
                     }
                 )
                 return
@@ -1063,38 +1162,98 @@ async def chat_stream(
                 )
                 yield _sse({"type": "status", "message": "正在检索知识库..."})
 
+                parser = IncrementalThinkFilter()
                 full_response = ""
-                sources_data = []
+                terminal_response = ""
+                sources_data: list = []
+                generation_announced = False
+                saw_done = False
                 async for event in fast_generate_stream(request.message):
-                    if event["type"] == "token":
-                        if not full_response:
+                    event_type = event.get("type")
+                    if event_type == "token":
+                        public = parser.push(str(event.get("content", "")))
+                        if public and not generation_announced:
                             yield _sse({"type": "node", "name": "fast_generate"})
                             yield _sse({"type": "status", "message": "正在生成回答..."})
-                        full_response += event["content"]
-                        yield _sse({"type": "token", "content": event["content"]})
-                    elif event["type"] == "done":
+                            generation_announced = True
+                        if public:
+                            full_response += public
+                            public_emitted = True
+                            yield _sse({"type": "token", "content": public})
+                    elif event_type == "error":
+                        yield _sse({"type": "error", "message": "服务暂时不可用，请稍后重试"})
+                        return
+                    elif event_type == "done":
+                        saw_done = True
+                        terminal_response = sanitize_model_text(
+                            str(event.get("full_response", ""))
+                        )
                         sources_data = event.get("sources", [])
 
-                await session_memory.save_message(session_id, HumanMessage(content=request.message))
-                await session_memory.save_message(session_id, AIMessage(content=full_response))
+                tail = parser.finish()
+                if tail:
+                    full_response += tail
+                    public_emitted = True
+                    yield _sse({"type": "token", "content": tail})
+                if not saw_done:
+                    yield _sse({"type": "error", "message": "回答在完成前中断，请重试"})
+                    return
+                if terminal_response:
+                    if not full_response:
+                        full_response = terminal_response
+                        public_emitted = True
+                        yield _sse({"type": "token", "content": terminal_response})
+                    elif terminal_response.startswith(full_response):
+                        suffix = terminal_response[len(full_response) :]
+                        if suffix:
+                            full_response = terminal_response
+                            public_emitted = True
+                            yield _sse({"type": "token", "content": suffix})
+                    elif terminal_response != full_response:
+                        yield _sse({"type": "error", "message": "回答内容不一致，请重试"})
+                        return
+                if not full_response.strip():
+                    yield _sse({"type": "error", "message": EMPTY_PUBLIC_MESSAGE})
+                    return
+
+                history_persisted = await _save_exchange(
+                    session_memory, session_id, request.message, full_response
+                )
 
                 structured_answer = _extract_structured_answer(full_response)
+                processing_time_ms = (time.perf_counter() - start_time) * 1000
+                fast_meta = _build_metadata(
+                    route="fast",
+                    prompt_profile=_profile().prompt_profile_fast,
+                    message_id=message_id,
+                    trace_id=trace_id,
+                    intent_confidence=1.0,
+                    intent_reasoning="Fast mode (no classification)",
+                    source_count=len(sources_data),
+                    structured_answer=structured_answer,
+                    history_persisted=history_persisted,
+                )
+                await _capture(
+                    None,
+                    request.message,
+                    full_response,
+                    sources_data,
+                    "",
+                    "fast",
+                    _profile().prompt_profile_fast,
+                    "rag_query",
+                    fast_meta,
+                    processing_time_ms,
+                    trace_id,
+                    session_id,
+                )
                 yield _sse(
                     {
                         "type": "done",
                         "full_response": full_response,
-                        "sources": sources_data,
-                        "processing_time_ms": (time.perf_counter() - start_time) * 1000,
-                        "metadata": _build_metadata(
-                            route="fast",
-                            prompt_profile=_profile().prompt_profile_fast,
-                            message_id=message_id,
-                            trace_id=trace_id,
-                            intent_confidence=1.0,
-                            intent_reasoning="Fast mode (no classification)",
-                            source_count=len(sources_data),
-                            structured_answer=structured_answer,
-                        ),
+                        "sources": sources_data if request.include_sources else [],
+                        "processing_time_ms": processing_time_ms,
+                        "metadata": fast_meta,
                     }
                 )
                 return
@@ -1131,14 +1290,12 @@ async def chat_stream(
 
             # Step 2: Route based on intent
             if not use_rag:
-                # Direct LLM streaming (no RAG)
                 yield _sse({"type": "status", "message": "正在生成回答..."})
 
                 from models.llm_models import get_llm
 
                 llm = get_llm()
 
-                # Load conversation history for multi-turn context
                 history = await session_memory.get_messages(session_id)
                 history = list(reversed(history))  # oldest-first
 
@@ -1147,45 +1304,65 @@ async def chat_stream(
                     history_msgs.append(hm)
                 history_msgs.append(HumanMessage(content=request.message))
 
+                parser = IncrementalThinkFilter()
                 full_response = ""
                 async for chunk in llm.astream(history_msgs):
                     if hasattr(chunk, "content") and chunk.content:
-                        full_response += chunk.content
-                        yield _sse({"type": "token", "content": chunk.content})
+                        public = parser.push(str(chunk.content))
+                        if public:
+                            full_response += public
+                            public_emitted = True
+                            yield _sse({"type": "token", "content": public})
+                tail = parser.finish()
+                if tail:
+                    full_response += tail
+                    public_emitted = True
+                    yield _sse({"type": "token", "content": tail})
+                if not full_response.strip():
+                    yield _sse({"type": "error", "message": EMPTY_PUBLIC_MESSAGE})
+                    return
 
-                full_response = strip_think_tags(full_response)
-
-                # Save to session
-                await session_memory.save_message(session_id, HumanMessage(content=request.message))
-                await session_memory.save_message(session_id, AIMessage(content=full_response))
+                history_persisted = await _save_exchange(
+                    session_memory, session_id, request.message, full_response
+                )
 
                 structured_answer = _extract_structured_answer(full_response)
+                processing_time_ms = (time.perf_counter() - start_time) * 1000
+                general_meta = _build_metadata(
+                    route="general_chat",
+                    prompt_profile=_profile().prompt_profile_general,
+                    message_id=message_id,
+                    trace_id=trace_id,
+                    intent_confidence=intent_result.confidence,
+                    intent_reasoning=intent_result.reasoning,
+                    source_count=0,
+                    structured_answer=structured_answer,
+                    force_rag=force_rag,
+                    history_persisted=history_persisted,
+                )
+                await _capture(
+                    None,
+                    request.message,
+                    full_response,
+                    [],
+                    "",
+                    "general_chat",
+                    _profile().prompt_profile_general,
+                    intent_result.intent.value,
+                    general_meta,
+                    processing_time_ms,
+                    trace_id,
+                    session_id,
+                )
                 done_payload = {
                     "type": "done",
                     "full_response": full_response,
                     "sources": [],
-                    "processing_time_ms": (time.perf_counter() - start_time) * 1000,
-                    # Inline dict mirrors _build_metadata() for this stream-only
-                    # general_chat branch (F-07). Keys renamed to match the
-                    # centralized contract; section_labels added for UI parity.
-                    "metadata": {
-                        "intent_confidence": intent_result.confidence,
-                        "intent_reasoning": intent_result.reasoning,
-                        "source_count": 0,
-                        "structured_answer": (
-                            structured_answer.model_dump() if structured_answer else None
-                        ),
-                        "section_labels": _active_sections(),
-                        "route": "general_chat",
-                        "prompt_profile": _profile().prompt_profile_general,
-                        "force_rag": force_rag,
-                        "message_id": message_id,
-                        "trace_id": trace_id,
-                    },
+                    "processing_time_ms": processing_time_ms,
+                    "metadata": general_meta,
                 }
 
             else:
-                # RAG pipeline via graph streaming
                 from agent.harness import get_agent_harness
 
                 harness = get_agent_harness()
@@ -1193,16 +1370,16 @@ async def chat_stream(
                 # REQ-CR-001: load compressed history for multi-turn RAG.
                 rag_history = await _load_history_for_rag(session_id, session_memory)
 
+                parser = IncrementalThinkFilter()
                 full_response = ""
+                final_snapshot = ""
                 collected_messages = []
-                # Answer trustworthiness, captured from the generate node's
-                # additional_kwargs (parity with the non-streaming path).
                 gen_confidence = None
                 gen_refused = False
-                # Bug2 Layer ⑤: accumulate the fallback sentinel across node
-                # outputs (F-09: the loop previously ignored shared_state).
                 fallback_general_chat = False
                 generation_evidence = []
+                generation_announced = False
+                generation_failed = False
 
                 async for event in harness.astream(
                     request.message,
@@ -1218,12 +1395,15 @@ async def chat_stream(
                     if isinstance(event, tuple) and len(event) == 2 and event[0] == "custom":
                         custom_event = event[1]
                         if custom_event.get("type") == "token":
-                            token = custom_event.get("content", "")
-                            if not full_response:
+                            public = parser.push(str(custom_event.get("content", "")))
+                            if public and not generation_announced:
                                 yield _sse({"type": "node", "name": "generate"})
                                 yield _sse({"type": "status", "message": "正在生成回答..."})
-                            full_response += token
-                            yield _sse({"type": "token", "content": token})
+                                generation_announced = True
+                            if public:
+                                full_response += public
+                                public_emitted = True
+                                yield _sse({"type": "token", "content": public})
                         continue
 
                     if isinstance(event, tuple) and len(event) == 2:
@@ -1236,7 +1416,8 @@ async def chat_stream(
                         continue
 
                     for node_name, node_output in event.items():
-                        # Bug2 Layer ⑤ sentinel accumulation (F-09).
+                        if not isinstance(node_output, dict):
+                            continue
                         if (node_output.get("shared_state") or {}).get("fallback_general_chat"):
                             fallback_general_chat = True
                         shared_update = node_output.get("shared_state") or {}
@@ -1250,9 +1431,7 @@ async def chat_stream(
                                     yield _sse({"type": "node", "name": "retrieve"})
                                     yield _sse({"type": "status", "message": "正在检索知识库..."})
                                 elif hasattr(msg, "content") and msg.content:
-                                    full_response = msg.content
-                                    yield _sse({"type": "status", "message": "正在生成回答..."})
-                                    yield _sse({"type": "token", "content": full_response})
+                                    final_snapshot = sanitize_model_text(str(msg.content))
 
                         elif node_name == "retrieve":
                             collected_messages.extend(node_output.get("messages", []))
@@ -1270,30 +1449,30 @@ async def chat_stream(
                             messages = node_output.get("messages", [])
                             if messages:
                                 gen_msg = messages[-1]
-                                answer = strip_think_tags(gen_msg.content)
-                                # Capture answer trustworthiness (B4).
+                                final_snapshot = sanitize_model_text(str(gen_msg.content))
                                 ak = getattr(gen_msg, "additional_kwargs", {}) or {}
+                                if ak.get("generation_failed"):
+                                    generation_failed = True
+                                    final_snapshot = ""
                                 if ak.get("confidence") is not None:
                                     gen_confidence = ak.get("confidence")
                                 if ak.get("refused"):
                                     gen_refused = True
-                                if not full_response:
-                                    full_response = answer
-                                    yield _sse({"type": "token", "content": answer})
-                                elif answer.startswith(full_response):
-                                    suffix = answer[len(full_response) :]
-                                    if suffix:
-                                        full_response = answer
-                                        yield _sse({"type": "token", "content": suffix})
-                                else:
-                                    full_response = answer
 
-                # Bug2 Layer ⑤ streaming sentinel takeover (F-07/F-09): the
-                # generate node shunted a misrouted general question (empty
-                # message + fallback_general_chat sentinel). Re-run the
-                # general_chat LLM stream so the user gets a real answer, and
-                # emit the done payload with route=general_chat (NOT rag).
+                tail = parser.finish()
+                if tail:
+                    full_response += tail
+                    public_emitted = True
+                    yield _sse({"type": "token", "content": tail})
+
+                if generation_failed:
+                    yield _sse({"type": "error", "message": "回答生成失败，请重试"})
+                    return
+
                 if fallback_general_chat:
+                    if full_response.strip():
+                        yield _sse({"type": "error", "message": "回答路径发生冲突，请重试"})
+                        return
                     yield _sse({"type": "status", "message": "正在重新组织回答..."})
                     from models.llm_models import get_llm
 
@@ -1303,16 +1482,26 @@ async def chat_stream(
                     history_msgs = [SystemMessage(content=GENERAL_CHAT_SYSTEM_PROMPT)]
                     history_msgs.extend(history)
                     history_msgs.append(HumanMessage(content=request.message))
+                    fallback_parser = IncrementalThinkFilter()
                     full_response = ""
                     async for chunk in llm.astream(history_msgs):
                         if hasattr(chunk, "content") and chunk.content:
-                            full_response += chunk.content
-                            yield _sse({"type": "token", "content": chunk.content})
-                    full_response = strip_think_tags(full_response)
-                    await session_memory.save_message(
-                        session_id, HumanMessage(content=request.message)
+                            public = fallback_parser.push(str(chunk.content))
+                            if public:
+                                full_response += public
+                                public_emitted = True
+                                yield _sse({"type": "token", "content": public})
+                    tail = fallback_parser.finish()
+                    if tail:
+                        full_response += tail
+                        public_emitted = True
+                        yield _sse({"type": "token", "content": tail})
+                    if not full_response.strip():
+                        yield _sse({"type": "error", "message": EMPTY_PUBLIC_MESSAGE})
+                        return
+                    history_persisted = await _save_exchange(
+                        session_memory, session_id, request.message, full_response
                     )
-                    await session_memory.save_message(session_id, AIMessage(content=full_response))
                     processing_time_ms = (time.perf_counter() - start_time) * 1000
                     rag_meta = _build_metadata(
                         route="general_chat",
@@ -1324,6 +1513,21 @@ async def chat_stream(
                         source_count=0,
                         structured_answer=None,
                         force_rag=force_rag,
+                        history_persisted=history_persisted,
+                    )
+                    await _capture(
+                        None,
+                        request.message,
+                        full_response,
+                        [],
+                        "",
+                        "general_chat",
+                        _profile().prompt_profile_general,
+                        "general_chat",
+                        rag_meta,
+                        processing_time_ms,
+                        trace_id,
+                        session_id,
                     )
                     yield _sse(
                         {
@@ -1336,9 +1540,27 @@ async def chat_stream(
                     )
                     return
 
-                # Save to session
-                await session_memory.save_message(session_id, HumanMessage(content=request.message))
-                await session_memory.save_message(session_id, AIMessage(content=full_response))
+                if final_snapshot:
+                    if not full_response:
+                        full_response = final_snapshot
+                        public_emitted = True
+                        yield _sse({"type": "token", "content": final_snapshot})
+                    elif final_snapshot.startswith(full_response):
+                        suffix = final_snapshot[len(full_response) :]
+                        if suffix:
+                            full_response = final_snapshot
+                            public_emitted = True
+                            yield _sse({"type": "token", "content": suffix})
+                    elif final_snapshot != full_response:
+                        yield _sse({"type": "error", "message": "回答内容不一致，请重试"})
+                        return
+                if not full_response.strip():
+                    yield _sse({"type": "error", "message": EMPTY_PUBLIC_MESSAGE})
+                    return
+
+                history_persisted = await _save_exchange(
+                    session_memory, session_id, request.message, full_response
+                )
 
                 sources = (
                     _extract_sources_from_evidence(generation_evidence)
@@ -1363,29 +1585,28 @@ async def chat_stream(
                     force_rag=force_rag,
                     confidence=gen_confidence,
                     refused=gen_refused,
+                    history_persisted=history_persisted,
                 )
-                try:
-                    from agent.eval.capture import maybe_capture_inference
-
-                    maybe_capture_inference(
-                        request_message=request.message,
-                        answer=full_response,
-                        sources=[s.model_dump() for s in sources],
-                        reasoning="",
-                        route="rag",
-                        prompt_profile=_profile().prompt_profile_generate,
-                        intent="rag_query",
-                        metadata=rag_meta,
-                        latency_ms=processing_time_ms,
-                        trace_id=trace_id,
-                        session_id=session_id,
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    log.debug(f"stream inference capture skipped: {exc}")
+                await _capture(
+                    None,
+                    request.message,
+                    full_response,
+                    [s.model_dump() for s in sources],
+                    "",
+                    "rag",
+                    _profile().prompt_profile_generate,
+                    "rag_query",
+                    rag_meta,
+                    processing_time_ms,
+                    trace_id,
+                    session_id,
+                )
                 done_payload = {
                     "type": "done",
                     "full_response": full_response,
-                    "sources": [s.model_dump() for s in sources],
+                    "sources": (
+                        [s.model_dump() for s in sources] if request.include_sources else []
+                    ),
                     "processing_time_ms": processing_time_ms,
                     "metadata": rag_meta,
                 }
@@ -1394,10 +1615,47 @@ async def chat_stream(
             yield _sse(done_payload)
 
         except Exception as e:
-            # Log the full detail server-side, but send the client a generic
-            # message — str(e) may contain internal paths, DB URIs, or stack
-            # internals (B3 information-disclosure hardening).
-            log.error(f"Stream error: {e}", exc_info=True)
+            from core.fallback.circuit_breaker import CircuitBreakerError
+
+            if isinstance(e, CircuitBreakerError) and not public_emitted:
+                from core.fallback.degradation import get_degradation_handler
+
+                answer = _safe_degraded_answer(get_degradation_handler(), request.message)
+                history_persisted = await _save_exchange(
+                    session_memory, session_id, request.message, answer
+                )
+                processing_time_ms = (time.perf_counter() - start_time) * 1000
+                degraded_meta = _degraded_metadata(
+                    message_id=message_id,
+                    trace_id=trace_id,
+                    history_persisted=history_persisted,
+                )
+                await _capture(
+                    None,
+                    request.message,
+                    answer,
+                    [],
+                    "",
+                    "degraded",
+                    "degraded",
+                    "degraded",
+                    degraded_meta,
+                    processing_time_ms,
+                    trace_id,
+                    session_id,
+                )
+                yield _sse({"type": "token", "content": answer})
+                yield _sse(
+                    {
+                        "type": "done",
+                        "full_response": answer,
+                        "sources": [],
+                        "processing_time_ms": processing_time_ms,
+                        "metadata": degraded_meta,
+                    }
+                )
+                return
+            log.error("Stream error: {} trace={}", type(e).__name__, trace_id)
             yield _sse({"type": "error", "message": "服务暂时不可用，请稍后重试"})
 
     return StreamingResponse(

@@ -33,6 +33,7 @@ __all__ = [
     "InferenceRecord",
     "InferenceStore",
     "get_inference_store",
+    "reset_inference_store",
 ]
 
 DEFAULT_DB_PATH = "./data/inferences.db"
@@ -62,7 +63,8 @@ class InferenceRecord:
 class InferenceStore:
     """Thread-safe SQLite store for inference records."""
 
-    def __init__(self, db_path: str = DEFAULT_DB_PATH):
+    def __init__(self, db_path: str | None = None):
+        db_path = db_path or DEFAULT_DB_PATH
         self._db_path = db_path
         self._lock = threading.RLock()
         os.makedirs(os.path.dirname(db_path) or ".", exist_ok=True)
@@ -211,7 +213,11 @@ class InferenceStore:
 
     def close(self) -> None:
         with self._lock:
-            self._conn.close()
+            conn = getattr(self, "_conn", None)
+            if conn is None:
+                return
+            self._conn = None
+            conn.close()
 
 
 _store: InferenceStore | None = None
@@ -226,3 +232,11 @@ def get_inference_store() -> InferenceStore:
             if _store is None:
                 _store = InferenceStore()
     return _store
+
+
+def reset_inference_store() -> None:
+    """Close and clear the process-wide inference store singleton."""
+    global _store
+    if _store is not None:
+        _store.close()
+    _store = None

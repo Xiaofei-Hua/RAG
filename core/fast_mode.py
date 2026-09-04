@@ -22,7 +22,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from core.prompts.profile_prompts import GENERATE_HUMAN_PROMPT, GENERATE_SYSTEM_PROMPT
 from utils.log_utils import log
-from utils.think_tag_utils import strip_think_tags
+from utils.think_tag_utils import IncrementalThinkFilter, strip_think_tags
 
 __all__ = [
     "FastModeResult",
@@ -322,14 +322,25 @@ async def fast_generate_stream(
     chain = _stream_prompt | llm
 
     t1 = time.perf_counter()
+    parser = IncrementalThinkFilter()
     full_response = ""
     async for chunk in chain.astream({"question": query, "context": context}):
         if hasattr(chunk, "content") and chunk.content:
-            full_response += chunk.content
-            yield {"type": "token", "content": chunk.content}
+            public = parser.push(str(chunk.content))
+            if public:
+                full_response += public
+                yield {"type": "token", "content": public}
+    tail = parser.finish()
+    if tail:
+        full_response += tail
+        yield {"type": "token", "content": tail}
     gen_ms = (time.perf_counter() - t1) * 1000
 
-    full_response = strip_think_tags(full_response)
+    full_response = full_response.strip()
+
+    if not full_response:
+        yield {"type": "error", "message": "模型未返回可展示内容，请重试"}
+        return
 
     log.info(f"Fast mode stream done: {len(full_response)} chars, {gen_ms:.0f}ms")
 
