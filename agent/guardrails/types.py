@@ -56,7 +56,9 @@ class GuardrailConfig:
     # When enabled and contexts are available, _check_hallucination uses the
     # LLMJudge instead of the legacy regex; on judge failure it degrades to
     # the regex path so responses are never blocked.
-    enable_grounding_check: bool = _env_bool("GROUNDING_CHECK_ENABLED", True)
+    enable_grounding_check: bool = field(
+        default_factory=lambda: _env_bool("GROUNDING_CHECK_ENABLED", True)
+    )
     grounding_threshold: float = _env_float("GROUNDING_THRESHOLD", 0.5)
     # Faithfulness below this triggers ESCALATE (human review) rather than the
     # softer SANITIZE (append a caveat). Defaults to "fully unsupported".
