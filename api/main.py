@@ -459,7 +459,7 @@ def create_app() -> FastAPI:
             return FileResponse(web_index)
     else:
 
-        @application.get("/", tags=["Root"])
+        @application.get("/", tags=["Root"], include_in_schema=False)
         async def root():
             """Return API information when the frontend has not been built."""
             return await api_info()

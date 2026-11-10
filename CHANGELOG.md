@@ -7,6 +7,11 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Fixed — CI merge readiness
+
+- UI根路径在有/无`web/dist`时均不进入REST OpenAPI；`GET /`行为保留，API信息入口继续为`/api`。
+- 在现有依赖范围内更新前端生产锁文件，修复DOMPurify、Vue服务端渲染及传递依赖的审计问题；未提高版本下限。
+
 ### Added — WSL local deployment (`wsl-local-deployment`)
 
 - Added a standalone Windows 11 + WSL2 Ubuntu 24.04 local-model guide covering pinned tool setup,
