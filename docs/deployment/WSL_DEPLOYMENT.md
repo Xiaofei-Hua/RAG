@@ -324,7 +324,7 @@ chmod +x deploy_wsl.sh deploy.sh deploy_ollama.sh
 2. 从当前 Git commit 建立 `.wsl-deploy/releases/<commit>` inactive release；
 3. 用 `uv sync --frozen --extra local-models` 安装锁定依赖并构建前端；
 4. 下载并验证 BGE-M3 与 bge-reranker-v2-m3；
-5. 确认或拉取 `qwen3:14b`；
+5. 确认或拉取 `qwen3.5:9b`；
 6. 安全安装 loopback Ollama drop-in 与 `rag-platform-wsl.service`；
 7. 验证 systemd、socket、`/live`、`/health`、真实 Ollama generation、Ollama VRAM、Torch GPU
    architecture/CUDA tensor 和必需 MCP registry。
@@ -367,7 +367,7 @@ ollama ps
 - 端口 8000 和 11434 只显示 `127.0.0.1`，不能显示 `0.0.0.0` 或 `[::]`；
 - `/live` 返回 `status: alive`；
 - `/health` 返回 `status: healthy`；若为 `degraded`，部署尚未验收完成；
-- `ollama ps` 显示 `qwen3:14b` 已装入 GPU。
+- `ollama ps` 显示 `qwen3.5:9b` 已装入 GPU。
 
 ### 7.2 Windows checks
 
@@ -825,7 +825,7 @@ query 片段、filter、URL query 或异常文本。
 | `Host` 请求返回 400 | 检查客户端 base URL | 只用 `localhost`/`127.0.0.1`，不要使用 WSL 虚拟 IP |
 | 应用启动失败 | `journalctl -u rag-platform-wsl -n 200 --no-pager` | 修复第一条明确错误后重跑脚本 |
 | Ollama 连接失败 | `journalctl -u ollama -n 200 --no-pager` | 确认服务 active 和 11434 loopback；审阅 drop-in 冲突 |
-| qwen 模型缺失 | `ollama list` | 网络恢复后 `ollama pull qwen3:14b`，再重跑 |
+| qwen 模型缺失 | `ollama list` | 网络恢复后 `ollama pull qwen3.5:9b`，再重跑 |
 | `/api/ps` 无 VRAM | `ollama ps` 和 Ollama journal | 更新 Windows NVIDIA driver；不要接受 CPU fallback 作为成功 |
 | Torch 缺 `sm_120` | 运行脚本显示 arch 错误 | 使用锁中 cu132 wheel；不要降成 CPU success |
 | `/health` 为 degraded | `curl http://127.0.0.1:8000/api/admin/health` | 查看具体 Milvus/embedding/circuit 状态 |

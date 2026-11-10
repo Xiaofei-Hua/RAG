@@ -21,7 +21,7 @@ sudo install -d -m 0755 -o "$USER" -g "$USER" /opt/rag-platform
 ```bash
 cd /opt/rag-platform
 ./deploy.sh --skip-model
-./deploy_ollama.sh --model qwen3:14b
+./deploy_ollama.sh --model qwen3.5:9b
 ```
 
 若需 OCR/Office 解析，分别增加 `--with-ocr`、`--with-doc`。脚本只接受锁定工具链，使用

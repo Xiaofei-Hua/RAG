@@ -30,7 +30,7 @@
 |------|------|
 | Agent 编排 | LangGraph、Harness + Skills + MCP |
 | 后端 API | FastAPI、Uvicorn |
-| LLM | Qwen3:14b、Ollama OpenAI 兼容接口 |
+| LLM | Qwen3.5:9b、Ollama OpenAI 兼容接口 |
 | Embedding | 本地默认 BGE-M3（1024 维，可替换）；API-only 默认 DashScope text-embedding-v3 |
 | 检索 | RetrievalWorkflow、Milvus Lite、BGE-M3 Sparse/BM25、RRF、bge-reranker-v2-m3 |
 | 会话存储 | Redis，可自动降级到 SQLite |
@@ -69,7 +69,7 @@ Fast 模式跳过外层 Agent、Grade 和 Rewrite 节点，但复用同一 `Retr
 - Python 3.10+（开发最低版本；CI 用 3.13 提前发现兼容问题，见 `.github/workflows/`）
 - uv 0.11.8、Node.js 20.20.2、npm 10.8.2（脚本会拒绝漂移版本）
 - [Ollama](https://ollama.com/)
-- 建议至少 16 GB 内存；运行 `qwen3:14b` 建议使用独立显卡
+- 建议至少 16 GB 内存；运行 `qwen3.5:9b` 建议使用独立显卡
 
 Redis 为可选组件。Redis 不可用时，系统会自动使用 SQLite 保存会话。
 
@@ -84,7 +84,7 @@ ollama serve
 然后用仓库脚本准备并核对默认模型：
 
 ```bash
-./deploy_ollama.sh --model qwen3:14b
+./deploy_ollama.sh --model qwen3.5:9b
 ```
 
 可以通过 `ollama list` 确认模型已经就绪。
@@ -108,7 +108,7 @@ DEPLOYMENT_ENV=development
 ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
 OPENAI_BASE_URL=http://localhost:11434/v1
 OPENAI_API_KEY=ollama
-LLM_MODEL=qwen3:14b
+LLM_MODEL=qwen3.5:9b
 LLM_TEMPERATURE=0.0
 LLM_MAX_TOKENS=4096
 
@@ -363,7 +363,7 @@ location /rag/ {
 | `DOMAIN_PROFILES_DIR` | `data/profiles` | immutable domain profile 目录；容器为 `/app/config/profiles` |
 | `OPENAI_BASE_URL` | `http://localhost:11434/v1` | LLM OpenAI 兼容接口 |
 | `OPENAI_API_KEY` | `ollama` | LLM API Key |
-| `LLM_MODEL` | `qwen3:14b` | 问答模型名称 |
+| `LLM_MODEL` | `qwen3.5:9b` | 问答模型名称 |
 | `LLM_TEMPERATURE` | `0.0` | LLM 采样温度 |
 | `LLM_MAX_TOKENS` | `4096` | 单次回答最大生成 token |
 | `LLM_TIMEOUT` | `60` | 单次 LLM 请求超时秒数 |
@@ -925,3 +925,5 @@ proxy 模板。三者的完整契约见 [API-only Docker deployment](docs/deploy
 - [生产运维手册](docs/deployment/operations.md)
 - [Agent Skills 说明](agent/skills/README.md)
 - [测试说明](tests/README.md)
+
+本地9B低延迟RAG的运行时前提、自动选择与回滚见[Bounded Local RAG](docs/deployment/BOUNDED_LOCAL_RAG.md)。

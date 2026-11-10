@@ -18,7 +18,7 @@ curl --fail http://127.0.0.1:11434/api/tags
 ```bash
 cp .env.example .env
 chmod 600 .env
-./deploy_ollama.sh --model qwen3:14b
+./deploy_ollama.sh --model qwen3.5:9b
 ./run.sh --profile local
 ```
 
