@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 
+from agent.guardrails.types import _env_bool
 from utils.log_utils import log
 
 __all__ = ["GroundingResult", "GroundingGuardrail", "check_grounding"]
@@ -95,6 +96,9 @@ class GroundingGuardrail:
         Returns a GroundingResult. ``result.available`` is False when the judge
         could not run (caller should fall back to regex checks). Never raises.
         """
+        if not _env_bool("GROUNDING_CHECK_ENABLED", True):
+            return GroundingResult(None, degraded=True, reason="disabled")
+
         if not answer.strip() or not any(c.strip() for c in contexts):
             return GroundingResult(
                 faithfulness=None, degraded=True, reason="empty answer or contexts"
@@ -174,6 +178,9 @@ class GroundingGuardrail:
         Same reliability contract as ``check``: never raises, returns a
         degraded ``GroundingResult`` on any failure.
         """
+        if not _env_bool("GROUNDING_CHECK_ENABLED", True):
+            return GroundingResult(None, degraded=True, reason="disabled")
+
         if not answer.strip() or not any(c.strip() for c in contexts):
             return GroundingResult(
                 faithfulness=None, degraded=True, reason="empty answer or contexts"

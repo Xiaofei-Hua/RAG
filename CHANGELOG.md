@@ -7,6 +7,10 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Fixed — Grounding disable switch
+
+- 修复 `GROUNDING_CHECK_ENABLED=false` 未阻止生成阶段在线核验的问题；同步/异步入口在获取judge前返回 `None/degraded`，新配置实例读取当前环境，默认继续true。保留来源、PII与结构检查；默认关闭核验未通过真实质量资格，不自动启用。
+
 ### Fixed — CI merge readiness
 
 - UI根路径在有/无`web/dist`时均不进入REST OpenAPI；`GET /`行为保留，API信息入口继续为`/api`。
