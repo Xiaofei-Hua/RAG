@@ -7,6 +7,7 @@ Uses LLM-based structured output for accurate classification.
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -15,6 +16,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
+from models.local_rag_policy import control_kwargs
 from utils.log_utils import log
 
 
@@ -93,10 +95,14 @@ class IntentClassifier:
     @property
     def chain(self):
         """Get the classification chain (lazy initialization)."""
-        if self._chain is None:
+        policy = control_kwargs(self.llm)
+        if self._chain is None or getattr(self, "_control_policy", {}) != policy:
             prompt = ChatPromptTemplate.from_template(INTENT_CLASSIFICATION_PROMPT)
-            structured_llm = self.llm.with_structured_output(IntentResult, method="json_mode")
+            structured_llm = self.llm.with_structured_output(
+                IntentResult, method="json_mode", **policy
+            )
             self._chain = prompt | structured_llm
+            self._control_policy = policy
         return self._chain
 
     # Keyword patterns for fast intent routing (skip LLM). Sourced from the
@@ -125,7 +131,10 @@ class IntentClassifier:
                 confidence=0.9,
                 reasoning="Keyword-based classification",
             )
-        if any(kw in text for kw in self._CHAT_KEYWORDS):
+        if any(
+            re.search(rf"\b{re.escape(kw)}\b", text) if kw.isascii() else kw in text
+            for kw in self._CHAT_KEYWORDS
+        ):
             log.debug("Intent shortcut: general_chat (keyword match)")
             return IntentResult(
                 intent=IntentType.GENERAL_CHAT,

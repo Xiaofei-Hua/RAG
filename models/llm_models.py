@@ -122,12 +122,15 @@ def get_llm(config: LLMConfig | None = None) -> BaseChatModel:
 
         log.info(f"Creating LLM instance: model={cfg.model_name}")
 
+        from models.local_rag_policy import bounded_local_rag
+
+        policy = bounded_local_rag(cfg)
         _llm_instance = ChatOpenAI(
             model=cfg.model_name,
             temperature=cfg.temperature,
             max_tokens=cfg.max_tokens,
             timeout=cfg.timeout,
-            max_retries=cfg.max_retries,
+            max_retries=0 if policy else cfg.max_retries,
             api_key=cfg.api_key,
             base_url=cfg.base_url,
             cache=_llm_cache,

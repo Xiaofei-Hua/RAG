@@ -18,6 +18,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from agent.context.state import get_last_human_message
 from agent.skills.base import BaseSkill, SkillContext, SkillResult, SkillStatus
 from agent.skills.rewrite.prompts import REWRITE_PROMPT
+from models.local_rag_policy import control_kwargs
 from utils.log_utils import log
 from utils.think_tag_utils import strip_think_tags
 
@@ -62,9 +63,13 @@ class RewriteSkill(BaseSkill):
     @property
     def chain(self):
         """Get the rewrite chain (lazy, cached)."""
-        if self._chain is None:
+        policy = control_kwargs(self.llm)
+        if self._chain is None or getattr(self, "_control_policy", {}) != policy:
             prompt = ChatPromptTemplate.from_template(self._skill_config.rewrite_prompt)
-            self._chain = prompt | self.llm | StrOutputParser()
+            self._chain = (
+                prompt | (self.llm.bind(**policy) if policy else self.llm) | StrOutputParser()
+            )
+            self._control_policy = policy
         return self._chain
 
     def execute(self, context: SkillContext) -> SkillResult:
