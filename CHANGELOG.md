@@ -7,6 +7,10 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Changed — Qualified local model
+
+- [breaking] 默认模型由`qwen3:14b`改为`qwen3.5:9b`；已有显式`LLM_MODEL`优先，需旧模型时显式配置即可。新增精确运行时资格选择与可复现格式补丁，策略仍默认legacy，完整生成验证后另行启用auto。
+
 ### Fixed — Grounding disable switch
 
 - 修复 `GROUNDING_CHECK_ENABLED=false` 未阻止生成阶段在线核验的问题；同步/异步入口在获取judge前返回 `None/degraded`，新配置实例读取当前环境，默认继续true。保留来源、PII与结构检查；默认关闭核验未通过真实质量资格，不自动启用。

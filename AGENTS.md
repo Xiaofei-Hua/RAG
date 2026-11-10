@@ -97,7 +97,7 @@ python -c "import api.main; print('OK')"
 
 ## 4. Architecture Overview
 
-企业级**领域自适应** RAG 智能平台（默认领域无关；按 `DOMAIN_PROFILE` 切换/新增领域，仓库自带可选示例 `aviation_phm` profile 用于演示嵌入航空航天领域），**Harness + Skills + MCP** 架构，FastAPI + LangGraph + Qwen3:14b（Ollama）+ Milvus Lite + 可替换 Embedding（本地默认 BGE-M3/1024 维；API-only 默认 DashScope），面向内网/离线/气隙部署。
+企业级**领域自适应** RAG 智能平台（默认领域无关；按 `DOMAIN_PROFILE` 切换/新增领域，仓库自带可选示例 `aviation_phm` profile 用于演示嵌入航空航天领域），**Harness + Skills + MCP** 架构，FastAPI + LangGraph + Qwen3.5:9b（Ollama）+ Milvus Lite + 可替换 Embedding（本地默认 BGE-M3/1024 维；API-only 默认 DashScope），面向内网/离线/气隙部署。
 
 ```
 agent/      # 编排层：harness/skills/context/mcp/eval/guardrails/feedback/memory/metrics

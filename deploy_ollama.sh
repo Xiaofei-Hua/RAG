@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-LLM_MODEL="${LLM_MODEL:-qwen3:14b}"
+LLM_MODEL="${LLM_MODEL:-qwen3.5:9b}"
 OLLAMA_VERSION="0.24.0"
 SKIP_PULL=false
 

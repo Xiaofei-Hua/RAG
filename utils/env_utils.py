@@ -76,7 +76,7 @@ def _resolve_device(name: str, default: str) -> str:
 # LLM: any OpenAI-compatible endpoint.
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "http://localhost:11434/v1")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "ollama")
-LLM_MODEL = os.getenv("LLM_MODEL", "qwen3:14b")
+LLM_MODEL = os.getenv("LLM_MODEL", "qwen3.5:9b")
 LLM_TEMPERATURE = _get_float("LLM_TEMPERATURE", 0.0)
 LLM_MAX_TOKENS = _get_int("LLM_MAX_TOKENS", 4096)
 LLM_TIMEOUT = _get_float("LLM_TIMEOUT", 60.0)

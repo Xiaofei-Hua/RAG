@@ -8,7 +8,7 @@
 | 场景 | LLM | Embedding / Reranker | 入口 | 适用文档 |
 |---|---|---|---|---|
 | 本地开发 | Ollama 或兼容 API | 默认本地 BGE-M3 / 本地 reranker | `run.sh` | [Development](development.md) |
-| Windows + WSL 本地生产 | WSL 内 Ollama `qwen3:14b` | WSL 内本地 BGE-M3 / reranker / GPU | `deploy_wsl.sh` + systemd + localhost | [WSL Complete Guide](WSL_DEPLOYMENT.md) |
+| Windows + WSL 本地生产 | WSL 内 Ollama `qwen3.5:9b` | WSL 内本地 BGE-M3 / reranker / GPU | `deploy_wsl.sh` + systemd + localhost | [WSL Complete Guide](WSL_DEPLOYMENT.md) |
 | 裸机生产 | 本机 Ollama | 本地模型，支持 GPU | systemd + Nginx | [Bare Metal](bare-metal.md) |
 | API-only 容器 | DashScope/OpenAI 兼容服务 | DashScope embedding，无 torch/reranker | Docker + Nginx | [API-only Docker](api-only-docker.md) |
 | 气隙部署 | 目标机已有 Python/Ollama/系统库 | 在线机预打包 uv cache 与模型 | 离线安装器 | [Offline](offline.md) |
