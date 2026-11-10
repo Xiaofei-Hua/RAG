@@ -11,6 +11,11 @@ starting from 0.1.0.
 
 - 修复 `GROUNDING_CHECK_ENABLED=false` 未阻止生成阶段在线核验的问题；同步/异步入口在获取judge前返回 `None/degraded`，新配置实例读取当前环境，默认继续true。保留来源、PII与结构检查；默认关闭核验未通过真实质量资格，不自动启用。
 
+### Fixed — CI merge readiness
+
+- UI根路径在有/无`web/dist`时均不进入REST OpenAPI；`GET /`行为保留，API信息入口继续为`/api`。
+- 在现有依赖范围内更新前端生产锁文件，修复DOMPurify、Vue服务端渲染及传递依赖的审计问题；未提高版本下限。
+
 ### Added — WSL local deployment (`wsl-local-deployment`)
 
 - Added a standalone Windows 11 + WSL2 Ubuntu 24.04 local-model guide covering pinned tool setup,
