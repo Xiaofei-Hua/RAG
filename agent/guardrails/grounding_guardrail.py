@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 
 from agent.guardrails.types import _env_bool
+from models.local_rag_policy import bounded_local_rag
 from utils.log_utils import log
 
 __all__ = ["GroundingResult", "GroundingGuardrail", "check_grounding"]
@@ -96,6 +97,8 @@ class GroundingGuardrail:
         Returns a GroundingResult. ``result.available`` is False when the judge
         could not run (caller should fall back to regex checks). Never raises.
         """
+        if bounded_local_rag():
+            return GroundingResult(None, degraded=True, reason="bounded_policy")
         if not _env_bool("GROUNDING_CHECK_ENABLED", True):
             return GroundingResult(None, degraded=True, reason="disabled")
 
@@ -178,6 +181,8 @@ class GroundingGuardrail:
         Same reliability contract as ``check``: never raises, returns a
         degraded ``GroundingResult`` on any failure.
         """
+        if bounded_local_rag():
+            return GroundingResult(None, degraded=True, reason="bounded_policy")
         if not _env_bool("GROUNDING_CHECK_ENABLED", True):
             return GroundingResult(None, degraded=True, reason="disabled")
 

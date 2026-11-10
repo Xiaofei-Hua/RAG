@@ -125,9 +125,25 @@ class GuardrailManager:
             if hasattr(context, "shared_state"):
                 cached_faith = context.shared_state.get("grounding_faithfulness")
 
-            guard_result = self.check_output(
-                content, sources, contexts=contexts, cached_faith=cached_faith
-            )
+            from models.local_rag_policy import bounded_local_rag
+
+            try:
+                guard_result = self.check_output(
+                    content, sources, contexts=contexts, cached_faith=cached_faith
+                )
+            except Exception:
+                if not bounded_local_rag():
+                    raise
+                last_msg.content = "本次回答未能完成输出检查，请重试。"
+                result.metadata["output_check_degraded"] = True
+                return
+            if bounded_local_rag() and guard_result.action in {
+                GuardrailAction.BLOCK,
+                GuardrailAction.ESCALATE,
+            }:
+                last_msg.content = "现有资料不足以支持完整回答，请核对原始资料后重试。"
+                result.metadata["output_check_degraded"] = True
+                return
 
             if guard_result.action == GuardrailAction.SANITIZE:
                 if guard_result.sanitized_content is not None:

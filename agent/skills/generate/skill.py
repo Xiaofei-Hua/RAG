@@ -26,7 +26,9 @@ from agent.skills.generate.prompts import (
     GENERATE_HUMAN_PROMPT,
     GENERATE_SYSTEM_PROMPT,
 )
+from core.local_rag_generation import generation_chain
 from core.prompts.domain_profile import get_active_profile
+from models.local_rag_policy import bounded_local_rag
 from utils.log_utils import log
 from utils.think_tag_utils import strip_think_tags
 
@@ -108,6 +110,8 @@ class GenerateSkill(BaseSkill):
     @property
     def chain(self):
         """Get the generation chain (lazy, cached)."""
+        if bounded_local_rag(self.llm):
+            return generation_chain(self.llm)
         if self._chain is None:
             prompt = ChatPromptTemplate.from_messages(
                 [
@@ -218,9 +222,21 @@ class GenerateSkill(BaseSkill):
         shared_state["sources"] = grounding_sources
 
         # Generate with retry
-        for attempt in range(self._skill_config.max_retries + 1):
+        for attempt in range(
+            1 if bounded_local_rag(self.llm) else self._skill_config.max_retries + 1
+        ):
             try:
-                answer, reasoning = self._invoke_with_reasoning(question, ctx)
+                if bounded_local_rag(self.llm):
+                    answer = self.chain.invoke(
+                        {
+                            "question": question,
+                            "context": ctx,
+                            "sources": [item["source"] for item in prepared["evidence"]],
+                        }
+                    )
+                    reasoning = ""
+                else:
+                    answer, reasoning = self._invoke_with_reasoning(question, ctx)
                 answer = strip_think_tags(answer)
 
                 # Grounding faithfulness (best-effort; None when judge down).
@@ -299,7 +315,7 @@ class GenerateSkill(BaseSkill):
 
             except Exception as e:
                 log.warning(f"Generate attempt {attempt + 1} failed: {e}")
-                if attempt < self._skill_config.max_retries:
+                if not bounded_local_rag(self.llm) and attempt < self._skill_config.max_retries:
                     time.sleep(self._skill_config.retry_delay * (attempt + 1))
                 else:
                     return SkillResult(
@@ -571,15 +587,24 @@ class GenerateSkill(BaseSkill):
         shared_state["sources"] = grounding_sources
 
         writer = get_stream_writer()
-        for attempt in range(self._skill_config.max_retries + 1):
+        for attempt in range(
+            1 if bounded_local_rag(self.llm) else self._skill_config.max_retries + 1
+        ):
             try:
                 chunks: list[str] = []
-                async for chunk in self.chain.astream({"question": question, "context": ctx}):
+                async for chunk in self.chain.astream(
+                    {
+                        "question": question,
+                        "context": ctx,
+                        "sources": [item["source"] for item in prepared["evidence"]],
+                    }
+                ):
                     text = str(chunk)
                     if not text:
                         continue
                     chunks.append(text)
-                    writer({"type": "token", "content": text, "node": self.name})
+                    if not bounded_local_rag(self.llm):
+                        writer({"type": "token", "content": text, "node": self.name})
 
                 answer = strip_think_tags("".join(chunks))
                 # Grounding + confidence (best-effort). Async path fans out
@@ -631,7 +656,7 @@ class GenerateSkill(BaseSkill):
                 )
             except Exception as e:
                 log.warning(f"Async generate attempt {attempt + 1} failed: {e}")
-                if attempt < self._skill_config.max_retries:
+                if not bounded_local_rag(self.llm) and attempt < self._skill_config.max_retries:
                     await asyncio.sleep(self._skill_config.retry_delay * (attempt + 1))
                     continue
                 elapsed = (time.perf_counter() - start) * 1000

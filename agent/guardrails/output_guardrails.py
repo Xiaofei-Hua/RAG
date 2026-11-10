@@ -120,7 +120,13 @@ class OutputGuardrail:
             return GuardrailResult(action=GuardrailAction.ALLOW)
 
         # --- Mode 1: semantic grounding (NLI) ---
-        if self._config.enable_grounding_check and (contexts or cached_faith is not None):
+        from models.local_rag_policy import bounded_local_rag
+
+        if (
+            self._config.enable_grounding_check
+            and not bounded_local_rag()
+            and (contexts or cached_faith is not None)
+        ):
             try:
                 # Use the cached verdict when available; otherwise compute it.
                 supported = total = None
