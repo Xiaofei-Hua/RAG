@@ -7,9 +7,11 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
-### Changed — Qualified local model
+### Changed — Bounded local RAG
 
-- [breaking] 默认模型由`qwen3:14b`改为`qwen3.5:9b`；已有显式`LLM_MODEL`优先，需旧模型时显式配置即可。新增精确运行时资格选择与可复现格式补丁，策略仍默认legacy，完整生成验证后另行启用auto。
+- [breaking] 默认模型由`qwen3:14b`改为`qwen3.5:9b`；已有显式`LLM_MODEL`优先，需旧模型时显式配置即可。
+- [breaking] 新增默认`LOCAL_RAG_POLICY=auto`：仅已验证本地9B/general/`0.24.0-format-backport`选择有界单次JSON作答，控制调用256、最终生成2048、无在线逐句judge，grounding保持`None/degraded`；其他配置维持legacy。设置`legacy`并重启应用回滚，部署/引擎补丁见`docs/deployment/BOUNDED_LOCAL_RAG.md`。
+- 修复明确比较结论、正文来源映射、检查前流式草稿泄露及英文`which/this/within`误命中`hi`招呼的问题；完整质量/延迟证据及现有Fast检索覆盖限制见`docs/specs/bounded-local-rag/results.md`。
 
 ### Fixed — Grounding disable switch
 

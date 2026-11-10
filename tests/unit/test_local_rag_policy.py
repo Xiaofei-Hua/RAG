@@ -30,7 +30,7 @@ def test_default_model_is_qwen35():
 def test_auto_requires_the_qualified_server_and_caches_it(monkeypatch, version, expected):
     import models.local_rag_policy as policy
 
-    monkeypatch.setenv("LOCAL_RAG_POLICY", "auto")
+    monkeypatch.delenv("LOCAL_RAG_POLICY", raising=False)
     monkeypatch.setenv("DOMAIN_PROFILE", "general")
     source = SimpleNamespace(model_name="qwen3.5:9b", base_url="http://127.0.0.1:11434/v1")
     calls = []
