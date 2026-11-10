@@ -512,6 +512,12 @@ def _build_metadata(
         confidence_level if confidence_level is not None else _confidence_level(confidence)
     )
     meta["refused"] = refused
+    from models.local_rag_policy import bounded_local_rag
+
+    if route in {"fast", "rag"} and bounded_local_rag():
+        meta.update(
+            generation_policy="bounded", grounding_faithfulness=None, confidence_degraded=True
+        )
     return meta
 
 

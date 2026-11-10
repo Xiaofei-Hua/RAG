@@ -20,7 +20,9 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 
+from core.local_rag_generation import UNAVAILABLE_ANSWER, finalize_answer, generation_chain
 from core.prompts.profile_prompts import GENERATE_HUMAN_PROMPT, GENERATE_SYSTEM_PROMPT
+from models.local_rag_policy import bounded_local_rag
 from utils.log_utils import log
 from utils.think_tag_utils import strip_think_tags
 
@@ -146,6 +148,8 @@ _FAST_HUMAN_PROMPT = GENERATE_HUMAN_PROMPT.rstrip() + "\n\n/no_think"
 def _get_chain(llm: BaseChatModel):
     """Build the generate chain (cached across calls)."""
     global _chain
+    if bounded_local_rag(llm):
+        return generation_chain(llm)
     if _chain is None:
         prompt = ChatPromptTemplate.from_messages(
             [
@@ -230,7 +234,24 @@ def fast_generate(
     chain = _get_chain(llm)
 
     t1 = time.perf_counter()
-    answer = chain.invoke({"question": query, "context": context})
+    try:
+        answer = chain.invoke(
+            {
+                "question": query,
+                "context": context,
+                "sources": [d.metadata.get("source", "") for d in kept_documents],
+            }
+        )
+    except Exception as exc:
+        if not bounded_local_rag(llm):
+            raise
+        log.warning(f"Bounded generation failed: {type(exc).__name__}")
+        answer = UNAVAILABLE_ANSWER
+    answer = finalize_answer(
+        answer,
+        [d.metadata.get("source", "") for d in kept_documents],
+        [d.page_content for d in kept_documents],
+    )
     answer = strip_think_tags(answer)
     gen_ms = (time.perf_counter() - t1) * 1000
 
@@ -319,14 +340,35 @@ async def fast_generate_stream(
     from models.llm_models import get_llm
 
     llm = get_llm()
-    chain = _stream_prompt | llm
+    bounded = bounded_local_rag(llm)
+    chain = generation_chain(llm) if bounded else _stream_prompt | llm
 
     t1 = time.perf_counter()
     full_response = ""
-    async for chunk in chain.astream({"question": query, "context": context}):
-        if hasattr(chunk, "content") and chunk.content:
-            full_response += chunk.content
-            yield {"type": "token", "content": chunk.content}
+    try:
+        async for chunk in chain.astream(
+            {
+                "question": query,
+                "context": context,
+                "sources": [d.metadata.get("source", "") for d in kept_documents],
+            }
+        ):
+            content = str(chunk) if bounded else getattr(chunk, "content", "")
+            if content:
+                full_response += content
+                if not bounded:
+                    yield {"type": "token", "content": content}
+    except Exception:
+        if not bounded:
+            raise
+        full_response = UNAVAILABLE_ANSWER
+    if bounded:
+        full_response = finalize_answer(
+            full_response,
+            [d.metadata.get("source", "") for d in kept_documents],
+            [d.page_content for d in kept_documents],
+        )
+        yield {"type": "token", "content": full_response}
     gen_ms = (time.perf_counter() - t1) * 1000
 
     full_response = strip_think_tags(full_response)
@@ -391,7 +433,25 @@ async def fast_generate_async(
     from models.llm_models import get_llm
 
     t1 = time.perf_counter()
-    answer = await _get_chain(get_llm()).ainvoke({"question": query, "context": context})
+    llm = get_llm()
+    try:
+        answer = await _get_chain(llm).ainvoke(
+            {
+                "question": query,
+                "context": context,
+                "sources": [d.metadata.get("source", "") for d in kept_documents],
+            }
+        )
+    except Exception as exc:
+        if not bounded_local_rag(llm):
+            raise
+        log.warning(f"Bounded generation failed: {type(exc).__name__}")
+        answer = UNAVAILABLE_ANSWER
+    answer = finalize_answer(
+        answer,
+        [d.metadata.get("source", "") for d in kept_documents],
+        [d.page_content for d in kept_documents],
+    )
     answer = strip_think_tags(answer)
     generation_ms = (time.perf_counter() - t1) * 1000
     return FastModeResult(
