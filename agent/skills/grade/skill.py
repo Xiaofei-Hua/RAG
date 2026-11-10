@@ -19,6 +19,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from agent.context.state import Grade, get_last_human_message
 from agent.skills.base import BaseSkill, SkillContext, SkillResult, SkillStatus
 from agent.skills.grade.prompts import GRADE_HUMAN_PROMPT, GRADE_SYSTEM_PROMPT
+from models.local_rag_policy import control_kwargs
 from utils.log_utils import log
 
 __all__ = ["GradeSkill", "GradeSkillConfig"]
@@ -62,8 +63,11 @@ class GradeSkill(BaseSkill):
     @property
     def chain(self):
         """Get the grading chain (lazy, cached)."""
-        if self._chain is None:
-            llm_with_structured = self.llm.with_structured_output(Grade, method="json_mode")
+        policy = control_kwargs(self.llm)
+        if self._chain is None or getattr(self, "_control_policy", {}) != policy:
+            llm_with_structured = self.llm.with_structured_output(
+                Grade, method="json_mode", **policy
+            )
             prompt = ChatPromptTemplate.from_messages(
                 [
                     ("system", self._skill_config.grade_system_prompt),
@@ -71,6 +75,7 @@ class GradeSkill(BaseSkill):
                 ]
             )
             self._chain = prompt | llm_with_structured
+            self._control_policy = policy
         return self._chain
 
     def execute(self, context: SkillContext) -> SkillResult:

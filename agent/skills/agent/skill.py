@@ -19,6 +19,7 @@ from langchain_core.tools import BaseTool
 
 from agent.skills.agent.prompts import AGENT_SYSTEM_PROMPT
 from agent.skills.base import BaseSkill, SkillContext, SkillResult, SkillStatus
+from models.local_rag_policy import control_kwargs
 from utils.log_utils import log
 
 __all__ = ["AgentSkill", "AgentSkillConfig"]
@@ -75,8 +76,10 @@ class AgentSkill(BaseSkill):
     @property
     def bound_model(self):
         """Get model with tools bound (lazy, cached)."""
-        if self._bound_model is None:
-            self._bound_model = self.llm.bind_tools(self.tools)
+        policy = control_kwargs(self.llm)
+        if self._bound_model is None or getattr(self, "_control_policy", {}) != policy:
+            self._bound_model = self.llm.bind_tools(self.tools, **policy)
+            self._control_policy = policy
         return self._bound_model
 
     def execute(self, context: SkillContext) -> SkillResult:

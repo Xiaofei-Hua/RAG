@@ -682,3 +682,90 @@ class _FakeIntentClassifier:
         return IntentResult(
             intent=IntentType.GENERAL_CHAT, confidence=0.7, reasoning="fake default"
         )
+
+
+@pytest.fixture
+def bounded_local_model(monkeypatch):
+    import json
+
+    import httpx
+    from langchain_openai import ChatOpenAI
+
+    from core import fast_mode
+
+    monkeypatch.setenv("LOCAL_RAG_POLICY", "bounded")
+    monkeypatch.setenv("LLM_MODEL", "qwen3.5:9b")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://127.0.0.1:11434/v1")
+    monkeypatch.setenv("DOMAIN_PROFILE", "general")
+    monkeypatch.setattr(fast_mode, "_chain", None)
+    calls = []
+    output = {
+        "text": json.dumps(
+            {
+                "basis": [{"text": "正常连续使用时每120个日历日校准。", "source_ids": [1]}],
+                "conditions": [],
+                "conclusion": {
+                    "text": "正常连续使用时，校准周期为120个日历日。",
+                    "source_ids": [1],
+                },
+            },
+            ensure_ascii=False,
+        ),
+        "finish": "stop",
+    }
+
+    def respond(request):
+        body = json.loads(request.content)
+        calls.append(body)
+        message = {"role": "assistant", "content": output["text"]}
+        if body.get("tools"):
+            name = body["tools"][0]["function"]["name"]
+            message = {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "r1",
+                        "type": "function",
+                        "function": {"name": name, "arguments": json.dumps({"query": "校准周期"})},
+                    }
+                ],
+            }
+        elif body.get("response_format", {}).get("type") == "json_object":
+            message["content"] = '{"binary_score":"yes"}'
+            if "分类" in str(body["messages"]) or "intent" in str(body["messages"]):
+                message["content"] = '{"intent":"rag_query","confidence":0.99}'
+        if body.get("stream"):
+            chunks = [
+                {"choices": [{"index": 0, "delta": message, "finish_reason": None}]},
+                {"choices": [{"index": 0, "delta": {}, "finish_reason": output["finish"]}]},
+            ]
+            text = "".join("data: " + json.dumps(c) + "\n\n" for c in chunks)
+            return httpx.Response(
+                200, headers={"content-type": "text/event-stream"}, text=text + "data: [DONE]\n\n"
+            )
+        return httpx.Response(
+            200,
+            json={
+                "id": "test-local",
+                "model": "qwen3.5:9b",
+                "choices": [{"index": 0, "message": message, "finish_reason": output["finish"]}],
+            },
+        )
+
+    transport = httpx.MockTransport(respond)
+    client = httpx.Client(transport=transport)
+    async_client = httpx.AsyncClient(transport=transport)
+    model = ChatOpenAI(
+        model="qwen3.5:9b",
+        base_url="http://127.0.0.1:11434/v1",
+        api_key="ollama",
+        temperature=0,
+        max_tokens=4096,
+        max_retries=0,
+        http_client=client,
+        http_async_client=async_client,
+    )
+    yield model, calls, output
+    client.close()
+    asyncio.run(async_client.aclose())
