@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 
 
 def bounded_local_rag(source=None) -> bool:
-    policy = os.getenv("LOCAL_RAG_POLICY", "legacy").lower()
+    policy = os.getenv("LOCAL_RAG_POLICY", "auto").lower()
     if policy not in {"bounded", "auto"}:
         return False
     from core.prompts.domain_profile import get_active_profile
