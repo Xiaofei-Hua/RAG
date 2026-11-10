@@ -1,6 +1,6 @@
 # Code Defender — Grounding Disable Hot Path
 
-**Review date**: 2026-11-10。  
+**Review date**: 2026-11-10。
 **Scope**: 发布树实际 diff、集成树对应适配、`test_grounding_switch.py`、`test_grounding_switch_api.py`、disabled golden 与已落盘红绿日志。未读取本轮 code critic 意见，未运行测试或模型。
 
 ## Decision

@@ -1,7 +1,7 @@
 # Critic — Grounding Disable Hot Path
 
-**评审对象**：requirements.md / design.md v1 / tasks.md；发布树 `/home/outsiderzz/Projects/RAG-grounding-switch`，并核对集成树对应入口。  
-**评审模式**：完整 critic，热路径降级与置信度边界。  
+**评审对象**：requirements.md / design.md v1 / tasks.md；发布树 `/home/outsiderzz/Projects/RAG-grounding-switch`，并核对集成树对应入口。
+**评审模式**：完整 critic，热路径降级与置信度边界。
 **评审日期**：2026-11-10。
 
 ## Decision

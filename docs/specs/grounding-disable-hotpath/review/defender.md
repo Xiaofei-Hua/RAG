@@ -1,7 +1,7 @@
 # Defender — Grounding Disable Hot Path
 
-**Review date**: 2026-11-10。  
-**Review target**: requirements / design v1 / tasks；发布树 `RAG-grounding-switch` 与集成树 `RAG-readiness` 的实际 grounding、Generate 和输出检查入口。  
+**Review date**: 2026-11-10。
+**Review target**: requirements / design v1 / tasks；发布树 `RAG-grounding-switch` 与集成树 `RAG-readiness` 的实际 grounding、Generate 和输出检查入口。
 **Independence**: 先独立读取规格、相关规范和两树代码，再读取本轮 `review/critic.md`；未以 critic 结论代替核验。未运行模型或测试，仅写本报告。
 
 ## Decision

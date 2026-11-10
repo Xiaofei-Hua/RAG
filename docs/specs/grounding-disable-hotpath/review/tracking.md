@@ -1,20 +1,17 @@
 # Tracking
 
-独立设计critic/defender均0发现，编码前设计已通过。代码critic的唯一Medium测试适配问题已闭环；没有未解决Critical/High项。真实质量与配置默认决策仍独立等待既定24槽结果。
+设计阶段critic/defender独立并行评审，无Critical/High，先完成设计后编码。代码评审发现的测试清理兼容问题已修复；真实模型策略资格失败与代码bugfix分开裁决。
 
-## Findings
-
-| ID | Severity | Decision | Fix commit | Verification | Regression | Status |
+| ID | Severity | Resolution | Commit / Alternative | Verification | Regression | Status |
 | --- | --- | --- | --- | --- | --- | --- |
-| F-GDH-C01 | Medium，仅测试清理 | 接受：旧发布树没有reset接口；测试改用现有锁下close/清空，未新增生产API | release `de1a474e85b4c953fc0b132b922e75ed2041b704`；current `24d0a974f7398f30720382485150ce44c86d98c4` | release `validation/backend-matrix-final.log`：1182 passed/6 skipped/3 warnings；current `validation/e2e-final.log`：2 passed | `tests/e2e/test_grounding_switch_api.py::test_disabled_grounding_chat_api[False]` / `[True]`；首轮2 teardown ERROR留在`validation/backend-matrix.log` | closed |
+| F-GDH-C01 | Medium | 测试清理不再引用旧main不存在的reset函数，关闭并清空已有采样器 | de1a474；发布验证归档1a4507c | 发布1182通过，当前集成2768通过；清理适配后API两例再过 | tests/e2e/test_grounding_switch_api.py | closed |
+| RQ-D01 | High | 候选发布共有生成错误，且第二轮同题生成超时；不继续默认关闭资格 | de1a474保留默认true；按设计停止，holdout不运行，详见results.md | 实际12终态与1部分尝试；两份独立real-quality评审，B为6合格/1错误/1不可用 | test_grounding_switch.py保留未设/true启用路径；原失败原文保存于real-model-evidence.tar.gz | defended-with-alternative |
 
-## Requirements
-
-| Requirement | Verification | Status |
+| Requirement | Evidence | Status |
 | --- | --- | --- |
-| REQ-001/002 | 单元23红/10通过→定向62绿；同步/异步/wrapper与disabled golden；release完整1182通过 | code verified |
-| REQ-003 | 实际Generate/Output组件的JSON/SSE与单元断言：NLI零调用、None/降级、来源与PII保留；fixture修后复验通过 | code verified；不冒称完整LangGraph或旧main检查后发布 |
-| REQ-004 | current完整2768 passed/6 skipped/3 warnings；真实开发16+独立留出8，共24QA计划 | code matrix verified；real quality/default decision pending |
-| REQ-005 | 独立origin/main分支已有release修复提交，current另行适配 | local commits complete；remote verification pending |
+| REQ-001/002 | 单元sync/async/wrapper红→绿、配置读取时机、golden不可用语义 | fulfilled |
+| REQ-003 | 真实GenerateSkill与输出护栏的JSON/SSE测试，来源与PII检查保留 | fulfilled |
+| REQ-004 | 两工作树矩阵通过；真实A+B+B多轮发现质量失败并停止 | partial：不宣称AB/BA或留出合格，默认保持true |
+| REQ-005 | 聚焦origin/main的fix/grounding-disable-hotpath，PR #4；同修复集成当前工作树 | pushed；当前集成树已适配 |
 
-2026-11-10：critic仅读取既有日志/提交并更新本记录，未运行测试、模型或修改正在执行的实验。默认GROUNDING_CHECK_ENABLED仍true。
+GitHub已有后端首页表契约及UI依赖审计失败在validation/tests.md单列，不以本地通过替代远端状态，也不增加无关实现来掩盖。
