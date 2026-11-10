@@ -7,7 +7,7 @@
 
 **当前生产实现无新增 Critical/High 阻断，符合已批准的最小设计。** 发布树生产 diff 只有两个文件、10 行新增/1 行删除：GroundingGuardrail 导入既有布尔解析器并在 sync/async 两入口提前返回；GuardrailConfig 的一个字段改为 default_factory。集成树只在共用 `_prepare` 增加同一判断。没有改 prompt、生成预算、默认值、输出护栏或离线 judge。
 
-可以按既定计划完成剩余矩阵和真实 24 QA；代码评审通过不等于测试矩阵已经通过，更不构成默认关闭许可。首次全量存在测试问题，当前 fixture 已修订，最终测试证据须覆盖该修订。
+两树最终测试矩阵现已通过，并覆盖修订后的 fixture；原失败时序保留如下。代码与测试通过不构成默认关闭许可，真实 24 QA 的质量/性能结论仍待既定测量。
 
 ## Implementation Verification
 
@@ -41,8 +41,16 @@
 
 首次全量的 teardown 直接导入 `reset_inference_store`，但发布树 `agent/eval/inference_store.py` 仅有 get/close，没有集成树新增的 reset helper。独立核对时，主 Agent 已将当前 fixture 修为在既有 `_store_lock` 内 close 并清空 `_store`；两树当前 fixture 一致，此修正适配旧接口，**不需扩大生产代码回移 reset helper**。
 
-当前 fixture 修改晚于上述定向 green 日志，因此那两份 62 passed 不能被称为覆盖最终 fixture 的验证。等待主 Agent 归档新矩阵即可；本 defender 不重跑，也不因旧 WSL 文档测试失败扩大本轮业务修复。
+当前 fixture 修改晚于上述定向 green 日志，因此那两份 62 passed 仅作为初期快照保留。后续最终日志已独立读取，补齐最终 fixture 和完整矩阵证据；本 defender 未重跑或扩大业务范围。
+
+| Final evidence | Observed result | Scope |
+|---|---|---|
+| 发布树 `validation/backend-matrix-final.log` | **1182 passed / 6 skipped / 3 warnings，58.73 s** | 修复提交 `de1a474`；旧全量失败不再作为当前结果。 |
+| 集成树 `validation/backend-matrix.log` | **2768 passed / 6 skipped / 3 warnings，154.65 s** | 适配提交 `24d0a97`，沿用当前集成接口与既有回归。 |
+| 集成树 `validation/e2e-final.log` | **2 passed，2.40 s** | fixture 调整后的 JSON/SSE 用例通过。 |
+
+最终两份矩阵日志均显示既有 Swig / jieba 相关 warning；不能报告为零 warning。没有把早期 ResourceWarning 或 teardown ImportError 从历史记录中删除。
 
 ## Final Disposition
 
-没有当前仍需改动的生产代码 finding。测试清理适配已在当前源码落实，但其最终 green 与完整矩阵结果尚需主 Agent 登记；旧失败应保留。默认 true、来源/PII 与未核验语义保持，允许在这些边界内完成交付验证。真实 A/B 的延迟、可用性和逐题质量不得由本代码评审或 mock 测试代替。
+没有当前仍需改动的生产代码 finding。测试清理适配与两树完整矩阵的最终 green 已核对，代码评审和测试证据现已闭合；旧失败继续保留。默认 true、来源/PII 与未核验语义保持。真实 A/B 的延迟、可用性和逐题质量仍待独立结果审阅，不由代码评审或 mock 测试代替。
