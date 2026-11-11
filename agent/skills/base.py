@@ -54,6 +54,8 @@ class SkillContext:
     rewrite_count: int = 0
     max_rewrites: int = 3
     trace_id: str | None = None
+    output_checker: Any = field(default=None, repr=False)
+    checked_output: str | None = field(default=None, repr=False)
 
     @property
     def last_human_message(self) -> HumanMessage | None:

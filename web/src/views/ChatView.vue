@@ -103,6 +103,10 @@
             <template v-else-if="msg.content">
               <div class="message-content markdown-content" v-html="renderMarkdown(msg.content)"></div>
             </template>
+            <p v-if="msg.role === 'assistant' && !msg.isStreaming && msg.metadata?.generation_complete === false"
+              class="completion-notice" data-testid="generation-incomplete" role="status">
+              {{ msg.metadata?.status === 'busy' ? '模型繁忙，可稍后重试。' : msg.metadata?.reason === 'cancelled' ? '已停止，保留已显示内容。' : '回答未完成，可重试或补充资料。' }}
+            </p>
             <div
               v-if="msg.role === 'assistant' && !msg.isStreaming && shouldShowModeCard(msg)"
               class="mode-card"
@@ -232,7 +236,8 @@
               <span class="char-count">{{ inputText.length }} / 2000</span>
             </div>
             <div class="right-actions">
-              <button
+              <button v-if="chatStore.isStreaming" class="btn-send" @click="chatStore.stopStreaming()" data-testid="chat-stop">停止</button>
+              <button v-else
                 class="btn-send"
                 @click="handleSend"
                 :disabled="!inputText.trim() || chatStore.isLoading || chatStore.isStreaming || uploadStore.isUploading"
@@ -1080,6 +1085,13 @@ watch(
   font-size: 12px;
   color: var(--neutral-700);
   line-height: 1.5;
+}
+
+.completion-notice {
+  color: var(--text-secondary);
+  border-left: 3px solid #d39b34;
+  padding-left: 10px;
+  font-size: 0.875rem;
 }
 
 .processing-time {

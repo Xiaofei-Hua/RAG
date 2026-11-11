@@ -28,6 +28,7 @@ from agent.skills.generate.prompts import (
 )
 from core.local_rag_generation import generation_chain
 from core.prompts.domain_profile import get_active_profile
+from core.segmented_generation import generation_outcome, segmented_enabled, stream_answer
 from models.local_model_queue import ModelBusyError
 from models.local_rag_policy import bounded_local_rag
 from utils.log_utils import log
@@ -76,6 +77,7 @@ REFUSAL_MESSAGE = _refusal_message()
 def _cleared_generation_state(*, fallback_general_chat: bool = False) -> dict[str, Any]:
     return {
         "generation_evidence": [],
+        "generation_outcome": generation_outcome(False, "no_generation"),
         "relevance_scores": [],
         "retrieved_contexts": [],
         "sources": [],
@@ -231,6 +233,7 @@ class GenerateSkill(BaseSkill):
                     answer = self.chain.invoke(
                         {
                             "question": question,
+                            "rewrite_count": context.rewrite_count,
                             "context": ctx,
                             "sources": [item["source"] for item in prepared["evidence"]],
                         }
@@ -246,6 +249,7 @@ class GenerateSkill(BaseSkill):
                 # check_grounding) can reuse it instead of paying for a second
                 # per-claim judge round-trip on the hot path.
                 shared_state["grounding_faithfulness"] = faith
+                shared_state["generation_outcome"] = generation_outcome()
                 confidence, degraded = self._compute_confidence(shared_state, faith)
 
                 # Self-reflection on captured reasoning (P2.6): if the model's
@@ -299,6 +303,7 @@ class GenerateSkill(BaseSkill):
                                 "relevance_scores",
                                 "grounding_faithfulness",
                                 "generation_evidence",
+                                "generation_outcome",
                                 "fallback_general_chat",
                             )
                         }
@@ -590,6 +595,29 @@ class GenerateSkill(BaseSkill):
         shared_state["sources"] = grounding_sources
 
         writer = get_stream_writer()
+        if (
+            segmented_enabled(self.llm, question, context.rewrite_count)
+            and context.output_checker is not None
+        ):
+            inputs = {"question": question, "context": ctx, "sources": grounding_sources}
+            async for event in stream_answer(
+                self.llm, inputs, context.output_checker, grounding_contexts
+            ):
+                if event["type"] == "token":
+                    writer({**event, "node": self.name})
+                else:
+                    answer = event["full_response"]
+                    shared_state["generation_outcome"] = event["generation_outcome"]
+            context.checked_output = answer
+            complete = shared_state["generation_outcome"]["generation_complete"]
+            return SkillResult(
+                status=SkillStatus.SUCCESS if complete else SkillStatus.PARTIAL,
+                messages=[AIMessage(content=answer, additional_kwargs={"confidence": None})],
+                state_updates={
+                    "shared_state": {k: shared_state[k] for k in _cleared_generation_state()}
+                },
+                metadata={"confidence": None, "confidence_degraded": True, "streamed": True},
+            )
         for attempt in range(
             1 if bounded_local_rag(self.llm) else self._skill_config.max_retries + 1
         ):
@@ -598,6 +626,7 @@ class GenerateSkill(BaseSkill):
                 async for chunk in self.chain.astream(
                     {
                         "question": question,
+                        "rewrite_count": context.rewrite_count,
                         "context": ctx,
                         "sources": [item["source"] for item in prepared["evidence"]],
                     }
@@ -616,6 +645,7 @@ class GenerateSkill(BaseSkill):
                 faith = await self._agrounding_faithfulness(answer, grounding_contexts)
                 # Cache the verdict so the output guardrail can reuse it.
                 shared_state["grounding_faithfulness"] = faith
+                shared_state["generation_outcome"] = generation_outcome()
                 confidence, degraded = self._compute_confidence(shared_state, faith)
                 elapsed = (time.perf_counter() - start) * 1000
                 log.info(
@@ -642,6 +672,7 @@ class GenerateSkill(BaseSkill):
                                 "relevance_scores",
                                 "grounding_faithfulness",
                                 "generation_evidence",
+                                "generation_outcome",
                                 "fallback_general_chat",
                             )
                         }

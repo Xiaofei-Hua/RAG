@@ -55,6 +55,7 @@ class ChatMessage(BaseModel):
     role: str = Field(..., description="Message role: user, assistant, or system")
     content: str = Field(..., description="Message content")
     timestamp: float | None = Field(None, description="Unix timestamp when message was saved")
+    metadata: dict = Field(default_factory=dict)
 
 
 class ChatRequest(BaseModel):
@@ -644,7 +645,9 @@ async def chat(
                 session_memory.save_message, session_id, HumanMessage(content=request.message)
             )
             background_tasks.add_task(
-                session_memory.save_message, session_id, AIMessage(content=answer)
+                session_memory.save_message,
+                session_id,
+                AIMessage(content=answer, additional_kwargs={"generation_outcome": outcome}),
             )
             identity_meta = _build_metadata(
                 route="general_chat",
@@ -690,7 +693,12 @@ async def chat(
                 session_memory.save_message, session_id, HumanMessage(content=request.message)
             )
             background_tasks.add_task(
-                session_memory.save_message, session_id, AIMessage(content=result.answer)
+                session_memory.save_message,
+                session_id,
+                AIMessage(
+                    content=result.answer,
+                    additional_kwargs={"generation_outcome": result.generation_outcome},
+                ),
             )
 
             fast_sources = [SourceDocument(**s) for s in result.sources]
@@ -793,6 +801,7 @@ async def chat(
                 "model_queue_outcome"
             )
             if shared_after.get("fallback_general_chat"):
+                outcome = None
                 answer, sources, gen_conf, gen_refused, reasoning_text = await _run_general_chat(
                     request.message, session_id, session_memory
                 )
@@ -818,7 +827,9 @@ async def chat(
                     HumanMessage(content=request.message),
                 )
                 background_tasks.add_task(
-                    session_memory.save_message, session_id, AIMessage(content=answer)
+                    session_memory.save_message,
+                    session_id,
+                    AIMessage(content=answer, additional_kwargs={"generation_outcome": outcome}),
                 )
                 _capture(
                     http_request,
@@ -879,7 +890,9 @@ async def chat(
             session_memory.save_message, session_id, HumanMessage(content=request.message)
         )
         background_tasks.add_task(
-            session_memory.save_message, session_id, AIMessage(content=answer)
+            session_memory.save_message,
+            session_id,
+            AIMessage(content=answer, additional_kwargs={"generation_outcome": outcome}),
         )
 
         structured_answer = _extract_structured_answer(answer)
@@ -993,6 +1006,7 @@ async def get_chat_history(
                     role=role,
                     content=msg.content,
                     timestamp=ts,
+                    metadata=(msg.additional_kwargs or {}).get("generation_outcome") or {},
                 )
             )
 
@@ -1069,7 +1083,10 @@ async def chat_stream(
                 yield _sse({"type": "status", "message": "正在返回平台能力说明..."})
                 yield _sse({"type": "token", "content": answer})
                 await session_memory.save_message(session_id, HumanMessage(content=request.message))
-                await session_memory.save_message(session_id, AIMessage(content=answer))
+                await session_memory.save_message(
+                    session_id,
+                    AIMessage(content=answer, additional_kwargs={"generation_outcome": outcome}),
+                )
                 yield _sse(
                     {
                         "type": "done",
@@ -1119,26 +1136,47 @@ async def chat_stream(
                         outcome = event.get("generation_outcome")
 
                 await session_memory.save_message(session_id, HumanMessage(content=request.message))
-                await session_memory.save_message(session_id, AIMessage(content=full_response))
+                await session_memory.save_message(
+                    session_id,
+                    AIMessage(
+                        content=full_response, additional_kwargs={"generation_outcome": outcome}
+                    ),
+                )
 
                 structured_answer = _extract_structured_answer(full_response)
+                processing_time_ms = (time.perf_counter() - start_time) * 1000
+                fast_meta = _build_metadata(
+                    route="fast",
+                    outcome=outcome,
+                    prompt_profile=_profile().prompt_profile_fast,
+                    message_id=message_id,
+                    trace_id=trace_id,
+                    intent_confidence=1.0,
+                    intent_reasoning="Fast mode (no classification)",
+                    source_count=len(sources_data),
+                    structured_answer=structured_answer,
+                )
+                _capture(
+                    None,
+                    request.message,
+                    full_response,
+                    sources_data,
+                    "",
+                    "fast",
+                    _profile().prompt_profile_fast,
+                    "rag_query",
+                    fast_meta,
+                    processing_time_ms,
+                    trace_id,
+                    session_id,
+                )
                 yield _sse(
                     {
                         "type": "done",
                         "full_response": full_response,
                         "sources": sources_data,
-                        "processing_time_ms": (time.perf_counter() - start_time) * 1000,
-                        "metadata": _build_metadata(
-                            route="fast",
-                            outcome=outcome,
-                            prompt_profile=_profile().prompt_profile_fast,
-                            message_id=message_id,
-                            trace_id=trace_id,
-                            intent_confidence=1.0,
-                            intent_reasoning="Fast mode (no classification)",
-                            source_count=len(sources_data),
-                            structured_answer=structured_answer,
-                        ),
+                        "processing_time_ms": processing_time_ms,
+                        "metadata": fast_meta,
                     }
                 )
                 return
@@ -1201,7 +1239,12 @@ async def chat_stream(
 
                 # Save to session
                 await session_memory.save_message(session_id, HumanMessage(content=request.message))
-                await session_memory.save_message(session_id, AIMessage(content=full_response))
+                await session_memory.save_message(
+                    session_id,
+                    AIMessage(
+                        content=full_response, additional_kwargs={"generation_outcome": outcome}
+                    ),
+                )
 
                 structured_answer = _extract_structured_answer(full_response)
                 done_payload = {
@@ -1343,6 +1386,7 @@ async def chat_stream(
                 # general_chat LLM stream so the user gets a real answer, and
                 # emit the done payload with route=general_chat (NOT rag).
                 if fallback_general_chat:
+                    outcome = None
                     yield _sse({"type": "status", "message": "正在重新组织回答..."})
                     from models.llm_models import get_llm
 
@@ -1361,7 +1405,12 @@ async def chat_stream(
                     await session_memory.save_message(
                         session_id, HumanMessage(content=request.message)
                     )
-                    await session_memory.save_message(session_id, AIMessage(content=full_response))
+                    await session_memory.save_message(
+                        session_id,
+                        AIMessage(
+                            content=full_response, additional_kwargs={"generation_outcome": outcome}
+                        ),
+                    )
                     processing_time_ms = (time.perf_counter() - start_time) * 1000
                     rag_meta = _build_metadata(
                         route="general_chat",
@@ -1387,7 +1436,12 @@ async def chat_stream(
 
                 # Save to session
                 await session_memory.save_message(session_id, HumanMessage(content=request.message))
-                await session_memory.save_message(session_id, AIMessage(content=full_response))
+                await session_memory.save_message(
+                    session_id,
+                    AIMessage(
+                        content=full_response, additional_kwargs={"generation_outcome": outcome}
+                    ),
+                )
 
                 sources = (
                     _extract_sources_from_evidence(generation_evidence)

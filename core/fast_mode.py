@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import time
 from collections.abc import AsyncIterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
@@ -22,6 +22,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from core.local_rag_generation import UNAVAILABLE_ANSWER, finalize_answer, generation_chain
 from core.prompts.profile_prompts import GENERATE_HUMAN_PROMPT, GENERATE_SYSTEM_PROMPT
+from core.segmented_generation import generation_outcome, segmented_enabled, stream_answer
 from models.local_model_queue import BUSY_ANSWER, ModelBusyError
 from models.local_rag_policy import bounded_local_rag
 from utils.log_utils import log
@@ -46,7 +47,9 @@ class FastModeResult:
     retrieval_time_ms: float
     generation_time_ms: float
     retrieval_diagnostics: dict[str, Any] | None = None
-    generation_outcome: dict[str, Any] | None = None
+    generation_outcome: dict[str, Any] | None = field(
+        default_factory=lambda: generation_outcome(False, "retrieval_terminal")
+    )
 
 
 def _terminal_message(state: str) -> str:
@@ -236,7 +239,7 @@ def fast_generate(
     chain = _get_chain(llm)
 
     t1 = time.perf_counter()
-    outcome = None
+    outcome = generation_outcome()
     try:
         answer = chain.invoke(
             {
@@ -252,11 +255,13 @@ def fast_generate(
             raise
         log.warning(f"Bounded generation failed: {type(exc).__name__}")
         answer = UNAVAILABLE_ANSWER
-    if outcome is None:
+        outcome = generation_outcome(False, "generation_failed")
+    if outcome["generation_complete"]:
         answer = finalize_answer(
             answer,
             [d.metadata.get("source", "") for d in kept_documents],
             [d.page_content for d in kept_documents],
+            outcome=outcome,
         )
     answer = strip_think_tags(answer)
     gen_ms = (time.perf_counter() - t1) * 1000
@@ -310,6 +315,7 @@ async def fast_generate_stream(
             "full_response": terminal,
             "sources": _docs_to_sources(documents),
             "processing_time_ms": retrieval_ms,
+            "generation_outcome": generation_outcome(False, "retrieval_terminal"),
             "retrieval_diagnostics": workflow_result.diagnostics,
         }
         return
@@ -326,6 +332,7 @@ async def fast_generate_stream(
             "full_response": empty_msg,
             "sources": [],
             "processing_time_ms": retrieval_ms,
+            "generation_outcome": generation_outcome(False, "retrieval_terminal"),
         }
         return
 
@@ -340,6 +347,7 @@ async def fast_generate_stream(
             "full_response": empty_msg,
             "sources": [],
             "processing_time_ms": retrieval_ms,
+            "generation_outcome": generation_outcome(False, "retrieval_terminal"),
         }
         return
 
@@ -352,33 +360,45 @@ async def fast_generate_stream(
 
     t1 = time.perf_counter()
     full_response = ""
-    outcome = None
+    outcome = generation_outcome()
+    segmented = segmented_enabled(llm, query)
+    inputs = {
+        "question": query,
+        "context": context,
+        "sources": [d.metadata.get("source", "") for d in kept_documents],
+    }
+    contexts = [d.page_content for d in kept_documents]
     try:
-        async for chunk in chain.astream(
-            {
-                "question": query,
-                "context": context,
-                "sources": [d.metadata.get("source", "") for d in kept_documents],
-            }
-        ):
-            content = str(chunk) if bounded else getattr(chunk, "content", "")
-            if content:
-                full_response += content
-                if not bounded:
-                    yield {"type": "token", "content": content}
+        if segmented:
+            from agent.guardrails.manager import GuardrailManager
+
+            async for event in stream_answer(
+                llm, inputs, GuardrailManager().check_output, contexts
+            ):
+                if event["type"] == "token":
+                    yield event
+                else:
+                    full_response = event["full_response"]
+                    outcome = event["generation_outcome"]
+        else:
+            async for chunk in chain.astream(inputs):
+                content = str(chunk) if bounded else getattr(chunk, "content", "")
+                if content:
+                    full_response += content
+                    if not bounded:
+                        yield {"type": "token", "content": content}
     except ModelBusyError as exc:
         full_response, outcome = BUSY_ANSWER, exc.outcome()
+        yield {"type": "token", "content": full_response}
+        segmented = True
     except Exception:
         if not bounded:
             raise
         full_response = UNAVAILABLE_ANSWER
-    if bounded and outcome is None:
-        full_response = finalize_answer(
-            full_response,
-            [d.metadata.get("source", "") for d in kept_documents],
-            [d.page_content for d in kept_documents],
-        )
-    if bounded or outcome is not None:
+        outcome = generation_outcome(False, "generation_failed")
+    if bounded and not segmented:
+        if outcome["generation_complete"]:
+            full_response = finalize_answer(full_response, inputs["sources"], contexts, outcome)
         yield {"type": "token", "content": full_response}
     gen_ms = (time.perf_counter() - t1) * 1000
 
@@ -446,7 +466,7 @@ async def fast_generate_async(
 
     t1 = time.perf_counter()
     llm = get_llm()
-    outcome = None
+    outcome = generation_outcome()
     try:
         answer = await _get_chain(llm).ainvoke(
             {
@@ -462,11 +482,13 @@ async def fast_generate_async(
             raise
         log.warning(f"Bounded generation failed: {type(exc).__name__}")
         answer = UNAVAILABLE_ANSWER
-    if outcome is None:
+        outcome = generation_outcome(False, "generation_failed")
+    if outcome["generation_complete"]:
         answer = finalize_answer(
             answer,
             [d.metadata.get("source", "") for d in kept_documents],
             [d.page_content for d in kept_documents],
+            outcome=outcome,
         )
     answer = strip_think_tags(answer)
     generation_ms = (time.perf_counter() - t1) * 1000
