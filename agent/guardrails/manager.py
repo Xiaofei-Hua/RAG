@@ -65,6 +65,8 @@ class GuardrailManager:
         """
 
         def _before_hook(skill_name: str, context) -> None:  # type: ignore[annots]
+            if skill_name == "generate":
+                context.output_checker = self.check_output
             # Extract last human message
             last_human = None
             for msg in reversed(context.messages):
@@ -111,6 +113,9 @@ class GuardrailManager:
             last_msg = result.messages[-1]
             content = last_msg.content if hasattr(last_msg, "content") else str(last_msg)
 
+            if getattr(context, "checked_output", None) == content:
+                return
+
             # Gather sources (names) and contexts (actual chunk text) from
             # shared_state. contexts enable the semantic grounding check.
             sources: list[str] | None = None
@@ -136,6 +141,11 @@ class GuardrailManager:
                     raise
                 last_msg.content = "本次回答未能完成输出检查，请重试。"
                 result.metadata["output_check_degraded"] = True
+                from core.segmented_generation import generation_outcome
+
+                result.state_updates.setdefault("shared_state", {})["generation_outcome"] = (
+                    generation_outcome(False, "output_check_failed")
+                )
                 return
             if bounded_local_rag() and guard_result.action in {
                 GuardrailAction.BLOCK,
@@ -143,6 +153,11 @@ class GuardrailManager:
             }:
                 last_msg.content = "现有资料不足以支持完整回答，请核对原始资料后重试。"
                 result.metadata["output_check_degraded"] = True
+                from core.segmented_generation import generation_outcome
+
+                result.state_updates.setdefault("shared_state", {})["generation_outcome"] = (
+                    generation_outcome(False, "output_check_failed")
+                )
                 return
 
             if guard_result.action == GuardrailAction.SANITIZE:

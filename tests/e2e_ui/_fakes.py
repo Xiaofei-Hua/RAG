@@ -405,7 +405,15 @@ class _FakeSessionMemory:
         for m in reversed(msgs[-limit:]):
             content = getattr(m, "content", str(m))
             cls = HumanMessage if type(m).__name__ == "HumanMessage" else AIMessage
-            out.append(cls(content=content, additional_kwargs={"_timestamp": self._time.time()}))
+            out.append(
+                cls(
+                    content=content,
+                    additional_kwargs={
+                        **getattr(m, "additional_kwargs", {}),
+                        "_timestamp": self._time.time(),
+                    },
+                )
+            )
         return out
 
     async def get_session_info(self, session_id):

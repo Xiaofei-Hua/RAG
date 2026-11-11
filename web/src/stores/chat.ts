@@ -66,6 +66,7 @@ export const useChatStore = defineStore('chat', () => {
   const currentIntent = ref<string>('')
   const currentNode = ref<string>('')
   const mode = ref<'thinking' | 'fast'>('thinking')
+  let streamAbort: AbortController | null = null
 
   // Getters
   const messageCount = computed(() => messages.value.length)
@@ -169,12 +170,14 @@ export const useChatStore = defineStore('chat', () => {
     })
 
     isStreaming.value = true
+    streamAbort = new AbortController()
     error.value = null
     currentIntent.value = ''
     currentNode.value = ''
 
     try {
       const response = await fetch(apiUrl('api/chat/stream'), {
+        signal: streamAbort.signal,
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -219,20 +222,15 @@ export const useChatStore = defineStore('chat', () => {
         }
       }
 
-      // Mark streaming as complete
-      if (messages.value[assistantIndex]) {
-        messages.value[assistantIndex].isStreaming = false
+      if (messages.value[assistantIndex]?.isStreaming) {
+        markIncomplete(assistantIndex, 'stream_ended')
       }
     } catch (e: any) {
-      error.value = e.message || '流式输出失败'
-      console.error('Stream error:', e)
-
-      // Update assistant message with error
-      if (messages.value[assistantIndex]) {
-        messages.value[assistantIndex].content = '抱歉，发生了错误。请稍后重试。'
-        messages.value[assistantIndex].isStreaming = false
-      }
+      const cancelled = e.name === 'AbortError'
+      if (!cancelled) error.value = e.message || '流式输出失败'
+      markIncomplete(assistantIndex, cancelled ? 'cancelled' : 'stream_error')
     } finally {
+      streamAbort = null
       isStreaming.value = false
       currentIntent.value = ''
       currentNode.value = ''
@@ -295,12 +293,21 @@ export const useChatStore = defineStore('chat', () => {
 
       case 'error':
         error.value = event.message || '未知错误'
-        if (messages.value[messageIndex]) {
-          messages.value[messageIndex].content = `错误: ${event.message || '未知错误'}`
-          messages.value[messageIndex].isStreaming = false
-        }
+        markIncomplete(messageIndex, 'stream_error')
         break
     }
+  }
+
+  function markIncomplete(index: number, reason: string) {
+    const message = messages.value[index]
+    if (!message) return
+    if (!message.content) message.content = reason === 'cancelled' ? '已停止生成。' : '回答未能生成，请重试。'
+    message.isStreaming = false
+    message.metadata = { ...message.metadata, generation_complete: false, status: 'incomplete', reason }
+  }
+
+  function stopStreaming() {
+    streamAbort?.abort()
   }
 
   async function loadHistory(sid: string) {
@@ -311,10 +318,11 @@ export const useChatStore = defineStore('chat', () => {
       }
 
       const data = await response.json()
-      const rawMessages: Array<{ role: string; content: string; timestamp?: number }> = data.messages || []
+      const rawMessages: Array<{ role: string; content: string; timestamp?: number; metadata?: Record<string, any> }> = data.messages || []
       messages.value = rawMessages.map((m) => ({
         role: m.role as 'user' | 'assistant',
         content: m.content,
+        metadata: m.metadata,
         timestamp: m.timestamp ? m.timestamp * 1000 : Date.now(),
       }))
       sessionId.value = sid
@@ -391,6 +399,7 @@ export const useChatStore = defineStore('chat', () => {
     initSession,
     sendMessage,
     sendMessageStream,
+    stopStreaming,
     loadHistory,
     clearMessages,
     newSession,
