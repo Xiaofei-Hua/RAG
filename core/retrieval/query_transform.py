@@ -24,6 +24,7 @@ import re
 from langchain_core.documents import Document
 from langchain_core.messages import BaseMessage
 
+from models.local_model_queue import ModelBusyError
 from utils.log_utils import log
 
 __all__ = ["hyde", "multi_query_retrieve"]
@@ -96,6 +97,8 @@ def _llm_invoke(prompt: str) -> str | None:
         if result is not None:
             _cache_put(prompt, model, result)
         return result
+    except ModelBusyError:
+        raise
     except Exception as e:  # noqa: BLE001
         log.debug(f"query-transform LLM call failed: error_type={type(e).__name__}")
         return None
@@ -118,6 +121,8 @@ async def _allm_invoke(prompt: str) -> str | None:
         if result is not None:
             _cache_put(prompt, model, result)
         return result
+    except ModelBusyError:
+        raise
     except Exception as e:  # noqa: BLE001
         log.debug(f"query-transform async LLM call failed: error_type={type(e).__name__}")
         return None
@@ -188,6 +193,8 @@ def condense_query(question: str, history: list[BaseMessage]) -> str:
             if len(result) >= 3:
                 return result
         return question
+    except ModelBusyError:
+        raise
     except Exception as e:  # noqa: BLE001 — degrade to original
         log.debug(f"condense_query failed, using original: error_type={type(e).__name__}")
         return question

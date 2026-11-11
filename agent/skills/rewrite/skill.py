@@ -18,6 +18,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from agent.context.state import get_last_human_message
 from agent.skills.base import BaseSkill, SkillContext, SkillResult, SkillStatus
 from agent.skills.rewrite.prompts import REWRITE_PROMPT
+from models.local_model_queue import ModelBusyError
 from models.local_rag_policy import control_kwargs
 from utils.log_utils import log
 from utils.think_tag_utils import strip_think_tags
@@ -103,6 +104,8 @@ class RewriteSkill(BaseSkill):
                 from core.retrieval.query_transform import condense_query
 
                 original_question = condense_query(original_question, history)
+            except ModelBusyError:
+                raise
             except Exception:  # noqa: BLE001 — degrade to original question
                 pass
 
@@ -130,6 +133,8 @@ class RewriteSkill(BaseSkill):
                     },
                 )
 
+            except ModelBusyError:
+                raise
             except Exception as e:
                 log.warning(f"Rewrite attempt {attempt + 1} failed: {e}")
                 if attempt < self._skill_config.max_retries:
@@ -206,6 +211,8 @@ class RewriteSkill(BaseSkill):
                     },
                 )
 
+            except ModelBusyError:
+                raise
             except Exception as e:
                 log.warning(f"Async rewrite attempt {attempt + 1} failed: {e}")
                 if attempt < self._skill_config.max_retries:
@@ -243,5 +250,7 @@ class RewriteSkill(BaseSkill):
         """Extract the original question from messages."""
         try:
             return get_last_human_message(messages).content
+        except ModelBusyError:
+            raise
         except Exception:
             return messages[-1].content if messages else ""

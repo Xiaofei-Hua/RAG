@@ -22,8 +22,8 @@ from dataclasses import dataclass, field
 
 from langchain_core.caches import InMemoryCache
 from langchain_core.language_models import BaseChatModel
-from langchain_openai import ChatOpenAI
 
+from models.scheduled_chat_model import ScheduledChatOpenAI as ChatOpenAI
 from utils.env_utils import (
     LLM_MAX_RETRIES,
     LLM_MAX_TOKENS,

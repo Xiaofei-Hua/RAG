@@ -19,6 +19,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from agent.context.state import Grade, get_last_human_message
 from agent.skills.base import BaseSkill, SkillContext, SkillResult, SkillStatus
 from agent.skills.grade.prompts import GRADE_HUMAN_PROMPT, GRADE_SYSTEM_PROMPT
+from models.local_model_queue import ModelBusyError
 from models.local_rag_policy import control_kwargs
 from utils.log_utils import log
 
@@ -113,6 +114,8 @@ class GradeSkill(BaseSkill):
                 },
             )
 
+        except ModelBusyError:
+            raise
         except Exception as e:
             elapsed = (time.perf_counter() - start) * 1000
             log.error(f"GradeSkill failed ({elapsed:.0f}ms): {e}")
@@ -163,6 +166,8 @@ class GradeSkill(BaseSkill):
                 },
             )
 
+        except ModelBusyError:
+            raise
         except Exception as e:
             elapsed = (time.perf_counter() - start) * 1000
             log.error(f"GradeSkill async failed ({elapsed:.0f}ms): {e}")
@@ -186,6 +191,8 @@ class GradeSkill(BaseSkill):
         """Extract question and context from messages."""
         try:
             question = get_last_human_message(messages).content
+        except ModelBusyError:
+            raise
         except Exception:
             question = messages[-1].content if messages else ""
 
@@ -227,6 +234,8 @@ class GradeSkill(BaseSkill):
 
                 return self._parse_relevance(result)
 
+            except ModelBusyError:
+                raise
             except Exception as e:
                 log.warning(f"Grade attempt {attempt + 1} failed: {e}")
                 if attempt < self._skill_config.max_retries:
@@ -251,6 +260,8 @@ class GradeSkill(BaseSkill):
                 )
                 return self._parse_relevance(result)
 
+            except ModelBusyError:
+                raise
             except Exception as e:
                 log.warning(f"Async grade attempt {attempt + 1} failed: {e}")
                 if attempt < self._skill_config.max_retries:

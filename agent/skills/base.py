@@ -19,6 +19,7 @@ from typing import Any
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import BaseMessage, HumanMessage
 
+from models.local_model_queue import ModelBusyError
 from utils.log_utils import log
 
 __all__ = [
@@ -163,6 +164,8 @@ class BaseSkill(ABC):
         start = time.perf_counter()
         try:
             result = self.execute(context)
+        except ModelBusyError:
+            raise
         except Exception as e:
             result = SkillResult(
                 status=SkillStatus.FAILURE,
@@ -178,6 +181,8 @@ class BaseSkill(ABC):
         start = time.perf_counter()
         try:
             result = await self.aexecute(context)
+        except ModelBusyError:
+            raise
         except Exception as e:
             result = SkillResult(
                 status=SkillStatus.FAILURE,

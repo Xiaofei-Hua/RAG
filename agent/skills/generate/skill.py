@@ -28,6 +28,7 @@ from agent.skills.generate.prompts import (
 )
 from core.local_rag_generation import generation_chain
 from core.prompts.domain_profile import get_active_profile
+from models.local_model_queue import ModelBusyError
 from models.local_rag_policy import bounded_local_rag
 from utils.log_utils import log
 from utils.think_tag_utils import strip_think_tags
@@ -313,6 +314,8 @@ class GenerateSkill(BaseSkill):
                     },
                 )
 
+            except ModelBusyError:
+                raise
             except Exception as e:
                 log.warning(f"Generate attempt {attempt + 1} failed: {e}")
                 if not bounded_local_rag(self.llm) and attempt < self._skill_config.max_retries:
@@ -654,6 +657,8 @@ class GenerateSkill(BaseSkill):
                         "refused": False,
                     },
                 )
+            except ModelBusyError:
+                raise
             except Exception as e:
                 log.warning(f"Async generate attempt {attempt + 1} failed: {e}")
                 if not bounded_local_rag(self.llm) and attempt < self._skill_config.max_retries:
