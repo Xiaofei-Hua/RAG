@@ -34,6 +34,7 @@ from agent.harness.observability import TraceCollector
 from agent.harness.planner import Planner, PlanType
 from agent.skills.base import BaseSkill, SkillContext, SkillResult, SkillStatus
 from agent.skills.registry import SkillRegistry
+from models.local_model_queue import BUSY_ANSWER, ModelBusyError
 from utils.log_utils import log
 
 __all__ = ["AgentHarness", "HarnessConfig"]
@@ -97,6 +98,8 @@ _PRODUCER_OWNED_REQUEST_KEYS = frozenset(
     {
         "retrieval_evidence",
         "generation_evidence",
+        "generation_outcome",
+        "model_queue_outcome",
         "retrieval_relevance",
         "relevance_scores",
         "retrieved_contexts",
@@ -118,6 +121,8 @@ def _build_request_shared_state(
     state: dict[str, Any] = {
         "retrieval_evidence": [],
         "generation_evidence": [],
+        "generation_outcome": None,
+        "model_queue_outcome": None,
         "retrieval_relevance": None,
         "relevance_scores": [],
         "retrieved_contexts": [],
@@ -139,6 +144,22 @@ def _build_request_shared_state(
     if history is not None:
         state["conversation_history"] = list(history)
     return state
+
+
+def _busy_state(exc):
+    state = _build_request_shared_state()
+    state["model_queue_outcome"] = exc.outcome()
+    return {"messages": [AIMessage(content=BUSY_ANSWER)], "shared_state": state}
+
+
+def _busy_events(exc, stream_mode):
+    state = _busy_state(exc)
+    modes = stream_mode if isinstance(stream_mode, list) else [stream_mode]
+    for mode in modes:
+        if mode in {"values", "updates"}:
+            payload = state if mode == "values" else {"generate": state}
+            yield (mode, payload) if isinstance(stream_mode, list) else payload
+            return
 
 
 @dataclass
@@ -793,6 +814,8 @@ class AgentHarness:
             # checkpointer connection is not safe for concurrent writes.
             with self._sync_invoke_lock:
                 result = self.graph.invoke(inputs, config=config)
+        except ModelBusyError as exc:
+            result = _busy_state(exc)
         finally:
             self._end_run(run_collector)
         return result
@@ -842,6 +865,8 @@ class AgentHarness:
             # streaming, so the lock spans the whole generator.
             with self._sync_invoke_lock:
                 yield from self.graph.stream(inputs, config=config, stream_mode=stream_mode)
+        except ModelBusyError as exc:
+            yield from _busy_events(exc, stream_mode)
         finally:
             self._end_run(run_collector)
 
@@ -879,6 +904,7 @@ class AgentHarness:
                 "_sources": result.sources,
                 "_retrieval_time_ms": result.retrieval_time_ms,
                 "_generation_time_ms": result.generation_time_ms,
+                "shared_state": {"generation_outcome": result.generation_outcome},
             }
 
         await self.astart()
@@ -895,6 +921,8 @@ class AgentHarness:
         run_collector = self._begin_run()
         try:
             result = await self.graph.ainvoke(inputs, config=config)
+        except ModelBusyError as exc:
+            result = _busy_state(exc)
         finally:
             self._end_run(run_collector)
         return result
@@ -930,6 +958,9 @@ class AgentHarness:
                 config=config,
                 stream_mode=stream_mode,
             ):
+                yield event
+        except ModelBusyError as exc:
+            for event in _busy_events(exc, stream_mode):
                 yield event
         finally:
             # Align with invoke/ainvoke/invoke_fast: reset the per-run
@@ -971,6 +1002,7 @@ class AgentHarness:
             "_sources": result.sources,
             "_retrieval_time_ms": result.retrieval_time_ms,
             "_generation_time_ms": result.generation_time_ms,
+            "shared_state": {"generation_outcome": result.generation_outcome},
         }
 
     async def ainvoke_fast(self, query: str, top_k: int = 3) -> AsyncIterator[dict[str, Any]]:

@@ -360,6 +360,9 @@ def create_app() -> FastAPI:
         application.add_middleware(TrustedHostMiddleware, allowed_hosts=_LOCAL_ONLY_HOSTS)
 
     # Custom middleware
+    from models.local_model_queue import ModelMetricsMiddleware
+
+    application.add_middleware(ModelMetricsMiddleware)
     application.add_middleware(TracingMiddleware)
     application.add_middleware(ErrorHandlerMiddleware)
 

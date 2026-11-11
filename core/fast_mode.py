@@ -22,6 +22,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from core.local_rag_generation import UNAVAILABLE_ANSWER, finalize_answer, generation_chain
 from core.prompts.profile_prompts import GENERATE_HUMAN_PROMPT, GENERATE_SYSTEM_PROMPT
+from models.local_model_queue import BUSY_ANSWER, ModelBusyError
 from models.local_rag_policy import bounded_local_rag
 from utils.log_utils import log
 from utils.think_tag_utils import strip_think_tags
@@ -45,6 +46,7 @@ class FastModeResult:
     retrieval_time_ms: float
     generation_time_ms: float
     retrieval_diagnostics: dict[str, Any] | None = None
+    generation_outcome: dict[str, Any] | None = None
 
 
 def _terminal_message(state: str) -> str:
@@ -234,6 +236,7 @@ def fast_generate(
     chain = _get_chain(llm)
 
     t1 = time.perf_counter()
+    outcome = None
     try:
         answer = chain.invoke(
             {
@@ -242,16 +245,19 @@ def fast_generate(
                 "sources": [d.metadata.get("source", "") for d in kept_documents],
             }
         )
+    except ModelBusyError as exc:
+        answer, outcome = BUSY_ANSWER, exc.outcome()
     except Exception as exc:
         if not bounded_local_rag(llm):
             raise
         log.warning(f"Bounded generation failed: {type(exc).__name__}")
         answer = UNAVAILABLE_ANSWER
-    answer = finalize_answer(
-        answer,
-        [d.metadata.get("source", "") for d in kept_documents],
-        [d.page_content for d in kept_documents],
-    )
+    if outcome is None:
+        answer = finalize_answer(
+            answer,
+            [d.metadata.get("source", "") for d in kept_documents],
+            [d.page_content for d in kept_documents],
+        )
     answer = strip_think_tags(answer)
     gen_ms = (time.perf_counter() - t1) * 1000
 
@@ -263,6 +269,7 @@ def fast_generate(
         retrieval_count=len(kept_documents),
         retrieval_time_ms=retrieval_ms,
         generation_time_ms=gen_ms,
+        generation_outcome=outcome,
         retrieval_diagnostics=(
             workflow_result.diagnostics if workflow_result is not None else None
         ),
@@ -345,6 +352,7 @@ async def fast_generate_stream(
 
     t1 = time.perf_counter()
     full_response = ""
+    outcome = None
     try:
         async for chunk in chain.astream(
             {
@@ -358,16 +366,19 @@ async def fast_generate_stream(
                 full_response += content
                 if not bounded:
                     yield {"type": "token", "content": content}
+    except ModelBusyError as exc:
+        full_response, outcome = BUSY_ANSWER, exc.outcome()
     except Exception:
         if not bounded:
             raise
         full_response = UNAVAILABLE_ANSWER
-    if bounded:
+    if bounded and outcome is None:
         full_response = finalize_answer(
             full_response,
             [d.metadata.get("source", "") for d in kept_documents],
             [d.page_content for d in kept_documents],
         )
+    if bounded or outcome is not None:
         yield {"type": "token", "content": full_response}
     gen_ms = (time.perf_counter() - t1) * 1000
 
@@ -380,6 +391,7 @@ async def fast_generate_stream(
         "full_response": full_response,
         "sources": _docs_to_sources(kept_documents),
         "processing_time_ms": retrieval_ms + gen_ms,
+        "generation_outcome": outcome,
         **(
             {"retrieval_diagnostics": workflow_result.diagnostics}
             if workflow_result is not None
@@ -434,6 +446,7 @@ async def fast_generate_async(
 
     t1 = time.perf_counter()
     llm = get_llm()
+    outcome = None
     try:
         answer = await _get_chain(llm).ainvoke(
             {
@@ -442,16 +455,19 @@ async def fast_generate_async(
                 "sources": [d.metadata.get("source", "") for d in kept_documents],
             }
         )
+    except ModelBusyError as exc:
+        answer, outcome = BUSY_ANSWER, exc.outcome()
     except Exception as exc:
         if not bounded_local_rag(llm):
             raise
         log.warning(f"Bounded generation failed: {type(exc).__name__}")
         answer = UNAVAILABLE_ANSWER
-    answer = finalize_answer(
-        answer,
-        [d.metadata.get("source", "") for d in kept_documents],
-        [d.page_content for d in kept_documents],
-    )
+    if outcome is None:
+        answer = finalize_answer(
+            answer,
+            [d.metadata.get("source", "") for d in kept_documents],
+            [d.page_content for d in kept_documents],
+        )
     answer = strip_think_tags(answer)
     generation_ms = (time.perf_counter() - t1) * 1000
     return FastModeResult(
@@ -460,6 +476,7 @@ async def fast_generate_async(
         retrieval_count=len(kept_documents),
         retrieval_time_ms=retrieval_ms,
         generation_time_ms=generation_ms,
+        generation_outcome=outcome,
         retrieval_diagnostics=(
             workflow_result.diagnostics if workflow_result is not None else None
         ),

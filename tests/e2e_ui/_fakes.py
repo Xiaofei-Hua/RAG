@@ -646,6 +646,7 @@ def install():
             retrieval_count=len(docs),
             retrieval_time_ms=10.0,
             generation_time_ms=20.0,
+            generation_outcome=None,
         )
 
     fast_mod.fast_generate_async = _fake_fast_generate_async
@@ -693,6 +694,7 @@ def install():
             retrieval_count=len(docs),
             retrieval_time_ms=10.0,
             generation_time_ms=20.0,
+            generation_outcome=None,
         )
 
     fast_mod.fast_generate_stream = _fake_fast_generate_stream
