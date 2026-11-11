@@ -30,10 +30,13 @@ _COMPARISON = re.compile(
 
 
 def segmented_enabled(model=None, question="", rewrite_count=0):
+    from core.procedure_generation import procedural_question
+
     return (
         os.getenv("LOCAL_RAG_SEGMENTED", "false").lower() == "true"
         and bounded_local_rag(model)
         and rewrite_count == 0
+        and procedural_question(question)
         and not _COMPARISON.search(question)
     )
 
@@ -144,6 +147,19 @@ async def stream_answer(model, inputs, checker, contexts):
     publisher = CheckedParagraphs(checker, sources, contexts)
     finish_reason = None
     try:
+        from core.procedure_generation import procedural_question
+
+        if procedural_question(inputs["question"]):
+            from core.local_rag_generation import generation_chain
+
+            answer = await generation_chain(model).ainvoke(inputs)
+            yield {"type": "token", "content": publisher.append(answer)}
+            yield {
+                "type": "done",
+                "full_response": publisher.text,
+                "generation_outcome": generation_outcome(),
+            }
+            return
         async with aclosing(request_model(model, sources).astream(inputs)) as stream:
             async for chunk in stream:
                 metadata = getattr(chunk, "response_metadata", {}) or {}

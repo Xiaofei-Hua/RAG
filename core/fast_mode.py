@@ -22,6 +22,7 @@ from langchain_core.prompts import ChatPromptTemplate
 
 from core.local_rag_generation import UNAVAILABLE_ANSWER, finalize_answer, generation_chain
 from core.prompts.profile_prompts import GENERATE_HUMAN_PROMPT, GENERATE_SYSTEM_PROMPT
+from core.retrieval.evidence import documents_to_evidence
 from core.segmented_generation import generation_outcome, segmented_enabled, stream_answer
 from models.local_model_queue import BUSY_ANSWER, ModelBusyError
 from models.local_rag_policy import bounded_local_rag
@@ -114,14 +115,19 @@ def _format_context(documents) -> str:
     return context
 
 
-def _prepare_documents(documents):
+def _prepare_documents(documents, query="", model=None):
     from core.retrieval.evidence import (
         documents_to_evidence,
         evidence_to_document,
         prepare_evidence,
     )
 
-    prepared = prepare_evidence(documents_to_evidence(documents), token_budget=2048)
+    evidence = documents_to_evidence(documents)
+    if query and segmented_enabled(model, query):
+        from core.procedure_generation import select_procedure_evidence
+
+        evidence = select_procedure_evidence(evidence, query)
+    prepared = prepare_evidence(evidence, token_budget=2048)
     kept_documents = [evidence_to_document(item) for item in prepared["evidence"]]
     return prepared["context"], kept_documents
 
@@ -221,7 +227,10 @@ def fast_generate(
         )
 
     # --- Generate ---
-    context, kept_documents = _prepare_documents(documents)
+    from models.llm_models import get_llm
+
+    llm = get_llm()
+    context, kept_documents = _prepare_documents(documents, query, llm)
     if not kept_documents or not context.strip():
         from core.prompts.domain_profile import get_active_profile
 
@@ -233,9 +242,6 @@ def fast_generate(
             generation_time_ms=0,
         )
 
-    from models.llm_models import get_llm
-
-    llm = get_llm()
     chain = _get_chain(llm)
 
     t1 = time.perf_counter()
@@ -246,6 +252,7 @@ def fast_generate(
                 "question": query,
                 "context": context,
                 "sources": [d.metadata.get("source", "") for d in kept_documents],
+                "evidence": documents_to_evidence(kept_documents),
             }
         )
     except ModelBusyError as exc:
@@ -336,7 +343,10 @@ async def fast_generate_stream(
         }
         return
 
-    context, kept_documents = _prepare_documents(documents)
+    from models.llm_models import get_llm
+
+    llm = get_llm()
+    context, kept_documents = _prepare_documents(documents, query, llm)
     if not kept_documents or not context.strip():
         from core.prompts.domain_profile import get_active_profile
 
@@ -352,9 +362,6 @@ async def fast_generate_stream(
         return
 
     # --- Stream generate ---
-    from models.llm_models import get_llm
-
-    llm = get_llm()
     bounded = bounded_local_rag(llm)
     chain = generation_chain(llm) if bounded else _stream_prompt | llm
 
@@ -366,6 +373,7 @@ async def fast_generate_stream(
         "question": query,
         "context": context,
         "sources": [d.metadata.get("source", "") for d in kept_documents],
+        "evidence": documents_to_evidence(kept_documents),
     }
     contexts = [d.page_content for d in kept_documents]
     try:
@@ -450,7 +458,10 @@ async def fast_generate_async(
             generation_time_ms=0,
         )
 
-    context, kept_documents = _prepare_documents(documents)
+    from models.llm_models import get_llm
+
+    llm = get_llm()
+    context, kept_documents = _prepare_documents(documents, query, llm)
     if not kept_documents or not context.strip():
         from core.prompts.domain_profile import get_active_profile
 
@@ -462,10 +473,7 @@ async def fast_generate_async(
             generation_time_ms=0,
         )
 
-    from models.llm_models import get_llm
-
     t1 = time.perf_counter()
-    llm = get_llm()
     outcome = generation_outcome()
     try:
         answer = await _get_chain(llm).ainvoke(
@@ -473,6 +481,7 @@ async def fast_generate_async(
                 "question": query,
                 "context": context,
                 "sources": [d.metadata.get("source", "") for d in kept_documents],
+                "evidence": documents_to_evidence(kept_documents),
             }
         )
     except ModelBusyError as exc:

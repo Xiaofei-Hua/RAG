@@ -7,6 +7,11 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Fixed — Procedural step coverage
+
+- 修复显式试用路径中准备、失败记录、用途与起算条件的遗漏：同次模型选择并排列原文条款，完整检查后发布，不增加生成或核验调用；流程选择temperature=0，普通生成参数不变。
+- [breaking] `LOCAL_RAG_SEGMENTED=true`现在仅选择合格流程，非流程/比较/改写保留完整生成；旧非流程逐段行为不再开启。默认仍false，设置false并重启可回滚。新留出核心步骤12/12、严格全文6/12，无关信息尚未解决，详见docs/specs/segmented-procedure-coverage/results.md。
+
 ### Changed — Local scheduling and checked publication
 
 - [breaking] 新增本地调度/分段配置`LOCAL_LLM_SCHEDULER=fair`、`LOCAL_RAG_SEGMENTED=false`（仅合格bounded范围）；单进程1槽/8等待/30秒等待，busy终止旧retry而非继续模型调用。通过off/false并重启独立回滚；多worker不能共享队列。
