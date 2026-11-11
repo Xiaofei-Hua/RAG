@@ -26,6 +26,7 @@ RTX5070Ti 16GB，Qwen3.5:9b Q4_K_M，Ollama0.24.0-format-backport，context4096/
 小样本、分批运行，不外推普遍尾延迟改善；开发普通Fast P95由4.022s到7.236s，未改路径仍有波动。温度0重复输出是稳定性/两入口验证，不是独立随机样本或统计显著性证明。
 
 ## Validation
+- Stage 1实际提交29a6ae1在独立worktree运行完整unit/e2e/perf：1282 passed/6 skipped，coverage74%；下面的1313结果属于最终接线候选。
 - 核心接线红17失败→绿49通过；资格/范围修正红→绿；实际背景去除红5失败→绿69通过，均为固定失败输出/请求契约测试。
 - 最终 `uv run --frozen --no-sync python -m coverage run --branch -m pytest tests/unit/ tests/e2e/ tests/perf/ -q`：1313 passed、6 skipped；3个既有warning。`coverage report --fail-under=60`：75%。
 - Golden diff：新增流程原文、选择schema/prompt与预期全文；旧非流程API fixture改为原完整schema，保留JSON/SSE、PII、来源、终态和历史一致性验证。
