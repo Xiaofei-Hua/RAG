@@ -58,6 +58,12 @@ def pytest_collection_modifyitems(config, items):
 @pytest.fixture(autouse=True)
 def _close_sqlite_singletons_after_test():
     yield
+    import agent.eval.inference_store as inference
+
+    with inference._store_lock:
+        if inference._store is not None:
+            inference._store.close()
+            inference._store = None
     # Close any singleton SQLite connections left open by tests that did not
     # request the tmp_data_dir redirect (e.g. tests that build a store/judge
     # directly). Without this the connections survive until interpreter exit
@@ -472,7 +478,10 @@ def fake_session_memory():
                 out.append(
                     cls(
                         content=content,
-                        additional_kwargs={"_timestamp": time.time()},
+                        additional_kwargs={
+                            **getattr(m, "additional_kwargs", {}),
+                            "_timestamp": time.time(),
+                        },
                     )
                 )
             return out
@@ -736,11 +745,20 @@ def bounded_local_model(monkeypatch):
             message["content"] = '{"binary_score":"yes"}'
             if "分类" in str(body["messages"]) or "intent" in str(body["messages"]):
                 message["content"] = '{"intent":"rag_query","confidence":0.99}'
+        finish = (
+            output["finish"]
+            if body.get("response_format", {}).get("type") == "json_schema"
+            else "stop"
+        )
         if body.get("stream"):
             chunks = [
                 {"choices": [{"index": 0, "delta": message, "finish_reason": None}]},
-                {"choices": [{"index": 0, "delta": {}, "finish_reason": output["finish"]}]},
+                {"choices": [{"index": 0, "delta": {}, "finish_reason": finish}]},
             ]
+            for chunk in chunks:
+                chunk.update(
+                    id="test-local", object="chat.completion.chunk", created=0, model="qwen3.5:9b"
+                )
             text = "".join("data: " + json.dumps(c) + "\n\n" for c in chunks)
             return httpx.Response(
                 200, headers={"content-type": "text/event-stream"}, text=text + "data: [DONE]\n\n"
@@ -750,7 +768,7 @@ def bounded_local_model(monkeypatch):
             json={
                 "id": "test-local",
                 "model": "qwen3.5:9b",
-                "choices": [{"index": 0, "message": message, "finish_reason": output["finish"]}],
+                "choices": [{"index": 0, "message": message, "finish_reason": finish}],
             },
         )
 
