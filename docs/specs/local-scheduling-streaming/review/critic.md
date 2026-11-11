@@ -132,3 +132,286 @@ F-01/F-02纳入最小v2并在tracking分配实现/回归验证后，可开始红
 ### Implementation Decision
 
 当前Step 3代码仅有F-04这一项未闭合High；F-03已有红绿回归。F-04修复后可继续原计划Step 4与完整矩阵/真实有限对照。本结论不提前批准默认开启或发布；F-01的分段完成状态/历史持久化属于尚待完成的Step 4，不重复开同义发现。
+
+
+## F-04 Implementation Closure — 2026-11-11
+
+已复核`core/retrieval/query_transform.py`：`_llm_invoke`、`_allm_invoke`、`condense_query`均先传播ModelBusyError，普通Exception仍保留原有弱策略。`tests/unit/test_local_model_queue.py::test_query_transform_busy_propagates_without_fallback`覆盖sync/async/condense三种入口。
+
+- 红证据：`validation/cleanup-red-v2.log`中三项均因未抛专用busy失败。
+- 绿证据：`validation/step3-backend-v2.log`为1238 passed、6 skipped，另有5项CI环境代理相关失败；`validation/step3-ci-env-corrected.log`记录修正环境后的定向16 passed。不得把前一份日志改写成单次全绿。
+- **F-04 status**: verified-by-test-test_query_transform_busy_propagates_without_fallback，后端相关回归通过；修复commit/最终矩阵说明由tracking归档。
+- **Step 3 result**: 本critic已提出的实现High均已修复，无剩余已确认阻断。此处不提前替真实调度收益验收下结论。
+
+## v3 Schema Admission and Full Answer Review — 2026-11-11
+
+**Review target**: `design.md`新增v3（44–47行），`data/eval/local-stream-mechanism-v1/results.jsonl`全部16条回答，以及对应`model-http.jsonl`中的4组实际输入证据。未运行模型、未读其他reviewer报告。本节以v3作为本轮schema决策，先前v2的evidence→answer描述应在维护文档中更新为当前方案。
+
+### Evidence Recheck
+
+每个variant均为4题×2轮=8个样本；16次均各调用模型1次。全部8次原始首段发出时间P50：buffered 3.429313s，segmented 2.975852s，下降13.223%（按展示精度记13.2%）；未达到初始30%观察值。这是**原始首段发出时间**统计，其中分段有2/8首段未通过内容完整性复核，不能称为“8/8有效已检首段均取得的收益”。保留全部分母，不通过筛掉失败样本来美化时延。
+
+| Round / Case | Buffered full answer | Segmented first release | Segmented full answer |
+|-------------|----------------------|-------------------------|-----------------------|
+| R1 / ih2_06 | 540/600分钟、8/5W及不能比较同负载均正确 | 记录比较、负载差异、不能外推均齐全 | 核心正确；后段重复限制，无新冲突 |
+| R1 / dev_zero | 已测量的0值、0ms=0s、10分钟基准均正确 | 回答相同及零不等于缺测，核心齐全 | 核心正确；“但单位不同”略绕，未造成实质结论改变 |
+| R1 / dev_calibration | Q2、正常连续使用、120日历日、首次启用确认及换探头后校准起算齐全 | 同上，首批完整 | 完整且未扩大资料范围 |
+| R1 / dev_missing | 价格未提供；自交付起18个月保修 | 两个问题均完整回答 | 未编造价格或混淆42mm显示宽度 |
+| R2 / ih2_06 | 记录比较与同负载未知均齐全 | **未通过**：只给记录条件下的比较，用户明确询问的“能否判断同负载优劣”被推迟到第二段 | 全篇补齐后正确；全篇正确不能替首段通过 |
+| R2 / dev_zero | 记录零值与已测量结论正确 | 核心回答完整 | 核心结论正确；尾段把推论“记录的零值不等于缺测”写成证据明确引语，并扩成“没有产生可检测的偏差”，超出原文的记录措辞，详见下文 |
+| R2 / dev_calibration | 正常连续使用条件虽在后段，但一次整体发布的全文具备 | **未通过**：漏“正常连续使用”限定 | **未通过**：全篇仍遗漏该限定；更换后先校准的动作也不如R1明确，不得以包含120和起算日期判为合格 |
+| R2 / dev_missing | 价格未知与保修起算正确 | 两个问题均完整回答 | 完整，无实质退步 |
+
+当前分段按本次内容检查为6/8首批核心完整；明确的全篇实质遗漏为R2校准。R2零值尾段并未改变“有测量且记录为零”的核心结论，但原输入只有“本次测量已完成”“该数值是本次测试的记录结果”，没有那条直接引语，也没有说明检测分辨率。后续全文复核应继续检查引用表述，优先保持“记录的偏差为零”，不要把推论包装成逐字来源。这里不因此新增模型判分或另一套实验。
+
+全部8个segmented记录的token拼接、done.full_response及answer相同；这仅证明发布文本一致，不证明语义完整。全部outcome=complete描述的是流格式完成，也不能替代上述独立质量结果。
+
+### v3 Design Decision
+
+**结论：可进入红绿编码；新增Critical/High设计阻断为0。**
+
+- **praise (non-blocking)**: 将conditions放到answer之前，并由程序把answer[0]+全部已验证conditions一次检查后发布，直接针对本轮“条件在后段出现”的已复现机制，保留单JSON、一次模型调用和独立回滚。相比只调整自然语言要求，更明确规定了已提取条件的发布时间。
+- 条件数组必须完整闭合且通过原有结构/引用检查，再等首个answer对象完整；不得先发布结论、随后用另一token补条件。首批正文使用原有累计PII/来源检查，sync/non-stream与stream使用同一合成规则。已有chunk/半对象/非法ID/PII/partial红绿用例覆盖这一新顺序即可，不扩大测试矩阵。
+- 该机制保证**已提取的conditions随首批一起交付**，不保证模型没有遗漏条件。R2校准的遗漏是否改善，仍按原定两轮对照与未暴露新题验证；不能因为conditions字段存在便计为语义通过。
+- 条件前置可能增加首段等待并减少后续解释空间；维持已有输出预算，在同一机制实验中记录实际首批时间、完整率和全文质量即可。没有理由为了达到30%添加模型调用、丢条件或要求每个时延分位都优于baseline。
+- 默认false合理。v3是否启用只在既定质量与实测收益完成后决定；v1本身有已确认内容失败，当前13.2%原始时间改善不足以支持启用v1。
+
+
+## v3 Mechanism Results and Core Code Review — 2026-11-11
+
+**Evidence**: `data/eval/local-stream-mechanism-v2/{results,model-http}.jsonl`（v3 schema的两轮试验，共16答）；逐条读取首块、所有后续块、完整baseline，以及HTTP捕获里的实际输入corpus。代码复核为本轮`core/segmented_generation.py`、`core/local_rag_generation.py`、Generate/Fast接线、GuardrailManager receipt与SkillContext。未运行真实模型，未读取其他reviewer意见。
+
+### Full Answer Assessment
+
+| Round / Case | Buffered full answer | Segmented first block / full answer |
+|-------------|----------------------|------------------------------------|
+| R1 / ih2_06 | 5W/10h与8W/9h记录比较、同负载未知均正确 | 首块已同时给比较、差异负载和不可外推；全篇同首块，关键条件完整 |
+| R1 / dev_zero | 10分钟基准、0ms=0s、已测量而非缺测正确 | 同样完整；conditions重复单位/零值说明，增加文字但无实质错误 |
+| R1 / dev_calibration | Q2、正常连续使用、120日历日、首次启用确认及更换后校准起算齐全 | 正常使用限定已恢复；两个起算点正确。更换后“该次校准”的指代稍紧，不构成改变起算点；未列出出厂/收货/入库排除项，但已明确正向起算定义，不因此判作漏条件 |
+| R1 / dev_missing | 价格未提供、交付日起18个月保修正确 | 完整，没有把42mm显示宽度当作价格 |
+| R2 / ih2_06 | 两个问题均明确回答且依据正确 | 首块包含各负载、没有其他负载数据、没有同负载对比数据；第二块才出现“无法判断”的直述句。首块表达较间接，但已呈现不可外推的关键未知信息，**不与v1缺少该限制等同**；全篇结论正确 |
+| R2 / dev_zero | 记录零值、测量完成、单位换算正确 | 首块完整；未再出现v1的虚构直接引语或额外检测分辨率推断 |
+| R2 / dev_calibration | 正常条件、120日历日、两个起算点和更换后先校准正确 | 首块全部具备；正常条件重复一次，未改变含义 |
+| R2 / dev_missing | 价格未知、保修期限与起算正确 | 首块及全文完整，无新增事实 |
+
+本轮8/8分段回答的核心事实与适用条件可接受，未发现相对于相应buffered或输入corpus的**明确实质退步**。R2比较首块“未提供同负载对比数据”已表达决定结论的未知项，不以是否出现某个固定短语机械判失败；仍建议在全文质量记录中保留它的表达不够直接。样本只覆盖4道已暴露开发题，不能替代尚未冻结的新题结论。
+
+8个segmented样本的token拼接、done.full_response与保存到results的answer完全相同，均为一次模型调用，无格式截断。此事实与内容评审分开记录。
+
+### Performance Assessment
+
+- 全部8槽首块P50：buffered **3.262651s** → segmented **3.620234s**，慢 **10.96%**。
+- 全部8槽总完成P50：buffered **3.262652s** → segmented **3.660661s**，慢 **12.20%**。
+- 7/8分段答案只发布一个token块，只有R2比较还有一个后续块；本批没有实现有意义的提前交付收益。两轮每答仍各调用1次模型。
+- 原始模型输出中的evidence文本为每答57–105字符（不含JSON/引用开销）；另有0–115字符conditions与89–142字符answer。大量相同事实被复述在多个字段，首块又必须等待conditions结束，因此增加了交付前的工作。
+- **结论：本轮v3质量改善成立，但没有启用性能依据，默认应保持false。** 不把“支持分段”本身记为加速，也不把未通过的v1速度与v3质量拼接成一个通过结论。
+
+### F-05 — Segmented non-streaming accepts a non-stop finish
+
+- **id**: F-05
+- **severity**: High — `critic.md` §2 High(a)，新分段生成热路径的完成状态与sync/async同义契约未闭合。
+- **label**: issue (blocking, must-fix)
+- **location**: `core/local_rag_generation.py:27-32,43-53`; 对照`core/segmented_generation.py:98-103`。
+- **symptom**: 给两入口同一个完整且合法的segmented JSON，但finish_reason为None或tool_calls：纯函数探针两次均得到`nonstream_accepted=true`、`stream_complete=false`。JSON/非流式路径能将没有stop完成信号的生成记为完整，流式却正确拒绝。
+- **impact**: 违反design明确的“完整schema且finish=stop”，并令相同生成结果因入口不同得到不同成功终态。
+- **root_cause**: 新segmented非流式渲染复用了legacy complete_content，仅拒绝length/content_filter，没有执行本功能约定的正向stop要求。
+- **recommendation**: 只在segmented分支补finish_reason==stop检查，legacy保持原语义；使用同一生成失败安全终态，不新增调用或输出修复。
+- **verification**: 在现有segmented单元回归参数化None/tool_calls拒绝及stop接受；保持现有length回归。探针仅构造AIMessage并调用render_answer/ParagraphParser，不连接模型。
+- **status**: open（已告知实现者并获确认进行窄修复，最终红绿证据由tracking补齐）
+
+### Parser and Receipt Scope
+
+- 完整conditions先解析验证，再与answer[0]合成一个首块；没有发现先泄露结论、后补条件的程序路径。半对象没有真实分隔符时不发布，非法引用及检查失败保留此前已检查正文并标不完整。
+- CheckedParagraphs使用已检查前缀构造累计候选，检查后要求旧前缀保持不变；未检查的evidence不发布，PII检测在完整首块/后段上进行。
+- before-hook把当前检查器放入新SkillContext；只有stream_answer返回的同一次最终正文被记入checked_output，after-hook仅在内容相等时跳过重复改写。from_agent_state不反序列化这两个字段，to_agent_state也不导出；未发现本次范围内的具体receipt绕过。
+- 本审查未另立假设性的duplicate-key、配置漂移或跨进程防御工作项；现有27项API/unit通过由实现者报告，发布仍需既定完整矩阵与实际结果。
+
+## v4 Coding Admission — 2026-11-11
+
+已独立读取`design.md` v4（49–52行）：删去**模型输出**的evidence数组，保留完整kept输入证据、conditions→answer、首块原子合成、引用枚举与既有输出检查，维持单调用及预算。
+
+**Decision: 可按v4进入红绿编码，新增Critical/High设计阻断为0。** F-05按已确认的窄修复同步处理，不需再展开设计循环。
+
+- 该消融直接减少本轮实测的冗余输出工作，不删检索证据，不取消条件或现有输出检查，也不引入另一模型调用。
+- 明确计算准备可能变弱是合理的成本说明；下一次仍用相同4题两轮对照判断数值/换算、条件与首块/全篇质量，质量保持后再按原计划冻结未暴露新题，无需新增机制或更大的实验矩阵。
+- conditions完整闭合及首个answer完整后才检查/发布的规则保持；sync/non-stream同一渲染与stop完成判定，已有golden随schema做对应修订。
+- v4尚无收益结果；继续默认false，保留v1/v3历史失败和退步数据。不能预先把删去evidence等同已取得速度或质量收益。
+
+
+## v4 Full Answer Review and v5 Admission — 2026-11-11
+
+**Reviewed**: `data/eval/local-stream-mechanism-v3/{results,model-http}.jsonl`全部16答及实际输入corpus；`design.md` v5（54–59行，含rewrite_count补充）。未调用真实模型，未读取其他reviewer报告。
+
+### v4 Quality Recheck
+
+| Round / Case | Buffered full answer | Segmented first block and full answer |
+|-------------|----------------------|--------------------------------------|
+| R1 / ih2_06 | 芦序600分钟大于赤砚540分钟，并明确不同负载不可外推 | **已知不完整**：列出8W/9h、5W/10h并答出不能判断同负载优劣，但没有直接回答谁在记录中更长；全文仅此块，未在后续补足 |
+| R1 / dev_zero | 0ms=0s、已测量而非缺测，正确 | 明确换算并回答偏差相同、零是测量结果，完整 |
+| R1 / dev_calibration | 正常连续使用、Q2、120日历日、两个起算点及换探头先校准，正确 | 首块全部具备，还明确不从出厂/收货/入库起算；无实质遗漏 |
+| R1 / dev_missing | 价格未知、自交付起18个月保修，正确 | 两问完整，无虚构价格或单位混淆 |
+| R2 / ih2_06 | 记录时长比较及同负载未知，正确 | 明确10h>9h且仅属各自负载记录，不能外推同负载优劣，完整 |
+| R2 / dev_zero | 零值与测量完成，正确 | 明确0s=0ms及相同偏差，零不等于缺测，完整 |
+| R2 / dev_calibration | 正常条件、120日历日、首次启用确认及更换校准起算，正确 | 首块全部具备，两个周期未混淆，完整 |
+| R2 / dev_missing | 价格未知、保修期限与起点，正确 | 完整且简洁，没有额外未经支持的事实 |
+
+除设计已记录的R1比较回答不够完整外，未发现额外实质问题；v4分段为7/8核心回答完整。所有引用均指向实际输入来源。8个分段回答均只有一个token块，token拼接=done.full_response=results.answer；每答仍仅一次模型调用。
+
+### v4 Measured Tradeoff
+
+全部8槽原始首块P50为3.364225s→1.794193s，下降**46.668%**；总完成P50为3.364226s→1.831219s，下降**45.568%**。该收益主要对应更少的生成工作与更短的最终回答，不能描述成大量后文在首块之后继续输出。由于包含1个未完整回答的比较样本，既不能宣称v4全部质量通过，也不能把46.7%直接当作v5分流后的最终收益。
+
+### v5 Decision
+
+**可进入红绿编码，无剩余Critical/High设计准入阻断。** 采取有限适用范围，比继续要求同一精简schema对所有题型稳定更符合已有证据。
+
+- 比较/等值/差值/倍数命中本地中英文规则时，保留已合格bounded完整生成；其它问题采用conditions→answer。选路发生在本次生成之前，不试错后重生，因此不增加模型调用。
+- Thinking现有Generate读取最后一条HumanMessage，而Rewrite会追加改写问题。已提出并复核design第59行的补充：`rewrite_count>0`一律保守使用完整生成，避免原比较词被改写掉后走入精简路径。sync generation_chain与async Generate传相同已有参数，**不新增状态键或分类模型**；该接线问题已在设计内闭合。
+- 同一helper需要在每次请求拿到question/rewrite_count后作决定，实际schema回归应覆盖中文比较、英文比较、等值/倍数及改写丢词；不把选择结果缓存在共享模型或无问题参数的chain中。沿用设计中的两类定向红绿即可，无需扩展实验矩阵。
+- 本地词匹配是有限规则覆盖，不是完整自然语言语义分类：保守地多送完整路径只降低加速覆盖，漏匹配则仍可能暴露精简路径的质量边界。最终既定新留出同时核对实际选路与全文答案，不要求规则穷尽所有表达。
+- 这4道开发题里，明确比较与等值题均应保留完整路径，校准及缺失价格题可用精简路径；最终需报告实际分流数量、全部题目分母、整体/模式分位数及质量。不能把比较题从质量分母删除，也不能声称比较题加速。
+- 默认false保持到原定最终组合验证完成；v1/v3/v4原记录保留。未要求继续优化所有题型，也未提出新机制。
+
+### F-05 Update
+
+已复核`core/local_rag_generation.py:47-48`仅在segmented分支严格检查finish_reason==stop，legacy未改；`test_nonstream_requires_same_stop_contract`包含None/tool_calls/length/content_filter回归。`validation/v4-unit-e2e.log`记录23 passed，F-05代码缺口已修复，状态更新为verified-by-test-test_nonstream_requires_same_stop_contract。该日志仍带测试进程结束时的SQLite ResourceWarning，不应在最终报告中称其输出完全无警告；既定最终矩阵负责如实归档其处理情况。
+
+
+## Final v5 API and Step 3 Mixed Queue Review — 2026-11-11
+
+**Scope**: 独立逐条读取`data/eval/local-adaptive-api-{baseline,candidate}/results.jsonl`全部32答，以及`data/eval/local-queue-{off,fair}-v1/results.jsonl`全部32答的首块、全文和实际来源；核对各组`model-http.jsonl`的真实schema、生成完成原因和调用数量。没有运行模型、读取defender报告或改动冻结的prompt/词表；本节不包含尚待执行的holdout-v5。
+
+### v5 API Quality and Actual Routing
+
+baseline与candidate均启用fair调度，差异为分段开关false/true；每组两模式×两轮×4题共16槽，未删除比较题或失败槽。
+
+| Case | Baseline, four answers | Candidate, four answers | Actual candidate schema |
+|------|-----------------------|-------------------------|-------------------------|
+| ih2_06 | 均明确芦序600分钟/10小时长于赤砚540分钟/9小时，且不能外推同负载优劣 | 同样完整；5W/8W对应正确，没有把记录比较写成同负载优劣 | basis→conditions→conclusion，4/4 |
+| dev_zero | 均回答0ms=0s、两者偏差相同，零值来自已完成测量而非缺测 | 同样完整，无未支持的非零偏差或缺测推断 | basis→conditions→conclusion，4/4 |
+| dev_calibration | 均保留Q2、正常连续使用、120日历日、首次投入使用确认起算及换探头先校准后重算 | 首块均包含这些条件，且明确排除出厂/收货/入库起算；没有省略正常使用限定 | conditions→answer，4/4 |
+| dev_missing | 均说明价格未提供、保修18个月且从交付起算 | 同样完整，没有将42mm显示宽度当作价格 | conditions→answer，4/4 |
+
+**本组结论**：baseline 16/16、candidate 16/16核心问题与关键限定完整；未发现candidate相对对应baseline或输入证据的实质质量退步。引用均指向本次实际输入来源，没有新增错误来源或不受来源支持的关键事实。少量措辞重复或语病不改变结论，不作为新阻断。
+
+实际调用而非仅配置显示：baseline 16次最终生成均为完整schema；candidate为8次完整、8次精简，覆盖率8/16。Fast每请求1次模型调用，Thinking每请求3次控制+1次最终生成；两组各40次调用（24 control +16 generation），未增加生成重试或在线judge。每次最终生成都是合法完整JSON且finish=stop。
+
+这32答均只发出一个token块，首块即全文；因此不能据此宣称在这些短答案上观察到了多段持续交付。每答token拼接=done.full_response=results.answer，HTTP200、generation_complete=true、status=complete、refused=false各16/16。首块包括完整回答中的后续说明段，不能把“第一自然段”误作本实验的首个发布块。
+
+### Step 3 Mixed Queue Quality and Denominators
+
+off/fair两组均关闭分段，最终生成均为basis→conditions→conclusion；每组为2 Fast+2 Thinking同时请求×2题×2轮，共16槽。已按round/mode/case/slot核对，未用完成顺序冒充配对顺序。
+
+| Group | HTTP / generation complete | Comparison fully answers both questions | Calibration includes all key conditions | Overall semantic completeness |
+|-------|----------------------------|-----------------------------------------|-----------------------------------------|-------------------------------|
+| off | 16/16 | 6/8 | 8/8 | 14/16 |
+| fair | 16/16 | 8/8 | 6/8 | 14/16 |
+
+必须保留的四个不完整样本：
+
+| Evidence row | Concrete omission | Assessment |
+|--------------|-------------------|------------|
+| off `results.jsonl:4`, R1/thinking/ih2_06/slot=3 | 首块及全文列540与600分钟，说明不能判断同负载优劣，但未直接答出按记录谁更长 | 与v4既定评审标准相同，算比较任务不完整；数值、引用和不可外推限定本身正确 |
+| off `results.jsonl:10`, R2/fast/ih2_06/slot=0 | 列芦序10小时、赤砚9小时及不能判断同负载，全文未明确谁在记录中更长 | 同样算任务不完整，不因读者可自行比较而改判通过 |
+| fair `results.jsonl:5`, R1/fast/dev_calibration/slot=0 | 全文漏“正常连续使用”适用条件 | HTTP捕获index=13的输入包含该条件，输出conditions=[]且basis/conclusion也没有该限定；不是渲染时丢字 |
+| fair `results.jsonl:14`, R2/fast/dev_calibration/slot=2 | 同样全文漏“正常连续使用” | HTTP捕获index=34亦为有该输入、conditions=[]且全文省略；周期和两个起算点其余正确 |
+
+其它28个混合请求的首块和全文核心事实、结论、适用条件与引用可接受。所有32答均一个token块，token拼接=done.full_response=results.answer；off/fair各40次模型调用（24 control +16 generation），全部最终生成finish=stop。没有HTTP失败、busy、截断、空回答或未完成槽，**技术完成分母16/16不能替代语义通过14/16**；全部16槽仍保留在延迟和完成率统计中。
+
+调度对照未观察到总体语义完整率下降，但错误分布发生变化：fair比较完整，两个Fast校准回答漏条件。不能据这小批非逐token确定的生成样本，把条件遗漏因果归到队列实现，也不能宣称队列提高质量或答案质量完全不变。这两例暴露的是完整bounded生成也不能保证自由文本条件提取完备；保留原文与分母，并在最终结果中如实陈述即可，不据此新建通用语义检测、二次修复或扩展实验矩阵。
+
+### Decision
+
+**本轮未识别新增Critical/High实现阻断，可继续既定冻结留出和最终交付验证；本节不是提前批准默认启用。** v5实际分流及开发题质量通过。Step 3对照的2/16与2/16语义不完整须在最终实验说明中披露，不能写“全部回答质量通过”。最终默认值仍依照已计划的留出与实际收益裁决，不更改冻结prompt/词表，不删失败样本。
+
+
+## Frozen v5 Holdout Review and Default Recommendation — 2026-11-11
+
+**Evidence**: 已独立阅读`validation/holdout-v5.json`协议、`data/eval/local-adaptive-holdout-{baseline,candidate}/results.jsonl`全部16槽及`model-http.jsonl`实际请求/响应。12个生成答的每个发布块和全文均已审阅，另4个弱检索终态单独核对。输入包含完整原始规则与notes，未将协议的manual_required或答案推导当模型输入。本评审未运行模型、改prompt/词表或阅读其他reviewer的结论。上一节混合off/fair全部32答的审阅已完成，无待补抽样。
+
+### Accounting and Routing
+
+| Item | Baseline | Candidate |
+|------|----------|-----------|
+| All request slots | 8 | 8 |
+| Completed generation / all slots | 6/8 | 6/8 |
+| Fast flow weak-retrieval terminal | 2/8 | 2/8 |
+| Model calls | 18 = 12 control + 6 generation | 18 = 12 control + 6 generation |
+| Actual final schema | 6 complete | 2 complete + 4 compact |
+| Delivered body blocks | 全8槽各1块 | 7槽各1块，R1 Thinking scanner为2块 |
+
+两个Fast flow槽在两组中都没有进入生成（model_start=model_end），返回相同安全资料不足正文，metadata为status=unavailable、generation_complete=false、reason=retrieval_terminal、confidence=None、confidence_degraded=true、retryable=true。HTTP均200不能算成功回答；失败/未完成分母仍为2/8，不能删除这两槽再报告100%完成。已有检索终态的存在也意味着本留出没有验证Fast对新比较题的生成质量，不能把Thinking的通过扩称到两模式均通过。该限制两组相同，未显示分流造成新增拒答。
+
+实际精简覆盖为全部槽4/8，或已进入生成的4/6；这两个口径须同时说清。每次最终生成都是合法完整JSON且finish=stop；两组所有槽token拼接=done.full_response=results.answer。比较题仍为完整schema，scanner为精简schema，没有额外生成、重试或在线judge。完成状态只证明生成协议结束，不能代替下述语义评审。
+
+### Complete Answers and First Deliveries
+
+- **Thinking flow，两轮两组共4答**：数值换算、记录比较与不同工况不可外推均正确。baseline统一到0.25L/s与0.23L/s，符合协议明确允许的等价单位；不能因为没有逐字写15L/min与13.8L/min而判失败。candidate给出15L/min与13.8L/min，明确苔弦更大；两组均保留液体甲/27°C与液体乙/17°C及同工况未知。每答首块即全文，未发现实质退步。
+
+| Scanner pair | Baseline | Candidate first block and full answer |
+|--------------|----------|--------------------------------------|
+| R1 Fast | 操作范围、初始起算、37有效小时/排除待机、失败停机、更换后通过才重置、未知室外规则/费用均明确；但没有给出指定参考页、序列号、日期/结果/失败记录等请求中的具体准备记录步骤 | 范围、首次起算、时长、失败处理与未知费用/环境保留。**更换后的周期重置未明确**：fresh 37-hour interval只写在失败后重检通过的条件句内；后续更换段仅要求重新检查，没有说明成功更换检查后即重置。全文仅此块。准备记录步骤同样缺失 |
+| R1 Thinking | 关键规则和具体准备/记录步骤较齐全，初次/周期检查目的解释较简略 | 两块合读给出实际准备、序列号、日期/结果、保留失败记录及追踪目的，关键规则可接受。首块“a fresh 37-hour interval begins only after a check passes”是概括表达，结合首次通过后投用与更换后重新检查已表达起算条件；第二块把首次起算写得更具体，不据缺少固定“not delivery”字样判首块失败 |
+| R2 Fast | 明确更换后检查通过才开始新的37小时周期；其余关键条件正确。仍未充分展开准备/记录walkthrough | 与R1 Fast相同，新的周期只在失败重检语境出现，更换后的成功检查重置规则没有明确给出；其余关键条件正确。没有后续解释块补足，也未展开实际准备/记录步骤 |
+| R2 Thinking | 有指定参考页准备、设备序列号、日期/通过失败记录、保留失败记录，以及旧头结果不适用于新头的理由；核心规则正确 | 核心规则、两个起算点、失败处理和未知边界齐全；但全文缩成一个规则段，**没有提供所要求的实际walkthrough**：漏指定参考页准备，记录只提序列号/日期/结果，未展开失败记录保留与追踪用途，也省略更换为何需新检查的说明。相对baseline是请求中操作说明内容的减少，而非单纯改写措辞 |
+
+candidate R1/R2 Fast的具体定位为`results.jsonl:2,6`，HTTP捕获index=1,10。完整输入明确包含“After replacing the scanning head ... Begin a fresh 37-operating-hour interval only when that check passes”，候选输出未在更换步骤交代该起算关系；对应baseline直接写出了这一关系。其余语句不足以清楚区分“更换检查一次通过”与“检查失败后重检通过”两种起算情形，不能按条件完整通过。
+
+candidate R2 Thinking定位为`results.jsonl:8`、HTTP index=18。它确实保留了操作规则，不能误报为数值或安全停机错误；问题是用户另行要求的practical walkthrough和解释被明显压缩。反过来，baseline Fast的同类说明不足以及baseline Thinking对部分目的解释的简略也应保留，不能把baseline当完美金标。协议的全题要求没有在所有样本满足，因此两组均不能宣称“6/6完整满足所有要求”。
+
+所有candidate关键引用均来自实际提供的相关文件；未发现新增数值错误、虚构价格、室外操作规则或错误停止条件。正常同义表达、概括句及重复不算失败。本次拒绝默认启用的依据是已请求的内容和起算关系减少，不是要求自由文本形式化或逐字匹配。
+
+### Benefit and Decision
+
+保留全部8槽的首块P50为7.483s→4.872s；仅6个完成生成槽为8.638s→5.670s。候选有真实速度收益，但含上述不完整说明，不能把速度下降作为质量已通过的证据。4个精简样本只有1个发出第二块，大部分收益仍是减少生成内容，并非所有长说明都实现了完整首段后持续交付。
+
+**Step 4建议：保持默认false、允许显式启用，以当前证据完成交付，不继续用这批留出调prompt/词表。** 开发题的质量通过不能覆盖本次新操作说明上的退步。无需新增通用语义检测、额外模型调用、二次修复或扩大实验；现有实现、单调用收益、适用边界与历史失败可以完整归档。若未来再针对这些问题修改策略，这批题即转为开发题，不能再次宣称独立留出。
+
+**Step 3建议：质量方面不新增阻断，最终默认启用可独立于Step 4裁决。** 已审混合off/fair均14/16语义完整、16/16技术完成，未见总体语义完整率下降，但不能宣称所有回答质量不变。是否默认fair还需结合当前执行中的真实容量、取消清理和性能结果；本节不提前把尚未收到的探针结果写为通过。
+
+
+## Final Implementation Review and Step 3 Default — 2026-11-11
+
+**Scope**: 当前工作树的`core/fast_mode.py`、`core/local_rag_generation.py`、`core/segmented_generation.py`、Generate、GuardrailManager、SkillContext、chat API/history、`web/src/stores/chat.ts`与`ChatView.vue`；同时复核已实现的queue/SDK包装、容量及live-cancel探针与结果。仅报告可触发的Critical/High实现缺陷；未改业务代码、未运行真实模型。
+
+**Findings: 新增Critical 0，High 0。** 本结论针对已读代码和现有证据，不将Step 4留出质量边界改写为通过。
+
+### Admission and Cancellation Evidence
+
+- `data/eval/local-queue-capacity-v2/results.json`：真实SDK流占用活动槽后，10个新调用产生8个等待和2个queue_full；取消8个等待后pending=0，未增加网络模型调用。随后等待超时为30.030430s，reason=queue_timeout，仍只有原先1个模型调用。关闭活动流释放耗时0.000687s，后续OK调用0.130689s；最终实际2 calls、active=0、pending=0。
+- 该容量探针是在真实响应首chunk后**主动保留流及lease**，用于验证应用准入和超时。它不证明GPU连续计算了30秒，也不应报告为30秒GPU饱和试验。v1探针同步问题及失败日志保留，最终依据为v2。
+- `data/eval/local-live-cancel-v1/results.json`：真实生成收到首个非空内容“整理”后，调用公开SDK流的aclose，直到槽释放为0.000543s；紧接的OK请求0.153754s。总2 calls、active=0、pending=0，未出现取消后占槽不退或额外调用。
+- 真实探针覆盖SDK流关闭；先前确定性回归覆盖等待取消/授予竞争、sync/async共享槽、传输关闭顺序与typed busy公共边界。它们与UI AbortController/取消异常传播的代码审查共同构成本轮证据，不能声称真实探针本身跑过浏览器断网全过程。
+
+### Code Assessment
+
+| Boundary | Review conclusion |
+|----------|-------------------|
+| Shared model admission | sync/async及四SDK入口使用同一thread-safe队列，无可继承重入凭据；槽在内部SDK流关闭之后释放。busy不进入控制/改写/生成重试，既有F-03/F-04修复仍在 |
+| First checked paragraph | conditions完整解析、引用验证后才与answer[0]原子合成；半对象/未闭合分隔符不发布。每个累计候选经过现有检查，拒绝改写已发布前缀；异常只追加固定未完成文案 |
+| Completion and sync parity | 精简非流式必须finish=stop，流式也检查stop和完整schema。F-05修复只在新分支；比较或rewrite_count>0统一保留完整生成，无二次模型修复 |
+| Checker receipt | 检查器/checked_output只存在于本次新SkillContext；不从state载入、不导出到state。before-hook注入当前检查器，after-hook只跳过完全相同已检查正文；未发现可触发的检查绕过 |
+| Graph/API/history | Generate整键写generation_outcome，入口清旧值；Fast提供同义状态。API显式传播metadata、保存最终AIMessage并在历史读取；输出检查失败改为未完成，公共confidence=None。general fallback清掉原生成失败状态，避免成功通用回答继承旧失败 |
+| Partial/cancel UI | done中的未完成状态与历史metadata可见；流结束无done、SSE错误、AbortError均保留现有正文。停止操作abort请求；取消异常不进入生成成功保存路径。这里“保留正文”指当前显示内容，不宣称用户取消后的未保存文本在重开历史仍存在 |
+
+`adaptive-green.log`已实读44 passed，`fallback-state-green.log`为10 passed；`stop-contract-red.log`是None/tool_calls两项真实失败、原length/content_filter两项通过，修复后保留四参数回归。`full-ui.log`已记录23 passed、1 skipped。旧`full-backend-v2.log`的1个fallback失败不能抹掉或称该次全绿；实现者修复后的定向绿和最终全矩阵分别归档。此评审不代替尚待最终确认的完整后端/coverage命令退出状态，也不新增额外验证门禁。
+
+### Step 3 Default Decision
+
+**建议在现有本地bounded/qwen3.5:9b匹配范围内将LOCAL_LLM_SCHEDULER默认设为fair，保留off回滚；LOCAL_RAG_SEGMENTED默认保持false。** 有界等待、满载明确拒绝、超时不调用模型、取消释放及同步异步统一准入均有直接证据，适合16GB单GPU部署。
+
+收益必须准确描述为准入和背压控制，不是模型算力提升。混合对照保留各16槽，完成时延整体P50为11.809s→12.072s，P95为18.946s→18.298s；Fast P50 7.453s→7.378s、P95 9.398s→9.662s，Thinking P50 16.330s→16.635s、P95 19.018s→18.886s。小样本中分位数有升有降，批次总耗时73.895s→72.686s，不支持稳定吞吐提高或每种请求均加速的宣传。
+
+质量分母仍采用上一节结论：off/fair各14/16语义完整、16/16技术完成，具体遗漏原文保留。队列默认建议不依赖Step 4默认开启，也不依赖把这些遗漏改判通过。完整矩阵完成后可以按已授权范围交付当前两步，无需继续优化或追加新的模型实验。
+
+
+## Final Matrix Closure — 2026-11-11
+
+已按收尾范围独立核验完成日志及最后两组运行记录，没有新增实验或扩大代码审查范围。
+
+- `validation/final-backend.log`明确记录**1274 passed, 6 skipped, 3 warnings**，耗时63.78s；同份日志coverage TOTAL为**74%**。本次完整矩阵已通过，替代上一节“最终后端退出结果待确认”的状态；旧失败记录仍保留。
+- `validation/full-ui.log`为**23 passed, 1 skipped**，其中已包含分段partial和stop两项。随后`validation/ui-final.log`为分段3项全部通过，新增的是history保留未完成提示；因此合计唯一通过用例是**24 passed、1 skipped**，不是23+3重复计数。
+- `data/eval/local-final-default/results.jsonl`默认配置Fast/Thinking各1槽，**2/2 HTTP200且generation_complete=true、status=complete**，共5次模型调用。
+- `data/eval/local-final-combined/results.jsonl`为fair+segmented显式启用的混合收尾验证，Fast/Thinking×比较/校准共4槽，**4/4 HTTP200且generation_complete=true、status=complete**，共10次模型调用。该小批完成结果不改判此前独立留出的长说明质量边界，也不将显式组合开关当作新的默认设置。
+
+**Final recommendation unchanged: scheduler默认fair，segmented默认false。** 既定矩阵已收口，当前评审无未解决的Critical/High实现阻断，可按已授权范围打包交付。分段仍保留为可选功能，已有收益、质量遗漏和失败分母按前文如实保留。
