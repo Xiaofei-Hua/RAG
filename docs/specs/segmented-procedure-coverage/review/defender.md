@@ -35,3 +35,7 @@
 跨语言/缺映射/资格不明先回原完整生成；低相关异语仅在已测概率和强同语种依据同时满足时排除，缺分不作 0，原全局 rerank 数值/消费者不变。Fast 三入口及 Generate 共用预选结果，实际 context/kept/sources 一致；原检索证据与历史保留。非流程、比较、rewrite 维持完整 GroundedAnswer；temperature 0 仅作用于合格流程选择，普通生成仍 .7。检查失败走不可用及 confidence=None，未加模型核验或生成重试。
 
 准予两个独立阶段：先纯条款机制/概率标记及纯函数契约，再 API 接线/完整发布与文档。两个阶段均保持默认 false，分别完成适用测试和 CI；最终 tracking 用实际提交补闭环。本报告不是未经检查即合并授权，也不新增原任务之外的质量平台或防御门禁。
+
+## Delivery Verification Addendum
+
+主Agent补记（不改变独立语义评审结论）：Stage 1实际29a6ae1独立矩阵1282 passed/6 skipped、coverage74%；Stage 2补默认关闭/显式false回归后1315 passed/6 skipped、coverage75%，日志为归档中的stage1-backend.log、final-policy-matrix.log及相应coverage。运行时代码冻结未变，新增测试仅证明不启用时保留原路径。

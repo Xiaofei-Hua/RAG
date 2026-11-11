@@ -116,4 +116,4 @@ retrieve -> generate  (/no_think)
 
 ## Checked Publication
 
-SkillContext.output_checker/checked_output是本次调用的非持久化检查器/receipt，不能从Graph state反序列化。before-hook注入当前GuardrailManager配置；分段生成累计检查后才写custom token，after-hook仅对相同已检查正文避免重复处理。比较与rewrite_count>0保留完整生成，不能按改写后的问题漏选比较回退。`PARTIAL`只供技能状态使用，对外完成性必须经shared_state终态传递。最终保存AIMessage.additional_kwargs中的generation_outcome仅是会话持久化，不是Graph通信。
+SkillContext.output_checker/checked_output是本次调用的非持久化检查器/receipt，不能从Graph state反序列化。before-hook注入当前GuardrailManager配置；合格流程选择等待完整正文并检查后才写custom token，after-hook仅对相同已检查正文避免重复处理；其他问题保留完整生成。比较与rewrite_count>0保留完整生成，不能按改写后的问题漏选比较回退。`PARTIAL`只供技能状态使用，对外完成性必须经shared_state终态传递。最终保存AIMessage.additional_kwargs中的generation_outcome仅是会话持久化，不是Graph通信。

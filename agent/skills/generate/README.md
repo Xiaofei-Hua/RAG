@@ -9,9 +9,9 @@
 AIMessage为最终用户正文；generation_evidence为实际使用的证据集合；generation_outcome整键描述complete/incomplete/unavailable。失败/拒答清旧状态，缺失核验信号保持None/degraded。
 
 ## Publication
-LOCAL_RAG_SEGMENTED开启且问题非比较、rewrite_count=0时，conditions完整数组与第一个answer共同检查后一次发布首段，其余解释逐段累计检查；检查不得改写已发前缀。未完成输出保留已检查部分并返回PARTIAL/明确终态。比较和改写保留basis→conditions→conclusion完整生成；启发式分流不承诺识别所有隐含比较。
+LOCAL_RAG_SEGMENTED默认false；显式开启且通过bounded/流程/同语种资格、非比较、rewrite_count=0时，同次模型选择并排列条款，完整stop后组成原文正文，经当前输出检查器一次检查再发布。其他问题保留basis→conditions→conclusion完整生成。实际kept来源与上下文同步；原retrieval_evidence保留。非法ID/length/检查失败为不可用且confidence=None，不二次生成。
 
-SkillContext中的当前输出检查器/receipt不序列化。队列busy直接传播到Harness，不进入生成重试。同步非流式与流式都要求有效JSON、真实来源及正常stop结束。预算2048、temperature0.7/top_p0.8、reasoning_effort=none。
+SkillContext中的当前输出检查器/receipt不序列化。队列busy直接传播到Harness，不进入生成重试。同步非流式与流式都要求有效JSON、真实来源及正常stop结束。预算2048、top_p=.8、reasoning_effort=none；流程选择temperature=0，其他生成=.7。新留出相关性未合格，默认关闭，见[实验结果](../../../docs/specs/segmented-procedure-coverage/results.md)。
 
 ## Validation
 [设计、独立评审与实测](../../../docs/specs/local-scheduling-streaming/)，[配置与回滚](../../../docs/deployment/BOUNDED_LOCAL_RAG.md)。legacy配置定义以config.py为准，不能把legacy重试次数当作bounded调用次数。

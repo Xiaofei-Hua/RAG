@@ -259,3 +259,23 @@ def test_reranker_marks_actual_probability_without_changing_scores():
     )
     model.activation_fn = None
     assert all("rerank_output_space" not in d.metadata for d in reranker.rerank("query", docs))
+
+
+@pytest.mark.parametrize("flag", [None, "false"])
+def test_procedure_default_and_opt_out_keep_original_generation(
+    bounded_local_model, monkeypatch, flag
+):
+    from core.local_rag_generation import generation_chain
+
+    _, inputs = fixture_input()
+    if flag is None:
+        monkeypatch.delenv("LOCAL_RAG_SEGMENTED", raising=False)
+    else:
+        monkeypatch.setenv("LOCAL_RAG_SEGMENTED", flag)
+    model, calls, _ = bounded_local_model
+    generation_chain(model).invoke(inputs)
+    assert len(calls) == 1
+    schema = calls[0]["response_format"]["json_schema"]["schema"]
+    assert "basis" in schema["properties"] and "ProcedureParagraph" not in schema["$defs"]
+    assert calls[0]["temperature"] == 0.7
+    assert inputs["context"] in calls[0]["messages"][-1]["content"]

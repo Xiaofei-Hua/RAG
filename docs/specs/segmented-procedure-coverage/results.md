@@ -26,11 +26,12 @@ RTX5070Ti 16GB，Qwen3.5:9b Q4_K_M，Ollama0.24.0-format-backport，context4096/
 小样本、分批运行，不外推普遍尾延迟改善；开发普通Fast P95由4.022s到7.236s，未改路径仍有波动。温度0重复输出是稳定性/两入口验证，不是独立随机样本或统计显著性证明。
 
 ## Validation
+- Stage 1实际提交29a6ae1在独立worktree运行完整unit/e2e/perf：1282 passed/6 skipped，coverage74%；最终接线矩阵另列如下。
 - 核心接线红17失败→绿49通过；资格/范围修正红→绿；实际背景去除红5失败→绿69通过，均为固定失败输出/请求契约测试。
-- 最终 `uv run --frozen --no-sync python -m coverage run --branch -m pytest tests/unit/ tests/e2e/ tests/perf/ -q`：1313 passed、6 skipped；3个既有warning。`coverage report --fail-under=60`：75%。
+- 最终 `uv run --frozen --no-sync python -m coverage run --branch -m pytest tests/unit/ tests/e2e/ tests/perf/ -q`：1315 passed、6 skipped；3个既有warning。`coverage report --fail-under=60`：75%。
 - Golden diff：新增流程原文、选择schema/prompt与预期全文；旧非流程API fixture改为原完整schema，保留JSON/SSE、PII、来源、终态和历史一致性验证。
 - 本轮无前端代码变化；GitHub必需test/e2e-ui/check通过后合并，实际提交与交付见review/tracking.md。
 
 ## Evidence and Reproduction
-`validation/evidence.tar.gz`保存所有v1–v6失败/成功、原始JSONL、协议、逐答评审、历史设计、红绿/全矩阵日志及测试适配器；不含运行数据库或凭据。`validation/final-development-metrics.json`、`holdout-metrics.json`为原始记录计算的汇总。解压后按归档路径阅读，不把早期逐段首发指标与本次完整首见混用。
+`validation/evidence.tar.gz`保存所有v1–v6失败/成功、原始JSONL、协议、逐答评审、历史设计、红绿/全矩阵日志及测试适配器；不含运行数据库或凭据。`validation/final-development-metrics.json`、`validation/holdout-metrics.json`为原始记录计算的汇总。解压后按归档路径阅读，不把早期逐段首发指标与本次完整首见混用。
 实验适配器在归档tests/integration中，复跑前恢复到tests/integration，使用隔离存储/同一限定模型服务：`uv run --frozen --no-sync python tests/integration/run_bounded_api_probe.py --protocol <protocol.json> --output <new-dir> --policy bounded --scheduler fair --segmented false|true --rounds 3 --modes fast,thinking --timeout 45`。默认false；本次不继续针对已暴露留出调提示。后续需要证明相关性选择及首节顺序的改进能泛化，再另冻新题评估默认资格。

@@ -75,3 +75,7 @@ uv run --frozen --no-sync python tests/integration/run_bounded_api_probe.py --pr
 ## Documentation and Delivery
 维护文档已同步：根README/CHANGELOG/AGENTS、agent/core/web/tests契约、agent技能总览及agent/generate/grade/retrieve/rewrite说明、tests README、API/SSE/history、部署总览/本地有界/WSL/裸机/开发/离线/运维/API-only指南、四个环境示例、spec索引和技术报告。不存在的models/core/web README不新造；MCP接口未改，旧spec/14B实验保留历史标识与后续链接。
 实现分阶段提交：队列32da0f0，忙碌终态30e4fe5，分段解析16ab3e2，接口/UI a40d4a0，默认资格与维护文档a71a885。PR必须通过test/e2e-ui/check后合并受保护main，不绕过保护。归档仅含本轮合成语料、模型请求/答案、测试日志、探针和UI截图，不含运行数据库或用户配置。
+
+## Procedure Follow-up
+
+2026-11-11步骤遗漏修复与新的独立留出见[后续实验](../segmented-procedure-coverage/results.md)。此处历史失败不改判；第3步fair继续默认，第4步仍false。
