@@ -849,3 +849,7 @@ query 片段、filter、URL query 或异常文本。
 - 真实 Windows localhost、首次大文件下载和目标 GPU/Ollama gate 必须在目标机器验证，CI fixture 不能
   代替真机结果；
 - 需要局域网、公网、TLS、反向代理或多用户认证时，停止使用本 local-only 指南，另做安全设计评审。
+
+## Local RAG Scheduling and Publication
+
+本地9B/general合格运行时的单槽队列、比较题完整生成、非比较题条件合并分段、忙碌/未完成终态与独立回滚见[Bounded Local RAG](BOUNDED_LOCAL_RAG.md)。16GB机器使用单应用worker，`OLLAMA_NUM_PARALLEL=1`、context4096；不要用增加worker绕过模型队列。队列满/等候30秒终止为可重试忙碌，未完成正文不会冒充完整答案。修改`LOCAL_LLM_SCHEDULER`或`LOCAL_RAG_SEGMENTED`后重启应用。质量/时延数据见[验收结果](../specs/local-scheduling-streaming/results.md)。

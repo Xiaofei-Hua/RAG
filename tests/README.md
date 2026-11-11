@@ -158,3 +158,9 @@ corpus/store hash 校验、AB/BA 或 balanced schedule 的结果；synthetic mic
 - 所有测试脚本均可独立运行，无交叉依赖
 - OCR 功能测试需要 `paddlepaddle` 和 `paddleocr`；首次运行会下载模型到
   `~/.paddlex/official_models/`
+
+## Local Scheduling and Checked Publication
+
+定向红绿入口：`tests/unit/test_local_model_queue.py`（公平/同步异步/取消/背压）、`test_segmented_generation.py`（完整对象/条件合成/引用/严格stop/比较与改写回退）；真实Graph/router/mock网络E2E为`tests/e2e/test_local_model_admission.py`与`test_segmented_api.py`，覆盖JSON/SSE/PII/部分状态/保存历史。前端为`tests/e2e_ui/segmented.spec.ts`，验证逐步显示、未完成与停止时保留正文。
+
+真实模型验证单独在隔离网络与存储运行，不进CI单元矩阵；每次保留全部请求槽位、实际HTTP调用、首段/总耗时、输入语料及独立全篇评审。比较与非比较分流均计入整体分母，拒答/未完成不能算完成答案。证据与复现记录见[本轮结果](../docs/specs/local-scheduling-streaming/results.md)。

@@ -1,10 +1,12 @@
 # 领域自适应 RAG 智能问答平台技术报告
 
 > 测试环境：WSL2 Ubuntu / NVIDIA RTX 5070 Ti 16GB / Ollama 0.24.0
-> 文档同步日期：2026-07-17；LLM 延迟表为 2026-05-27 历史基线，检索 benchmark 为 2026-07-16/17 隔离复测
+> 文档同步日期：2026-11-11；下文14B模型规格/延迟表保留为历史基线（2026-05-27），检索benchmark为2026-07-16/17数据。当前9B结果与运行时以前置Current Local Policy为准。
 > 领域 profile：本报告的实测数据在可选示例 aviation_phm profile（`DOMAIN_PROFILE=aviation_phm`）下采集；平台本身领域无关，默认 `general`，可按 `DOMAIN_PROFILE` + `data/profiles/*.yaml` 切换/新增领域。
 
 ---
+
+当前默认策略与实测见本文末尾[Current Local Policy](#current-local-policy--2026-11-11)及[本轮结果](specs/local-scheduling-streaming/results.md)。
 
 ## 1. 系统概述
 
@@ -12,13 +14,13 @@
 
 - **后端**：FastAPI + LangGraph + Milvus Lite
 - **前端**：Vue 3 + Vite + TypeScript
-- **LLM**：Qwen3-14B（本地 Ollama 部署，Q4_K_M 量化）
+- **LLM**：当前默认Qwen3.5:9b（本地Ollama、Q4_K_M）；14B表格与思考参数仅是历史记录
 - **Embedding**：本地默认 BGE-M3（1024 维、dense + native sparse，可替换）；API-only 默认 DashScope
 - **检索编排**：Fast、Thinking、MCP 共用 adaptive/corrective `RetrievalWorkflow`
 
 ---
 
-## 2. 大语言模型：Qwen3-14B
+## 2. Historical Model: Qwen3-14B
 
 ### 2.1 模型规格
 
@@ -58,7 +60,7 @@ Qwen3 的核心特性是**在同一模型权重内无缝切换思考模式与非
 - **推荐采样参数**：Temperature=0.7, TopP=0.8, TopK=20
 - 开关方式：`enable_thinking=False` 或用户输入 `/no_think`
 
-> **本项目集成方案**：
+> **历史集成方案（已由Current Local Policy替代）**：
 > - **Thinking 模式（RAG 深度诊断）**：保留 Qwen3 默认 thinking 行为，通过 OpenAI SDK 直接调用 Ollama 捕获 `reasoning` 字段，推理过程（约 800-1600 字符）随响应返回给前端，供用户查看模型的推理逻辑
 > - **Fast 模式（快速问答）**：在 Prompt 末尾追加 `/no_think` 关闭推理，跳过 thinking token 生成，降低延迟
 > - Temperature=0.0, MaxTokens=4096，`strip_think_tags()` 兜底过滤泄漏的 `<think...>` 标签
@@ -650,3 +652,11 @@ uv run --frozen python scripts/run_eval.py \
 - [BEIR Benchmark](https://github.com/beir-cellar/beir)
 - [Milvus Lite Documentation](https://milvus.io/docs/milvus_lite.md)
 - [LangGraph Documentation](https://langchain-ai.github.io/langgraph/)
+
+## Current Local Policy — 2026-11-11
+
+当前本机验证组合为RTX5070Ti 16GB、qwen3.5:9b/Q4_K_M、Ollama0.24.0-format-backport、context4096、parallel1、BGE-M3与reranker；不是用14B旧测量替代9B结果。模型真实版本由服务端API检查。Fast直接检索后最多一次最终作答，Thinking通常3个短控制调用再一次作答；两者均关闭隐藏思考，不线上逐句模型核验，保留None/degraded与本地输出检查。
+
+Step3在实际SDK边界共享同步/异步单槽，有界等待与取消；Step4最终采用按题分流，比较/改写保留完整输出，其余仅输出conditions→answer，结论与所有条件一起检查再发布。避免无收益的事实复述，条件缺失/比较结论遗漏由真实全篇评审和独立留出决定，不能以JSON有效替代质量。
+
+历次消融失败、全部请求分母、两轮API/混合对照、留出结果及默认决策集中见[Local Scheduling and Streaming Results](specs/local-scheduling-streaming/results.md)。配置/回滚与单worker限制见[部署入口](deployment/BOUNDED_LOCAL_RAG.md)。本文旧延迟表继续明确标历史，不与新测量跨数据集计算加速比。

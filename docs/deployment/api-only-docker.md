@@ -65,3 +65,7 @@ docker run --rm --entrypoint /app/venv/bin/python rag-platform:api-only \
 
 仓库的 prefix browser gate 使用 `tests/e2e_ui/Dockerfile.playwright` 固定 Node 与根 lock，并在
 `tests/e2e_ui/nginx-prefix.conf` 的真实 stripping Nginx 后验证 SPA、SSE 和全部 API 请求前缀。
+
+## Local-only Policy Boundary
+
+`LOCAL_LLM_SCHEDULER`与`LOCAL_RAG_SEGMENTED`只作用于已合格本地9B/general bounded运行时；普通远程API部署不套用16GB单槽策略。API新增的忙碌/未完成字段及历史状态见[HTTP API](../API.md)，本地前提与回滚见[Bounded Local RAG](BOUNDED_LOCAL_RAG.md)。

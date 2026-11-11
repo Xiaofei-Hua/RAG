@@ -162,13 +162,20 @@ POST /api/chat
 | `metadata.prompt_profile` | string | Prompt 配置标识 |
 | `metadata.structured_answer` | StructuredAnswer \| null | 结构化回答数据（仅当 active profile 定义了 `section_template` 时返回；字段为通用位置槽位，展示标签见 `section_labels`） |
 | `metadata.section_labels` | string[] | active profile 的 section_template 标签，按位置对应 `structured_answer` 字段（用于 UI 渲染领域相关标题） |
-| `metadata.reasoning` | string | Thinking 模式捕获的 Qwen3 reasoning；其它路径通常为空字符串 |
+| `metadata.reasoning` | string | legacy路径可捕获的模型reasoning；合格本地bounded两种模式都为空，不启用隐藏思考 |
 | `metadata.confidence` | float \| null | 可用时的复合置信度；不可用保持 `null`，不会伪造为 0 |
 | `metadata.confidence_level` | string | `high` / `medium` / `low` / `unknown` |
 | `metadata.refused` | boolean | 是否因证据不足、冲突或安全边界拒绝正常生成 |
 | `metadata.message_id` | string | 消息标识，用于反馈关联 |
 | `metadata.trace_id` | string | 推理 trace 标识，用于评测飞轮和排障 |
 | `metadata.retrieval_time_ms` | float | 仅 Fast 路径附带的检索耗时 |
+| `metadata.generation_complete` | boolean | 是否完整生成；false时保留部分正文/安全终态，不作为完整成功回答 |
+| `metadata.status` | string | complete / incomplete / unavailable / busy；可选，非生成路径未必提供 |
+| `metadata.reason` | string或null | 队列full/timeout、检索终止或生成/检查失败原因 |
+| `metadata.retryable` | boolean | 是否可重试；忙碌true，避免客户端自动无限重试 |
+| `metadata.model_queue_time_ms` | float | 当前请求已获槽调用的累计应用等待时间；不含未获槽超时 |
+| `metadata.model_service_time_ms` | float | 当前请求已获槽调用累计耗时，含网络/实际SDK流读取；不是纯GPU计算 |
+| `metadata.scheduled_model_calls` | integer | 当前请求调度准入次数；实际HTTP数应由wire测量，不把SDK重试误当一次 |
 | `metadata.generation_time_ms` | float | 仅 Fast 路径附带的生成耗时；安全终止时为 0 |
 
 正常 `rag` / `general_chat` / `fast` 路径返回上述统一字段集合；极端异常进入 `degraded`
@@ -1217,7 +1224,7 @@ GET /api/admin/config
     "fingerprint": "a1b2c3d4e5f6"
   },
   "llm": {
-    "model": "qwen3:14b",
+    "model": "qwen3.5:9b",
     "temperature": 0.0,
     "max_tokens": 4096,
     "timeout": 60.0,
@@ -1581,3 +1588,15 @@ curl -X POST http://localhost:8000/api/feedback \
 
 完整开发、裸机、容器、气隙和运维命令以 [Deployment Guide](deployment/README.md) 为准；
 `docs/specs/*` 保留历史设计与决策，不作为操作手册。
+
+## Bounded Local Generation and Streaming
+
+本地9B/general/合格引擎的bounded策略：Fast最多1次最终生成；Thinking一般3次短控制+1次最终生成，改写时另计。深度模式表示检索编排，不表示开启无限隐藏思考。grounding不可用仍返回null/degraded，没有新增逐句模型核验。
+
+启用`LOCAL_RAG_SEGMENTED`后，非比较且未改写问题按conditions→answer生成，首个token事件是完整结论与全部已提取条件一起检查后的正文；后续事件只追加已检查解释。比较问题以启发式识别，及任何已改写问题，继续缓冲完整bounded答案后检查发布。token事件不是模型原始token，也不暴露内部JSON。两种策略都保留正文来源引用；结构与来源检查不等于语义事实评分。
+
+正常结束时，token拼接=done.full_response=会话保存正文。中途停止或无效结束时，已交付前缀保留并附固定未完成提示，done.metadata.generation_complete=false；前端网络中断/用户停止保留本地已显示正文，服务端取消不保存成功答案。`GET /api/chat/history/{session_id}`每条消息新增metadata，恢复保存的生成终态；旧消息metadata为空。
+
+`LOCAL_LLM_SCHEDULER=fair`仅在合格本地bounded范围内共享1个运行槽、8个等待项、30秒等待上限。intent/Graph/Fast任一准入被拒绝即终止，不继续模型重试，JSON或SSE done返回安全忙碌正文、status=busy、generation_complete=false、retryable=true、confidence=null和confidence_degraded=true；HTTP保持200，客户端应按metadata识别，非拥塞协议错误仍走既有HTTP/error分支。队列不是跨worker全局锁，16GB部署只启一个应用worker。
+
+开关、默认资格和独立回滚见[部署说明](deployment/BOUNDED_LOCAL_RAG.md)，质量与分位数见[本轮结果](specs/local-scheduling-streaming/results.md)。

@@ -94,3 +94,7 @@ docs/specs/
 - findings 用本 spec 独立 `F-EG-xxx` 编号（不与历史 F01-F25 混用）。
 - 真实存在的「真实后端 HTTP 全链路回归不可见」缺口显式登记为 `issue-KNOWN-GAP-1`（`review/tracking.md` §2 open 项），有阶段二承接——**非假装闭合**。
 - 执行时按 `tasks.md` 的 Stage 1-4 分组，逐 stage 独立可合并；执行者须遵守 `design.md` 的 D-1（门控式 `if:`，禁三元 runs-on）/D-2（KNOWN-GAP 逐字声明）强制前置。
+
+## Current Local RAG Work
+
+当前本地9B基线为[bounded-local-rag](bounded-local-rag/)，后续调度与按题分段见[local-scheduling-streaming](local-scheduling-streaming/)及其results.md。历史规格/失败实验保留；部署和默认事实以[维护指南](../deployment/BOUNDED_LOCAL_RAG.md)为准，不从旧spec推断当前启用状态。

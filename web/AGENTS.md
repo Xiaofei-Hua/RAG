@@ -153,3 +153,7 @@ cd web && NODE_PATH=$(pwd)/node_modules node <一次性脚本.cjs>
   HTTP 客户端抽象（曾经存在过的 `src/api/index.ts` axios 客户端零调用方，已删除）。
 - 代码无 emoji（与后端约定一致）。
 - 遇到后端 API 变更，同步更新调用处的请求/响应类型与对应 E2E 用例。
+
+## Incomplete Answers
+
+消费metadata.generation_complete=false时保留正文并显示未完成；历史加载保留metadata。网络结束但无done、SSE error与停止生成均保留已显示内容；停止通过AbortController取消请求。不得把错误文案覆盖已检查前缀。分段/停止回归在tests/e2e_ui/segmented.spec.ts，关键交互截图须查看。

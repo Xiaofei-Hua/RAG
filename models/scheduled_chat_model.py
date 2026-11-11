@@ -12,7 +12,7 @@ from models.local_rag_policy import bounded_local_rag
 
 class ScheduledChatOpenAI(ChatOpenAI):
     def _queue_lease(self, kwargs, asynchronous=False):
-        enabled = os.getenv("LOCAL_LLM_SCHEDULER", "off").lower() == "fair"
+        enabled = os.getenv("LOCAL_LLM_SCHEDULER", "fair").lower() == "fair"
         if not enabled or not bounded_local_rag(self):
             return nullcontext()
         budget = (kwargs.get("extra_body") or {}).get("max_tokens")

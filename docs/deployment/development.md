@@ -45,3 +45,7 @@ curl --fail http://127.0.0.1:3000/
 
 后端和前端日志分别为 `logs/backend.log`、`logs/frontend.log`。若元数据身份不匹配，`stop.sh`
 会拒绝发送信号；先人工核验 `/proc/<pid>`，不要按端口批量杀进程。
+
+## Local RAG Scheduling and Publication
+
+本地9B/general合格运行时的单槽队列、比较题完整生成、非比较题条件合并分段、忙碌/未完成终态与独立回滚见[Bounded Local RAG](BOUNDED_LOCAL_RAG.md)。16GB机器使用单应用worker，`OLLAMA_NUM_PARALLEL=1`、context4096；不要用增加worker绕过模型队列。队列满/等候30秒终止为可重试忙碌，未完成正文不会冒充完整答案。修改`LOCAL_LLM_SCHEDULER`或`LOCAL_RAG_SEGMENTED`后重启应用。质量/时延数据见[验收结果](../specs/local-scheduling-streaming/results.md)。
