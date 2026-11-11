@@ -84,3 +84,13 @@ core/
 - `core/prompts/domain_profile.py` 的 `DomainProfile` + `data/profiles/<name>.yaml` 是事实来源；`core/prompts/profile_prompts.py` 为向后兼容入口（从 active profile 派生常量）；技能级 `prompts.py` 仅 re-export。
 - `api/main.py` 启动时记录 prompt sha1 签名用于行为可追溯。
 - 改 prompt 后必须重算 sha1 并更新签名表（影响 golden/snapshot test）。
+
+## Local Admission and Segmented Generation
+
+| Component | Trigger | Fallback | Owner |
+|---|---|---|---|
+| Local model queue | 满8等待/等待30秒 | ModelBusyError仅为内部终止信号，控制/改写/生成retry必须透传；API/Harness/Fast转busy可重试，confidence=None | models/local_model_queue.py |
+| Checked paragraph | 半JSON/无效来源/检查失败/非stop结束 | 未发布部分绝不泄露；保留已检查前缀+固定未完成提示，generation_complete=false，不二次生成 | core/segmented_generation.py |
+| Comparison/rewrite | 中英文比较启发式匹配或rewrite_count>0 | 保留已合格完整bounded生成，同样2048 tokens/单调用/原输出检查 | core/local_rag_generation.py |
+
+条件数组完整后与首个答案合成一段检查再发布；后段不得重写已发布前缀。单槽是进程内约束，配置、实测与范围见`docs/deployment/BOUNDED_LOCAL_RAG.md`。

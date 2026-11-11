@@ -46,3 +46,7 @@ Graph PPR 与 ColPali 均默认关闭；不可用或 OOM 时保留更弱但安�
 
 运行时 feature flags 与回滚说明见项目根 `README.md`；MCP 返回契约见
 `../../../docs/MCP.md`。
+
+## Generation Boundary
+
+检索结果和kept evidence的来源边界不因本地调度/分段发布而改变；weak/conflict/empty继续安全终止。生成完成性由generate拥有的generation_outcome提供，不能把未调用生成当成成功答案。详见[生成策略](../generate/README.md)。

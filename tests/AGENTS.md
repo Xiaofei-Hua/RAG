@@ -44,3 +44,7 @@
 
 - 新增 `# pragma: no cover` / `# type: ignore` / `# noqa` 需在 PR 说明理由。
 - 提交前自审：`git diff origin/main... | grep -E '^\+.*(pragma|type: ignore|noqa)'`
+
+## Local Model Admission and Publication Tests
+
+队列测试用Event/取消竞争，禁止sleep等待；网络mock需提供真实OpenAI chunk discriminator以覆盖结构化流SDK。生成终态测试同时断言token拼接、done正文、保存正文及历史metadata，检查前正文不可泄露。比较或rewrite_count>0必须走原合格schema；新prompt有golden fixture。推理capture单例在每测试后关闭，避免新增SSE capture导致SQLite泄漏。真实模型对照/留出证据不冒充单元或语义证明。

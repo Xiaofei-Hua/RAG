@@ -8,7 +8,7 @@
 系统能够导入各类手册/文档等知识资料，通过混合检索与大语言模型生成带依据的回答
 （在配置了结构化输出模板的领域下，可进一步输出摘要、要点、步骤等结构化回答）。
 
-项目默认领域无关（`DOMAIN_PROFILE=general`），使用本地 Ollama 与 Qwen3 模型，知识库和
+项目默认领域无关（`DOMAIN_PROFILE=general`），使用本地 Ollama 与 Qwen3.5:9b 模型，知识库和
 会话数据均可在本机运行，适合内网、离线环境和需要保护技术资料的场景。
 
 ## 核心能力
@@ -19,7 +19,7 @@
 - **可选前沿通道**：ColBERT、RAPTOR、Graph PPR 和 ColPali 已接入安全降级，真实模型 promotion 前保持默认关闭
 - **知识库管理**：支持上传、查询、删除、去重和重建文档索引
 - **结构化诊断**：输出诊断结论、可能原因、排查步骤、安全风险和依据来源
-- **推理过程捕获**：支持读取 Qwen3 的 reasoning 内容
+- **有界生成**：合格本地9B运行时关闭隐藏思考、单次最终作答；legacy路径保留reasoning捕获
 - **会话与反馈**：保存对话历史，收集点赞、点踩、纠正和标记反馈
 - **可靠性能力**：包含 tracing、指标、熔断、降级和输入输出 guardrails
 - **生产部署**：FastAPI 可直接托管前端静态文件，并支持 `/rag` 等反代前缀
@@ -60,6 +60,16 @@ Thinking 模式的外层 LangGraph 与共享检索工作流如下：
 Fast 模式跳过外层 Agent、Grade 和 Rewrite 节点，但复用同一 `RetrievalWorkflow`。只有
 `accept` 状态进入生成；`weak`、`conflict`、`empty` 返回对应的信息缺口、冲突或无证据提示。
 设置 `RETRIEVAL_WORKFLOW_ENABLED=false` 可回滚到旧的 list-only 检索路径，无需删除索引。
+
+## Local Generation Policy
+
+本地已合格的Qwen3.5:9b/general运行时使用有界RAG：最终作答最多一次模型调用，意图/工具/相关性控制每次256 tokens，最终生成2048 tokens；两种产品模式都关闭模型隐藏思考，深度模式的区别是检索编排。线上不逐句重复调用模型核验，缺失grounding分数为`None/degraded`，来源、结构、PII检查保留。
+
+`LOCAL_LLM_SCHEDULER=fair`开启单进程共享模型槽：1个运行、最多8个等待、等待上限30秒；短控制调用有界优先并防止长生成饥饿。队列满/超时立即返回可重试忙碌终态，不继续模型重试。16GB部署使用一个应用worker、Ollama parallel=1；这不提供跨进程全局调度。
+
+`LOCAL_RAG_SEGMENTED=true`启用按题分流：非比较且未改写的问题生成conditions→answer，结论与完整条件先经同一输出检查后一起展示，再展示检查过的解释段；比较/等值/差值/倍数或已改写问题保留合格完整生成。词匹配是保守启发式，不保证识别所有隐含比较。中断保留已检查正文并标记`generation_complete=false`，界面可停止生成；重新打开会话保留未完成标记。第3步已通过容量/取消验收，默认fair；第4步留出长流程存在步骤/起算遗漏，默认false，仅显式试用；设置off/false并重启可独立回滚。
+
+运行时资格、参数、收益及限制见[本地生成部署说明](docs/deployment/BOUNDED_LOCAL_RAG.md)与[本轮实验](docs/specs/local-scheduling-streaming/results.md)。
 
 ## 快速开始（Quick Start）
 
@@ -364,6 +374,9 @@ location /rag/ {
 | `OPENAI_BASE_URL` | `http://localhost:11434/v1` | LLM OpenAI 兼容接口 |
 | `OPENAI_API_KEY` | `ollama` | LLM API Key |
 | `LLM_MODEL` | `qwen3.5:9b` | 问答模型名称 |
+| `LOCAL_RAG_POLICY` | `auto` | 仅合格本地运行时启用bounded；legacy回滚 |
+| `LOCAL_LLM_SCHEDULER` | `fair` | fair启用单进程有界模型调度 |
+| `LOCAL_RAG_SEGMENTED` | `false` | 非比较且未改写问题按已检查段落发布 |
 | `LLM_TEMPERATURE` | `0.0` | LLM 采样温度 |
 | `LLM_MAX_TOKENS` | `4096` | 单次回答最大生成 token |
 | `LLM_TIMEOUT` | `60` | 单次 LLM 请求超时秒数 |

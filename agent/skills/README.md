@@ -48,9 +48,13 @@ AgentSkill -> RetrieveSkill -> GradeSkill -> GenerateSkill
 | retrieve | agent/skills/retrieve/skill.py | Adaptive/corrective retrieval with shared workflow, hybrid channels and safe terminal states |
 | grade | agent/skills/grade/skill.py | Document relevance grading |
 | rewrite | agent/skills/rewrite/skill.py | Query rewriting |
-| generate | agent/skills/generate/skill.py | Final answer generation (Qwen3 reasoning capture + grounding + confidence) |
+| generate | agent/skills/generate/skill.py | Bounded single generation, adaptive checked publication; legacy reasoning/grounding preserved |
 
 > Note: `IntentSkill` has been removed — intent classification lives in the chat
 > router (`api/routers/chat.py` via `core/intent/classifier.py`), not in the graph.
 > Legacy flat shim files (`agent/skills/*_skill.py`) have also been removed — they
 > only re-exported the directory skills. Always use the directory form above.
+
+## Local Execution Policy
+
+合格本地9B/general控制调用256、最终生成2048 tokens，最多一次最终作答，不在线逐句judge。所有实际SDK调用共用可选单槽调度；ModelBusyError必须越过控制/改写/生成retry到Harness终止，不能继续调用或填0分。generate按同一选择函数将比较/任何已改写问题留在完整bounded路径，其它问题条件合并后分段检查发布。完成性走generation_outcome/model_queue_outcome，检查器/receipt仅在SkillContext，详见[状态契约](../AGENTS.md)与[设计/实测](../../docs/specs/local-scheduling-streaming/)。

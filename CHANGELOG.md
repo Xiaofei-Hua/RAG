@@ -7,6 +7,12 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Changed — Local scheduling and checked publication
+
+- [breaking] 新增本地调度/分段配置`LOCAL_LLM_SCHEDULER=fair`、`LOCAL_RAG_SEGMENTED=false`（仅合格bounded范围）；单进程1槽/8等待/30秒等待，busy终止旧retry而非继续模型调用。通过off/false并重启独立回滚；多worker不能共享队列。
+- [breaking] 新增generation_outcome/model_queue_outcome状态契约与API/history完成性metadata；未完成正文保留且generation_complete=false，客户端需识别busy/incomplete而不能把所有HTTP200当完整答案。界面支持停止并保留已显示段落。
+- 显式开启分段后，非比较且未改写题目使用conditions→answer单次生成、检查后逐段展示；比较与改写保留已合格完整生成，避免精简导致明确比较结论遗漏。留出长流程有步骤遗漏，因此分段默认关闭；真实质量、首段/尾延迟与适用范围见docs/specs/local-scheduling-streaming/results.md。
+
 ### Changed — Bounded local RAG
 
 - [breaking] 默认模型由`qwen3:14b`改为`qwen3.5:9b`；已有显式`LLM_MODEL`优先，需旧模型时显式配置即可。

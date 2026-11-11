@@ -231,3 +231,7 @@ RAPTOR/visual index 与文档资产 + `milvus_data.db` + `checkpoints.db`。**�
 | `tests/AGENTS.md` | 测试分层矩阵、conftest 密封性、确定性纪律、热路径测试、Golden test |
 | `docs/specs/prompts/` | critic/defender/tracking 评审模板（严重性量表、8 字段 schema、FMEA/STRIDE、闭环追踪） |
 | `CLAUDE.md` | Claude Code 入口（`@AGENTS.md` 导入 + 工具特定提示） |
+
+## Local Generation Contract
+
+已合格本地9B/general bounded策略最终作答一次，控制256/最终2048 tokens，无隐藏思考或线上逐句judge。单进程调度与按题分段的实际契约见`docs/specs/local-scheduling-streaming/design.md`最终v5及部署指南；默认/收益以验收结果为准。忙碌typed信号必须跨retry层到请求边界终止，不能制造0分。Generate/Harness分别独占generation_outcome/model_queue_outcome；输出检查器与receipt仅在SkillContext请求生命周期，不能序列化为跨节点数据。

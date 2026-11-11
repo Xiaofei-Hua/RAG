@@ -254,3 +254,32 @@ def test_query_transform_busy_propagates_without_fallback(monkeypatch, entry):
             query_transform.condense_query("那它需要多少天？", [HumanMessage(content="校准")])
         else:
             query_transform._llm_invoke("独立测试")
+
+
+def test_default_admission_is_qualified_and_legacy_can_bypass(monkeypatch, bounded_local_model):
+    from models import local_model_queue
+    from models.local_model_queue import ModelBusyError
+    from models.scheduled_chat_model import ScheduledChatOpenAI
+
+    original, calls, _ = bounded_local_model
+    model = ScheduledChatOpenAI(
+        model="qwen3.5:9b",
+        base_url="http://127.0.0.1:11434/v1",
+        api_key="ollama",
+        max_retries=0,
+        http_client=original.http_client,
+        http_async_client=original.http_async_client,
+    )
+    monkeypatch.delenv("LOCAL_LLM_SCHEDULER", raising=False)
+    queue = local_model_queue.LocalModelQueue(max_waiting=0)
+    monkeypatch.setattr(local_model_queue, "_model_queue", queue)
+    ticket = queue.submit(False, lambda: None)
+    try:
+        with pytest.raises(ModelBusyError, match="queue_full"):
+            model.invoke("test")
+        assert calls == []
+        monkeypatch.setenv("LOCAL_RAG_POLICY", "legacy")
+        model.invoke("test")
+        assert len(calls) == 1
+    finally:
+        queue.release(ticket)

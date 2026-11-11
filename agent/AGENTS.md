@@ -44,6 +44,8 @@ agent/
 | `retrieved_contexts` | `retrieve` / `generate` | `generate` / output guardrail（grounding NLI） | 扁平化的检索文本；来源现含 graph 命中（`HybridRetriever` 三路 RRF 融合，`GRAPH_RAG_ENABLED` 开启时） |
 | `sources` | `retrieve` / `generate` | output guardrail（来源核对） | 来源名列表 |
 | `retrieval_evidence` | `retrieve` | `generate` | sanitizer 后的原始结构化证据；strict-msgpack 基础类型，失败/空召回时写 `[]` 清旧值 |
+| `generation_outcome` | `generate` | chat API / history / capture | 整键status/generation_complete/reason/retryable；所有生成终态覆盖，请求入口清None；after-hook只可降级当前generate结果 |
+| `model_queue_outcome` | Harness请求边界 | chat API | busy终态，队列full/timeout终止Graph；请求入口清None |
 | `generation_evidence` | `generate` | chat API / grounding / 来源展示 | token budget 实际保留并送入模型的 evidence kept-set；终止/拒答路径写 `[]` 清旧值 |
 | `relevant_memories` | memory before-hook（agent 前） | `retrieve`（注入记忆文档） | 长期记忆条目 |
 | `grounding_faithfulness` | `generate`（计算后缓存） | output guardrail（复用，避免二次 judge） | 忠实度分数或 `None` |
@@ -111,3 +113,7 @@ retrieve -> generate  (/no_think)
 - trace 隔离靠 `_run_trace_ctx` contextvar + `_begin_run`/`_end_run`——**禁止**改成实例属性（会串扰）。
 - 同步 `invoke()` 用同步 SQLite 连接；生产多 worker 用 `ainvoke`/`astream` + `AsyncSqliteSaver`。
 - 改动 harness 并发必须有并发测试（根 AGENTS.md §7 测试纪律）。
+
+## Checked Publication
+
+SkillContext.output_checker/checked_output是本次调用的非持久化检查器/receipt，不能从Graph state反序列化。before-hook注入当前GuardrailManager配置；分段生成累计检查后才写custom token，after-hook仅对相同已检查正文避免重复处理。比较与rewrite_count>0保留完整生成，不能按改写后的问题漏选比较回退。`PARTIAL`只供技能状态使用，对外完成性必须经shared_state终态传递。最终保存AIMessage.additional_kwargs中的generation_outcome仅是会话持久化，不是Graph通信。
