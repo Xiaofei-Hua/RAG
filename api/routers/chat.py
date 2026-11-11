@@ -25,6 +25,7 @@ from core.prompts.profile_prompts import (
     PER_DOC_GRADE_HUMAN_PROMPT,
     PER_DOC_GRADE_SYSTEM_PROMPT,
 )
+from models.local_model_queue import BUSY_ANSWER, ModelBusyError, request_model_metrics
 from utils.log_utils import log
 from utils.think_tag_utils import strip_think_tags
 
@@ -473,6 +474,7 @@ def _build_metadata(
     confidence=None,
     confidence_level: str | None = None,
     refused: bool = False,
+    outcome: dict | None = None,
 ) -> dict:
     """Build the per-response metadata dict shared by chat() and chat_stream().
 
@@ -518,7 +520,26 @@ def _build_metadata(
         meta.update(
             generation_policy="bounded", grounding_faithfulness=None, confidence_degraded=True
         )
+    meta.update(request_model_metrics())
+    if outcome:
+        meta.update(outcome)
+        if not outcome.get("generation_complete", True):
+            meta.update(confidence=None, confidence_level="unknown", confidence_degraded=True)
     return meta
+
+
+def _busy_metadata(exc, message_id, trace_id):
+    return _build_metadata(
+        route="degraded",
+        prompt_profile="model_queue",
+        message_id=message_id,
+        trace_id=trace_id,
+        intent_confidence=None,
+        intent_reasoning="",
+        source_count=0,
+        structured_answer=None,
+        outcome=exc.outcome(),
+    )
 
 
 def _degraded_metadata(*, message_id: str, trace_id: str, error: str) -> dict:
@@ -610,6 +631,7 @@ async def chat(
     # Answer trustworthiness, populated by the generate skill (RAG route).
     gen_confidence = None
     gen_refused = False
+    outcome = None
     reasoning_text = ""  # initialised for general_chat / fast branches (RAG fills it)
 
     log.info(f"Chat request: session={session_id[:8]}... message={request.message[:50]}...")
@@ -679,6 +701,7 @@ async def chat(
                 trace_id=trace_id,
                 intent_confidence=1.0,
                 intent_reasoning="Fast mode (no classification)",
+                outcome=result.generation_outcome,
                 source_count=result.retrieval_count,
                 structured_answer=None,
             )
@@ -766,6 +789,9 @@ async def chat(
             # Bug2 Layer ⑤ sentinel takeover: if the generate node shunted a
             # misrouted general question, re-run the general_chat LLM path.
             shared_after = result.get("shared_state") or {}
+            outcome = shared_after.get("generation_outcome") or shared_after.get(
+                "model_queue_outcome"
+            )
             if shared_after.get("fallback_general_chat"):
                 answer, sources, gen_conf, gen_refused, reasoning_text = await _run_general_chat(
                     request.message, session_id, session_memory
@@ -871,6 +897,7 @@ async def chat(
             reasoning=reasoning_text,
             confidence=gen_confidence,
             refused=gen_refused,
+            outcome=outcome,
         )
         _capture(
             http_request,
@@ -895,6 +922,14 @@ async def chat(
             metadata=main_meta,
         )
 
+    except ModelBusyError as exc:
+        return ChatResponse(
+            response=BUSY_ANSWER,
+            session_id=session_id,
+            intent="unknown",
+            processing_time_ms=(time.perf_counter() - start_time) * 1000,
+            metadata=_busy_metadata(exc, message_id, trace_id),
+        )
     except Exception as e:
         log.error(f"Chat error: {e}")
 
@@ -1007,6 +1042,7 @@ async def chat_stream(
 
     async def generate():
         start_time = time.perf_counter()
+        outcome = None
         # Per-request identifiers, mirrored into every done-payload metadata so
         # the frontend can POST /api/feedback with the trace_id needed to drive
         # the eval flywheel (on_negative_feedback) and the message_id to target
@@ -1080,6 +1116,7 @@ async def chat_stream(
                         yield _sse({"type": "token", "content": event["content"]})
                     elif event["type"] == "done":
                         sources_data = event.get("sources", [])
+                        outcome = event.get("generation_outcome")
 
                 await session_memory.save_message(session_id, HumanMessage(content=request.message))
                 await session_memory.save_message(session_id, AIMessage(content=full_response))
@@ -1093,6 +1130,7 @@ async def chat_stream(
                         "processing_time_ms": (time.perf_counter() - start_time) * 1000,
                         "metadata": _build_metadata(
                             route="fast",
+                            outcome=outcome,
                             prompt_profile=_profile().prompt_profile_fast,
                             message_id=message_id,
                             trace_id=trace_id,
@@ -1246,6 +1284,11 @@ async def chat_stream(
                         if (node_output.get("shared_state") or {}).get("fallback_general_chat"):
                             fallback_general_chat = True
                         shared_update = node_output.get("shared_state") or {}
+                        outcome = (
+                            shared_update.get("generation_outcome")
+                            or shared_update.get("model_queue_outcome")
+                            or outcome
+                        )
                         if "generation_evidence" in shared_update:
                             generation_evidence = shared_update["generation_evidence"]
                         if node_name == "agent":
@@ -1369,6 +1412,7 @@ async def chat_stream(
                     force_rag=force_rag,
                     confidence=gen_confidence,
                     refused=gen_refused,
+                    outcome=outcome,
                 )
                 try:
                     from agent.eval.capture import maybe_capture_inference
@@ -1399,6 +1443,17 @@ async def chat_stream(
             # Send completion signal
             yield _sse(done_payload)
 
+        except ModelBusyError as exc:
+            yield _sse({"type": "token", "content": BUSY_ANSWER})
+            yield _sse(
+                {
+                    "type": "done",
+                    "full_response": BUSY_ANSWER,
+                    "sources": [],
+                    "processing_time_ms": (time.perf_counter() - start_time) * 1000,
+                    "metadata": _busy_metadata(exc, message_id, trace_id),
+                }
+            )
         except Exception as e:
             # Log the full detail server-side, but send the client a generic
             # message — str(e) may contain internal paths, DB URIs, or stack

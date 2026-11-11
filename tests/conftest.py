@@ -568,6 +568,7 @@ def client(tmp_data_dir, fake_llm, fake_retriever, fake_harness, fake_session_me
             retrieval_count=len(docs),
             retrieval_time_ms=10.0,
             generation_time_ms=20.0,
+            generation_outcome=None,
         )
 
     monkeypatch.setattr(fast_mod, "fast_generate_async", _fake_fast_generate_async)
