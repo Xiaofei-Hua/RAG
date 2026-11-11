@@ -61,33 +61,46 @@ def render_answer(message, sources: list[str], segmented=False) -> str:
     return "\n\n".join(render_paragraph(paragraph, sources) for paragraph in paragraphs)
 
 
-def build_generation_request(model, sources, segmented=False):
+def build_generation_request(model, sources, segmented=False, procedure=None):
     from core.prompts.domain_profile import get_active_profile
     from core.segmented_generation import SegmentedAnswer
 
     if not sources:
         raise ValueError("missing evidence sources")
+    from core.procedure_generation import ProcedureAnswer
+
     profile = get_active_profile()
+    prompt_key = (
+        "procedure_generate_system"
+        if procedure
+        else "segmented_generate_system"
+        if segmented
+        else "bounded_generate_system"
+    )
     prompt = ChatPromptTemplate.from_messages(
         [
             (
                 "system",
-                profile.prompts[
-                    "segmented_generate_system" if segmented else "bounded_generate_system"
-                ],
+                profile.prompts[prompt_key],
             ),
             ("human", profile.prompts["generate_human"]),
         ]
     )
     body = dict(getattr(model, "extra_body", None) or {})
     body["max_tokens"] = 2048
-    schema = (SegmentedAnswer if segmented else GroundedAnswer).model_json_schema()
-    schema["$defs"]["CitedParagraph"]["properties"]["source_ids"]["items"]["enum"] = list(
-        range(1, len(sources) + 1)
-    )
+    if procedure:
+        schema = ProcedureAnswer.model_json_schema()
+        schema["$defs"]["ProcedureParagraph"]["properties"]["clause_ids"]["items"]["enum"] = list(
+            range(1, len(procedure["units"]) + 1)
+        )
+    else:
+        schema = (SegmentedAnswer if segmented else GroundedAnswer).model_json_schema()
+        schema["$defs"]["CitedParagraph"]["properties"]["source_ids"]["items"]["enum"] = list(
+            range(1, len(sources) + 1)
+        )
     configured = model.bind(
         reasoning_effort="none",
-        temperature=0.7,
+        temperature=0 if procedure else 0.7,
         top_p=0.8,
         max_tokens=2048,
         extra_body=body,
@@ -100,19 +113,32 @@ def build_generation_request(model, sources, segmented=False):
 
 
 def generation_chain(model):
+    from core.procedure_generation import prepare_procedure, procedural_question, render_procedure
     from core.segmented_generation import segmented_enabled
 
-    def generate(inputs, config):
+    def prepare(inputs):
         segmented = segmented_enabled(model, inputs["question"], inputs.get("rewrite_count", 0))
-        sources = inputs["sources"]
-        message = build_generation_request(model, sources, segmented).invoke(inputs, config)
-        return render_answer(message, sources, segmented)
+        procedure = None
+        if segmented and procedural_question(inputs["question"]):
+            procedure = prepare_procedure(inputs)
+            segmented = False
+        configured = build_generation_request(model, inputs["sources"], segmented, procedure)
+        request_inputs = {**inputs, "context": procedure["context"]} if procedure else inputs
+        return configured, request_inputs, segmented, procedure
+
+    def render(message, inputs, segmented, procedure):
+        if procedure:
+            return render_procedure(message, inputs["sources"], procedure)
+        return render_answer(message, inputs["sources"], segmented)
+
+    def generate(inputs, config):
+        configured, request_inputs, segmented, procedure = prepare(inputs)
+        return render(configured.invoke(request_inputs, config), inputs, segmented, procedure)
 
     async def agenerate(inputs, config):
-        segmented = segmented_enabled(model, inputs["question"], inputs.get("rewrite_count", 0))
-        sources = inputs["sources"]
-        message = await build_generation_request(model, sources, segmented).ainvoke(inputs, config)
-        return render_answer(message, sources, segmented)
+        configured, request_inputs, segmented, procedure = prepare(inputs)
+        message = await configured.ainvoke(request_inputs, config)
+        return render(message, inputs, segmented, procedure)
 
     return RunnableLambda(generate, afunc=agenerate)
 

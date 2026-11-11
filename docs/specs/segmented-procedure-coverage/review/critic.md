@@ -55,3 +55,7 @@ F-07/F-08/F-09 的资格修复及 F-12 的开发复现关闭条件已有独立�
 - `review/final-code-critic.md`、`review/noise-removal-code-critic.md`：最终代码和预选接线评审。
 - `review/api-noise-removed-critic.md`：开发集全部 24 配对、来源/调用/延迟。
 - `review/api-holdout-critic.md`：新留出全部 12 配对、具体缺失/无关内容、视觉首节与完整发布分别评分、默认判定。
+
+## Delivery Verification Addendum
+
+主Agent补记（不改变独立语义评审结论）：Stage 1实际29a6ae1独立矩阵1282 passed/6 skipped、coverage74%；Stage 2补默认关闭/显式false回归后1315 passed/6 skipped、coverage75%，日志为归档中的stage1-backend.log、final-policy-matrix.log及相应coverage。运行时代码冻结未变，新增测试仅证明不启用时保留原路径。

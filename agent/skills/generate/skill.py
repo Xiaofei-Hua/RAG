@@ -236,6 +236,7 @@ class GenerateSkill(BaseSkill):
                             "rewrite_count": context.rewrite_count,
                             "context": ctx,
                             "sources": [item["source"] for item in prepared["evidence"]],
+                            "evidence": prepared["evidence"],
                         }
                     )
                     reasoning = ""
@@ -477,6 +478,10 @@ class GenerateSkill(BaseSkill):
                 history = self._inject_history("", context)
                 history_cost = estimate_tokens(history)
                 budget = max(256, self._skill_config.max_context_tokens - history_cost)
+                if segmented_enabled(self.llm, question, getattr(context, "rewrite_count", 0)):
+                    from core.procedure_generation import select_procedure_evidence
+
+                    evidence = select_procedure_evidence(evidence, question)
                 prepared = prepare_evidence(evidence, token_budget=budget)
                 prepared["degraded"] = bool(prepared.get("degraded") or normalization_degraded)
                 if history:
@@ -599,7 +604,12 @@ class GenerateSkill(BaseSkill):
             segmented_enabled(self.llm, question, context.rewrite_count)
             and context.output_checker is not None
         ):
-            inputs = {"question": question, "context": ctx, "sources": grounding_sources}
+            inputs = {
+                "question": question,
+                "context": ctx,
+                "sources": grounding_sources,
+                "evidence": prepared["evidence"],
+            }
             async for event in stream_answer(
                 self.llm, inputs, context.output_checker, grounding_contexts
             ):
@@ -629,6 +639,7 @@ class GenerateSkill(BaseSkill):
                         "rewrite_count": context.rewrite_count,
                         "context": ctx,
                         "sources": [item["source"] for item in prepared["evidence"]],
+                        "evidence": prepared["evidence"],
                     }
                 ):
                     text = str(chunk)

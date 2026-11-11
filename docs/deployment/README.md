@@ -28,4 +28,4 @@ Windows 11 单机使用优先阅读一篇式 [WSL Complete Guide](WSL_DEPLOYMENT
 
 ## Local RAG Scheduling and Publication
 
-本地9B/general合格运行时的单槽队列、比较题完整生成、非比较题条件合并分段、忙碌/未完成终态与独立回滚见[Bounded Local RAG](BOUNDED_LOCAL_RAG.md)。16GB机器使用单应用worker，`OLLAMA_NUM_PARALLEL=1`、context4096；不要用增加worker绕过模型队列。队列满/等候30秒终止为可重试忙碌，未完成正文不会冒充完整答案。修改`LOCAL_LLM_SCHEDULER`或`LOCAL_RAG_SEGMENTED`后重启应用。质量/时延数据见[验收结果](../specs/local-scheduling-streaming/results.md)。
+本地9B/general合格运行时的单槽调度、流程条款选择、忙碌/未完成终态与独立回滚见[Bounded Local RAG](BOUNDED_LOCAL_RAG.md)。16GB机器使用单应用worker、Ollama parallel=1、context4096；修改配置后重启。调度默认fair，流程优化默认false；比较/非流程保持完整生成，流程也在全文检查后发布。步骤覆盖已改善，但新留出存在无关内容，完整质量尚未合格；见[质量与耗时结果](../specs/segmented-procedure-coverage/results.md)。

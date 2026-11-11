@@ -10,11 +10,12 @@ import pytest
 from langchain_core.documents import Document
 
 
+@pytest.mark.parametrize("scenario", ["records", "procedure", "procedure_with_noise"])
 @pytest.mark.parametrize("mode", ["fast", "thinking"])
 @pytest.mark.parametrize("streaming", [False, True])
 @pytest.mark.parametrize("finish", ["stop", "length"])
 def test_segmented_api_persists_completion(
-    client, fake_session_memory, monkeypatch, bounded_local_model, mode, streaming, finish
+    client, fake_session_memory, monkeypatch, bounded_local_model, mode, streaming, finish, scenario
 ):
     from agent.guardrails.manager import GuardrailManager
     from agent.harness import AgentHarness, HarnessConfig
@@ -22,13 +23,23 @@ def test_segmented_api_persists_completion(
     from core.intent.classifier import IntentClassifier
 
     model, calls, output = bounded_local_model
+    is_procedure = scenario.startswith("procedure")
     monkeypatch.setenv("LOCAL_RAG_SEGMENTED", "true")
     output.update(
         text=(Path(__file__).parents[1] / "fixtures/local_segmented_answer.json").read_text(),
         finish=finish,
     )
-    value = json.loads(output["text"])
-    value["answer"][1]["text"] += "联系人电话13800138000。"
+    procedure = json.loads(
+        (Path(__file__).parents[1] / "fixtures/local_segmented_procedure.json").read_text()
+    )
+    value = procedure["response"] if is_procedure else json.loads(output["text"])
+    if not is_procedure:
+        value = {
+            "basis": value["answer"][1:],
+            "conditions": value["conditions"],
+            "conclusion": value["answer"][0],
+        }
+        value["basis"][0]["text"] += "联系人电话13800138000。"
     output["text"] = json.dumps(value, ensure_ascii=False)
     docs = [
         Document(
@@ -37,6 +48,32 @@ def test_segmented_api_persists_completion(
         )
         for name in ("A", "B")
     ]
+    if is_procedure:
+        docs = [
+            Document(
+                page_content=text.replace(
+                    "Velora archival scanner", "Phone 13800138000 Velora archival scanner"
+                ),
+                metadata={"source": name, "rerank_prob": 0.9},
+            )
+            for name, text in zip(procedure["sources"], procedure["contexts"])
+        ]
+    if scenario == "procedure_with_noise":
+        for doc in docs:
+            doc.metadata.update(
+                rerank_applied=True, rerank_score=0.98, rerank_output_space="probability"
+            )
+        docs.append(
+            Document(
+                page_content="另一台机器的无关操作记录。",
+                metadata={
+                    "source": "noise.txt",
+                    "rerank_applied": True,
+                    "rerank_score": 0.001,
+                    "rerank_output_space": "probability",
+                },
+            )
+        )
     result = SimpleNamespace(documents=docs, should_generate=True, diagnostics={"state": "accept"})
     workflow = SimpleNamespace(
         aretrieve=AsyncMock(return_value=result), retrieve=lambda *a, **k: result
@@ -58,7 +95,7 @@ def test_segmented_api_persists_completion(
     response = client.post(
         "/api/chat/stream" if streaming else "/api/chat",
         json={
-            "message": "Explain these measurement records and conditions.",
+            "message": procedure["question"] if is_procedure else "Explain these records.",
             "mode": mode,
             "session_id": "segment-api",
         },
@@ -76,8 +113,16 @@ def test_segmented_api_persists_completion(
         body = data["response"]
     assert data["metadata"]["generation_complete"] == (finish == "stop")
     assert "13800138000" not in body
-    if streaming or finish == "stop":
-        assert "相同" in body and "温度不同" in body and "[A.txt][B.txt]" in body
+    if finish == "stop":
+        if is_procedure:
+            assert "prepare the designated reference sheet" in body.lower()
+            assert "keep failed-check records" in body
+            assert "old head's result does not qualify" in body
+            assert "92 boxes" not in body
+            for source in procedure["sources"]:
+                assert f"[{source}]" in body
+        else:
+            assert "相同" in body and "温度不同" in body and "[A.txt][B.txt]" in body
     saved = asyncio.run(fake_session_memory.get_messages("segment-api"))
     answer = next(m for m in saved if m.type == "ai")
     assert answer.content == body
@@ -88,6 +133,16 @@ def test_segmented_api_persists_completion(
     item = next(m for m in history["messages"] if m["role"] == "assistant")
     assert item["metadata"]["generation_complete"] == (finish == "stop")
     assert sum(c.get("response_format", {}).get("type") == "json_schema" for c in calls) == 1
+    if is_procedure:
+        generation = next(
+            c for c in calls if c.get("response_format", {}).get("type") == "json_schema"
+        )
+        assert generation["messages"][0]["content"] == procedure["system_prompt"]
+        if scenario == "procedure_with_noise":
+            assert "noise.txt" not in generation["messages"][-1]["content"]
+            assert "noise.txt" not in json.dumps(data.get("sources", []))
+    if finish != "stop":
+        assert data["metadata"].get("confidence") is None
     harness.close()
 
 
