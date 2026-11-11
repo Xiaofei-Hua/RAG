@@ -19,6 +19,7 @@ from langchain_core.tools import BaseTool
 
 from agent.skills.agent.prompts import AGENT_SYSTEM_PROMPT
 from agent.skills.base import BaseSkill, SkillContext, SkillResult, SkillStatus
+from models.local_model_queue import ModelBusyError
 from models.local_rag_policy import control_kwargs
 from utils.log_utils import log
 
@@ -164,6 +165,8 @@ class AgentSkill(BaseSkill):
                     },
                 )
 
+            except ModelBusyError:
+                raise
             except Exception as e:
                 error_str = str(e)
                 log.warning(f"AgentSkill attempt {attempt + 1} failed: {e}")
@@ -258,6 +261,8 @@ class AgentSkill(BaseSkill):
                 metadata={"elapsed_ms": elapsed, "no_tool_call_nudged": nudged},
             )
 
+        except ModelBusyError:
+            raise
         except Exception as e:
             elapsed = (time.perf_counter() - start) * 1000
             log.error(f"AgentSkill async failed ({elapsed:.0f}ms): {e}")

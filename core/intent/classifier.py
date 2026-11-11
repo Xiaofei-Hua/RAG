@@ -16,6 +16,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.prompts import ChatPromptTemplate
 from pydantic import BaseModel, Field
 
+from models.local_model_queue import ModelBusyError
 from models.local_rag_policy import control_kwargs
 from utils.log_utils import log
 
@@ -169,6 +170,8 @@ class IntentClassifier:
 
                 return result
 
+            except ModelBusyError:
+                raise
             except Exception as e:
                 log.warning(f"Classification attempt {attempt + 1} failed: {e}")
 
@@ -218,6 +221,8 @@ class IntentClassifier:
 
                 return result
 
+            except ModelBusyError:
+                raise
             except Exception as e:
                 log.warning(f"Async classification attempt {attempt + 1} failed: {e}")
 
