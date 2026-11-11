@@ -211,6 +211,13 @@ class Reranker:
                 metadata["retrieval_score"] = metadata.get("score", 0.0)
                 metadata["rerank_score"] = float(score)
                 metadata["rerank_applied"] = True
+                activation = getattr(self._model, "activation_fn", None)
+                if activation is None:
+                    activation = getattr(self._model, "default_activation_function", None)
+                kind = type(activation)
+                metadata.pop("rerank_output_space", None)
+                if kind.__module__ == "torch.nn.modules.activation" and kind.__name__ == "Sigmoid":
+                    metadata["rerank_output_space"] = "probability"
                 results.append(Document(page_content=doc.page_content, metadata=metadata))
             log.debug(f"Reranked {len(documents)} documents -> {len(results)}")
             return results
