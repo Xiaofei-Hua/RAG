@@ -47,4 +47,4 @@
 
 ## Local Model Admission and Publication Tests
 
-队列测试用Event/取消竞争，禁止sleep等待；网络mock需提供真实OpenAI chunk discriminator以覆盖结构化流SDK。生成终态测试同时断言token拼接、done正文、保存正文及历史metadata，检查前正文不可泄露。比较、非流程或rewrite_count>0必须走原完整schema；流程选择须覆盖实际原文/来源、完整发布和低相关证据去除的JSON/SSE一致性，新prompt有golden fixture。推理capture单例在每测试后关闭，避免新增SSE capture导致SQLite泄漏。真实模型对照/留出证据不冒充单元或语义证明。
+队列测试用Event/取消竞争，禁止sleep等待；网络mock需提供真实OpenAI chunk discriminator以覆盖结构化流SDK。生成终态测试同时断言token拼接、done正文、保存正文及历史metadata，检查前正文不可泄露。比较、非流程或rewrite_count>0必须走原完整schema；中文流程分类须覆盖内部JSON不展示、主规则/范围前置、omit不恢复、所问未知与真实来源、JSON/SSE完整发布；英文资格回退同时断言不预删证据及原请求。新prompt有真实输出golden fixture。推理capture单例在每测试后关闭，避免新增SSE capture导致SQLite泄漏。真实模型对照/留出证据不冒充单元或语义证明。

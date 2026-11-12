@@ -1,7 +1,7 @@
 # Bounded Local RAG
 
 ## Scope
-默认问答模型为`qwen3.5:9b`。本机16GB显卡的合格组合为Q4_K_M、4096 context、原生Ollama 0.24.0同源构建加格式修复、BGE-M3及reranker。没有因关闭隐式思考而省略结论/条件/正文引用；最终作答一次，意图/工具/相关性控制为短调用，不在线逐句调用模型核验。来源编号与结构检查不能代替语义事实核验，grounding保持None、confidence_degraded=true。
+默认问答模型为`qwen3.5:9b`。本机16GB显卡的合格组合为Q4_K_M、4096 context、原生Ollama 0.24.0同源构建加格式修复、BGE-M3及reranker。有界策略保留结论、条件和正文引用要求；最终作答一次，意图/工具/相关性控制为短调用，不在线逐句调用模型核验。来源编号与结构检查不能代替语义事实核验，grounding保持None、confidence_degraded=true。
 
 `LOCAL_RAG_POLICY=auto`只对本地loopback:11434/v1、精确9B/general profile及实际`/api/version=0.24.0-format-backport`启用有界策略。其他版本/模型/profile维持legacy。服务身份按端点在进程内缓存，版本读取失败保持legacy直到应用重启；不会以模型请求探测。`legacy`明确回滚；`bounded`用于已验证运行时的显式试验，不能据此声称其他版本通过。
 
@@ -48,6 +48,8 @@ ExecStart=/usr/local/bin/ollama-rag-format-backport serve
 
 `LOCAL_LLM_SCHEDULER=fair`开启单进程共享模型槽：1个运行、最多8个等待、等待上限30秒；短控制调用有界优先并防止长生成饥饿。队列满/超时立即返回可重试忙碌终态，不继续模型重试。16GB部署使用一个应用worker、Ollama parallel=1；这不提供跨进程全局调度。
 
-`LOCAL_RAG_SEGMENTED=true`仅对明确要求步骤/流程、同语种且未改写的合格本地问题启用条款选择：模型一次选择并排列原文依据，保留动作、触发条件与记录要求，完整生成并通过引用/PII检查后整体发布。比较、非流程、跨语或资格不足时保留原完整生成；不增加在线模型核验。第3步单槽调度默认fair；第4步默认仍false：新留出12/12覆盖全部核心步骤，但6/12因带入无关内容等未通过完整质量验收。显式试用需接受该限制；off/false并重启可独立回滚。
+`LOCAL_RAG_SEGMENTED`默认true，仅作用于合格本地9B/general的中文明确流程、非比较且未改写的问题：一次为完整原文条款分类，程序把主要规则和范围置前，并保留相关步骤、记录用途和所问未知的原文引用。完整输出通过既有引用/PII检查后整体发布，不增加模型核验调用。英文、比较、非流程、跨语或资料资格不足仍使用原完整生成。第3步调度默认fair；设置off/false并重启可独立回滚，已有显式false继续生效。
 
-步骤修复的[实验结果](../specs/segmented-procedure-coverage/results.md)保留全部失败和样本限制；原调度/取消实验见[第3、4步记录](../specs/local-scheduling-streaming/results.md)。流程选择temperature=0，其他完整生成=.7；共同保持top_p=.8、none、2048预算。仅在同语种有已测概率≥.9且全部异语均≤.01时排除低相关异语候选，来源同步到实际保留集合；未知分数不会当0。
+本轮三道新题、两模式各三轮共18答的关键事实、步骤、记录用途与引用均完整；首节顺序12/18满足要求，余下6答的许可仍在第二节，作为已接受的展示限制保留。快速/深度正文等待中位数分别由10.71/13.78秒降至9.75/10.07秒；有限样本与完整结果见[实验报告](../specs/procedure-relevance-order/results.md)。
+
+中文相关性与首节修复的[实验结果](../specs/procedure-relevance-order/results.md)保留全部失败、英文未合格边界和样本限制；原调度/取消实验见[第3、4步记录](../specs/local-scheduling-streaming/results.md)。流程选择temperature=0，其他完整生成=.7；共同保持top_p=.8、none、2048预算。仅在同语种有已测概率≥.9且全部异语均≤.01时排除低相关异语候选，来源同步到实际保留集合；未知分数不会当0。

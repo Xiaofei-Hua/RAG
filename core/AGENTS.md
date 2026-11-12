@@ -93,4 +93,4 @@ core/
 | Checked paragraph | 半JSON/无效来源/检查失败/非stop结束 | 未发布部分绝不泄露；保留已检查前缀+固定未完成提示，generation_complete=false，不二次生成 | core/segmented_generation.py |
 | Comparison/rewrite | 中英文比较启发式匹配或rewrite_count>0 | 保留已合格完整bounded生成，同样2048 tokens/单调用/原输出检查 | core/local_rag_generation.py |
 
-LOCAL_RAG_SEGMENTED显式开启后只作用于合格的明确流程：同次选择条款，完整stop后组成全文并一次检查发布；比较、改写、非流程及语言/资料资格不足使用原完整生成。默认false。实际生成来源/上下文必须与kept证据一致，原retrieval_evidence不由generate改写。单槽仍是进程内约束；参数与范围见`docs/deployment/BOUNDED_LOCAL_RAG.md`。
+LOCAL_RAG_SEGMENTED默认true。仅合格中文明确流程使用完整原文条款/角色分类，main_rule/scope先展示，已选step的明确规范及完成条件前置，omit不恢复；完整stop后组合原文并检查一次。英文、比较、改写、非流程及资料资格不足保持原完整生成；共同语言边界保护select与prepare，英文原上下文不得预删。实际生成来源/上下文与kept证据一致，原retrieval_evidence不由generate改写。单槽仍为进程内约束；参数与回滚见`docs/deployment/BOUNDED_LOCAL_RAG.md`。

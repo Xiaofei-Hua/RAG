@@ -1,0 +1,56 @@
+{
+  "baseline": {
+    "metrics": {
+      "fast": {
+        "n": 9,
+        "first_body_p50_s": 10.714266008000322,
+        "first_body_p95_s": 13.819372161799945,
+        "mean_output_tokens": 985.7777777777778
+      },
+      "thinking": {
+        "n": 9,
+        "first_body_p50_s": 13.78092894800011,
+        "first_body_p95_s": 14.944901593600116,
+        "mean_output_tokens": 950.8888888888889
+      },
+      "all": {
+        "n": 18,
+        "first_body_p50_s": 13.050238584500221,
+        "first_body_p95_s": 15.158386469449942,
+        "mean_output_tokens": 968.3333333333334
+      }
+    },
+    "http_calls": 45,
+    "generation_calls": 18,
+    "all_generation_stop": true,
+    "all_token_done_equal": true
+  },
+  "candidate": {
+    "metrics": {
+      "fast": {
+        "n": 9,
+        "first_body_p50_s": 9.749927279000076,
+        "first_body_p95_s": 10.11459428199978,
+        "mean_output_tokens": 845.3333333333334
+      },
+      "thinking": {
+        "n": 9,
+        "first_body_p50_s": 10.066609746999347,
+        "first_body_p95_s": 10.175646013599543,
+        "mean_output_tokens": 572.6666666666666
+      },
+      "all": {
+        "n": 18,
+        "first_body_p50_s": 9.92660008949997,
+        "first_body_p95_s": 10.141941961399516,
+        "mean_output_tokens": 709
+      }
+    },
+    "http_calls": 45,
+    "generation_calls": 18,
+    "all_generation_stop": true,
+    "all_token_done_equal": true
+  },
+  "normalized_human_context_question_equal_pairs": 18,
+  "notes": "Fresh v19 kept original r2 protocol; only whitespace and procedure clause labels removed for input comparison. End-to-end first-body includes retrieval/control/publication. No inference about statistical significance."
+}

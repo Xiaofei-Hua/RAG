@@ -1593,7 +1593,7 @@ curl -X POST http://localhost:8000/api/feedback \
 
 本地9B/general/合格引擎的bounded策略：Fast最多1次最终生成；Thinking一般3次短控制+1次最终生成，改写时另计。深度模式表示检索编排，不表示开启无限隐藏思考。grounding不可用仍返回null/degraded，没有新增逐句模型核验。
 
-`LOCAL_RAG_SEGMENTED`默认false。显式开启后，仅合格的同语种流程问题由一次模型选择和排列条款，组成完整正文并通过既有引用/PII检查后发布；其首个token事件就是完整已检查答案。比较、改写、非流程、跨语或资格不足继续原完整bounded生成。token事件不是模型原始token，不暴露选择JSON；结构与来源合法不代表语义质量已合格。新留出步骤覆盖完整，但有无关内容退步，故仍不默认启用；见[实验结果](specs/segmented-procedure-coverage/results.md)。
+`LOCAL_RAG_SEGMENTED`默认true，仅合格本地9B/general中文明确流程适用。一次为完整原文条款分类，程序按规则/范围、步骤、记录/用途、条件/边界组合原文，经既有引用/PII检查后发布；首个token事件即完整已检查答案，不暴露内部标注JSON。英文、比较、改写、非流程、跨语或资料资格不足继续原完整生成；英文证据不预先删改。结构合法不代表语义正确，真实质量与耗时、有限样本和回滚见[实验结果](specs/procedure-relevance-order/results.md)；显式false保持原生成。
 
 正常结束时，token拼接=done.full_response=会话保存正文。中途停止或无效结束时，已交付前缀保留并附固定未完成提示，done.metadata.generation_complete=false；前端网络中断/用户停止保留本地已显示正文，服务端取消不保存成功答案。`GET /api/chat/history/{session_id}`每条消息新增metadata，恢复保存的生成终态；旧消息metadata为空。
 

@@ -84,4 +84,4 @@ curl --fail http://127.0.0.1:8000/health
 
 ## Local RAG Scheduling and Publication
 
-本地9B/general合格运行时的单槽调度、流程条款选择、忙碌/未完成终态与独立回滚见[Bounded Local RAG](BOUNDED_LOCAL_RAG.md)。16GB机器使用单应用worker、Ollama parallel=1、context4096；修改配置后重启。调度默认fair，流程优化默认false；比较/非流程保持完整生成，流程也在全文检查后发布。步骤覆盖已改善，但新留出存在无关内容，完整质量尚未合格；见[质量与耗时结果](../specs/segmented-procedure-coverage/results.md)。
+本地9B/general运行时的调度、中文流程分类、忙碌/未完成终态与回滚见[Bounded Local RAG](BOUNDED_LOCAL_RAG.md)。16GB机器使用单应用worker、Ollama parallel=1、context4096；调度默认fair，中文流程优化默认true，英文/比较/改写/非流程保持原完整生成。流程在全文检查后发布，最终生成仍一次；已有显式false继续生效。配置修改后重启，真实质量/耗时及样本限制见[实验结果](../specs/procedure-relevance-order/results.md)。

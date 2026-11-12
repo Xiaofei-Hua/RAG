@@ -79,3 +79,7 @@ uv run --frozen --no-sync python tests/integration/run_bounded_api_probe.py --pr
 ## Procedure Follow-up
 
 2026-11-11步骤遗漏修复与新的独立留出见[后续实验](../segmented-procedure-coverage/results.md)。此处历史失败不改判；第3步fair继续默认，第4步仍false。
+
+## Follow-up
+
+中文相关性与首节的后续修复、当前默认资格及真实对照见[后续结果](../procedure-relevance-order/results.md)。本报告原始失败与历史默认不追溯改写。

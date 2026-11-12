@@ -35,3 +35,7 @@ RTX5070Ti 16GB，Qwen3.5:9b Q4_K_M，Ollama0.24.0-format-backport，context4096/
 ## Evidence and Reproduction
 `validation/evidence.tar.gz`保存所有v1–v6失败/成功、原始JSONL、协议、逐答评审、历史设计、红绿/全矩阵日志及测试适配器；不含运行数据库或凭据。`validation/final-development-metrics.json`、`validation/holdout-metrics.json`为原始记录计算的汇总。解压后按归档路径阅读，不把早期逐段首发指标与本次完整首见混用。
 实验适配器在归档tests/integration中，复跑前恢复到tests/integration，使用隔离存储/同一限定模型服务：`uv run --frozen --no-sync python tests/integration/run_bounded_api_probe.py --protocol <protocol.json> --output <new-dir> --policy bounded --scheduler fair --segmented false|true --rounds 3 --modes fast,thinking --timeout 45`。默认false；本次不继续针对已暴露留出调提示。后续需要证明相关性选择及首节顺序的改进能泛化，再另冻新题评估默认资格。
+
+## Follow-up
+
+中文相关性与首节的后续修复、当前默认资格及真实对照见[后续结果](../procedure-relevance-order/results.md)。本报告原始失败与历史默认不追溯改写。

@@ -7,16 +7,22 @@ starting from 0.1.0.
 
 ## [Unreleased]
 
+### Fixed — Procedure relevance and opening rules
+
+- 中文流程改为同次完整原文条款分类，排除同文无关信息并保留所问步骤、记录用途和未知；仅回连句首指代，避免独立许可被并入准备步骤。仍一次最终生成，完整检查后发布。
+- [breaking] `LOCAL_RAG_SEGMENTED`默认true，仅作用于合格本地9B/general中文明确流程、非比较且未改写的问题；英文等其他路径保持完整生成。显式false仍优先，修改或移除并重启后才启用，设置false可回滚。
+- 新留出关键内容18/18完整、严格首节12/18；6答许可位置后移是用户按整体质量标准接受的展示限制，未宣称全部修复。快速/深度正文等待中位数10.71/13.78→9.75/10.07秒，证据与失败历史见docs/specs/procedure-relevance-order/results.md。
+
 ### Fixed — Procedural step coverage
 
 - 修复显式试用路径中准备、失败记录、用途与起算条件的遗漏：同次模型选择并排列原文条款，完整检查后发布，不增加生成或核验调用；流程选择temperature=0，普通生成参数不变。
-- [breaking] `LOCAL_RAG_SEGMENTED=true`现在仅选择合格流程，非流程/比较/改写保留完整生成；旧非流程逐段行为不再开启。默认仍false，设置false并重启可回滚。新留出核心步骤12/12、严格全文6/12，无关信息尚未解决，详见docs/specs/segmented-procedure-coverage/results.md。
+- [breaking] `LOCAL_RAG_SEGMENTED=true`现在仅选择合格流程，非流程/比较/改写保留完整生成；旧非流程逐段行为不再开启。该阶段默认false，设置false并重启可回滚。新留出核心步骤12/12、严格全文6/12，无关信息尚未解决，详见docs/specs/segmented-procedure-coverage/results.md。
 
 ### Changed — Local scheduling and checked publication
 
 - [breaking] 新增本地调度/分段配置`LOCAL_LLM_SCHEDULER=fair`、`LOCAL_RAG_SEGMENTED=false`（仅合格bounded范围）；单进程1槽/8等待/30秒等待，busy终止旧retry而非继续模型调用。通过off/false并重启独立回滚；多worker不能共享队列。
 - [breaking] 新增generation_outcome/model_queue_outcome状态契约与API/history完成性metadata；未完成正文保留且generation_complete=false，客户端需识别busy/incomplete而不能把所有HTTP200当完整答案。界面支持停止并保留已显示段落。
-- 显式开启分段后，非比较且未改写题目使用conditions→answer单次生成、检查后逐段展示；比较与改写保留已合格完整生成，避免精简导致明确比较结论遗漏。留出长流程有步骤遗漏，因此分段默认关闭；真实质量、首段/尾延迟与适用范围见docs/specs/local-scheduling-streaming/results.md。
+- 显式开启分段后，非比较且未改写题目使用conditions→answer单次生成、检查后逐段展示；比较与改写保留已合格完整生成，避免精简导致明确比较结论遗漏。该阶段留出长流程有步骤遗漏，因此当时保持默认关闭；真实质量、首段/尾延迟与适用范围见docs/specs/local-scheduling-streaming/results.md。
 
 ### Changed — Bounded local RAG
 
