@@ -308,23 +308,30 @@ def test_reranker_marks_actual_probability_without_changing_scores():
 
 
 @pytest.mark.parametrize("flag", [None, "false"])
-def test_procedure_default_and_opt_out_keep_original_generation(
+def test_procedure_default_and_opt_out_keep_request_contract(
     bounded_local_model, monkeypatch, flag
 ):
     from core.local_rag_generation import generation_chain
 
-    _, inputs = fixture_input()
+    case, inputs = fixture_input()
     if flag is None:
         monkeypatch.delenv("LOCAL_RAG_SEGMENTED", raising=False)
     else:
         monkeypatch.setenv("LOCAL_RAG_SEGMENTED", flag)
-    model, calls, _ = bounded_local_model
-    generation_chain(model).invoke(inputs)
+    model, calls, output = bounded_local_model
+    if flag is None:
+        output["text"] = json.dumps(case["response"])
+    answer = generation_chain(model).invoke(inputs)
     assert len(calls) == 1
     schema = calls[0]["response_format"]["json_schema"]["schema"]
-    assert "basis" in schema["properties"] and "ProcedureParagraph" not in schema["$defs"]
-    assert calls[0]["temperature"] == 0.7
-    assert inputs["context"] in calls[0]["messages"][-1]["content"]
+    if flag is None:
+        assert answer == case["expected_answer"]
+        assert "clauses" in schema["properties"]
+        assert calls[0]["temperature"] == 0
+    else:
+        assert "basis" in schema["properties"] and "ProcedureParagraph" not in schema["$defs"]
+        assert calls[0]["temperature"] == 0.7
+        assert inputs["context"] in calls[0]["messages"][-1]["content"]
 
 
 @pytest.mark.parametrize("language", ["zh", "en"])

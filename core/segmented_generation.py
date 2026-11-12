@@ -33,7 +33,7 @@ def segmented_enabled(model=None, question="", rewrite_count=0):
     from core.procedure_generation import procedural_question
 
     return (
-        os.getenv("LOCAL_RAG_SEGMENTED", "false").lower() == "true"
+        os.getenv("LOCAL_RAG_SEGMENTED", "true").lower() == "true"
         and bounded_local_rag(model)
         and rewrite_count == 0
         and procedural_question(question)
