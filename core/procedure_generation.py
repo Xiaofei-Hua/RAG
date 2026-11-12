@@ -1,6 +1,7 @@
 """Compose complete procedural answers from selected evidence wording."""
 
 import re
+from typing import Literal, get_args
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -14,16 +15,41 @@ _PROCEDURE = re.compile(
 _REFERENCE = re.compile(r"\b(?:that|this|these|those|it|its)\b|该|此|其|上述|本次", re.IGNORECASE)
 
 
-class ProcedureParagraph(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
-    title: str = Field(min_length=1)
-    clause_ids: list[int] = Field(min_length=1)
+_CONSTRAINT = re.compile(
+    r"必须|须|不得|不能|禁止|仅|只有|才能|完成才|方可|不允许|"
+    r"\b(?:must|shall|only|before|until|unless|required|requires|allowed|permitted|"
+    r"prohibited|cannot)\b|\b(?:may|can|do)\s+not\b",
+    re.IGNORECASE,
+)
+ClauseRole = Literal["main_rule", "scope", "step", "record", "limit", "omit"]
 
 
 class ProcedureAnswer(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    conditions: list[ProcedureParagraph] = Field(max_length=0)
-    answer: list[ProcedureParagraph] = Field(min_length=1)
+    clauses: dict[str, ClauseRole] = Field(min_length=1)
+
+
+def _clause_key(unit):
+    return f"{unit['id']}:{unit['text']}"
+
+
+def procedure_schema(procedure):
+    keys = [_clause_key(unit) for unit in procedure["units"]]
+    return {
+        "type": "object",
+        "properties": {
+            "clauses": {
+                "type": "object",
+                "properties": {
+                    key: {"type": "string", "enum": list(get_args(ClauseRole))} for key in keys
+                },
+                "required": keys,
+                "additionalProperties": False,
+            }
+        },
+        "required": ["clauses"],
+        "additionalProperties": False,
+    }
 
 
 def procedural_question(question):
@@ -69,7 +95,7 @@ def _eligible_evidence(evidence, question):
         language = "en"
     if re.search(r"(?:用|使用|in)\s*(?:中文|汉语|Chinese)", question, re.I):
         language = "zh"
-    if not evidence or language is None:
+    if not evidence or language != "zh":
         return None
     from core.retrieval.scoring import probability
 
@@ -126,7 +152,7 @@ def prepare_procedure(inputs):
             if not sentence:
                 continue
             # 指代句连同同一来源中的前句保留，不把触发条件切掉。
-            if grouped and _REFERENCE.search(sentence):
+            if grouped and _REFERENCE.match(sentence):
                 grouped[-1] += " " + sentence
             else:
                 grouped.append(sentence)
@@ -140,6 +166,7 @@ def prepare_procedure(inputs):
         return None
     return {
         "units": units,
+        "language": _language(evidence[0]["content"]),
         "context": inputs["context"].replace(original, render_untrusted_evidence(annotated), 1),
     }
 
@@ -151,15 +178,32 @@ def render_procedure(message, sources, procedure):
         raise ValueError("incomplete_procedure")
     answer = ProcedureAnswer.model_validate_json(complete_content(message))
     units = procedure["units"]
+    roles = {
+        key: "lead" if role in {"main_rule", "scope"} else role
+        for key, role in answer.clauses.items()
+    }
+    if set(roles) != {_clause_key(unit) for unit in units}:
+        raise ValueError("invalid_procedure_clauses")
+    for unit in units:
+        key = _clause_key(unit)
+        # 只调整已选操作约束的位置，不恢复无关条款或改写许可条件。
+        if roles[key] == "step" and _CONSTRAINT.search(unit["text"]):
+            roles[key] = "lead"
+    if "lead" not in roles.values():
+        raise ValueError("missing_procedure_lead")
+    titles = (
+        ["规则与适用范围", "操作步骤", "记录与用途", "条件与边界"]
+        if procedure["language"] == "zh"
+        else ["Rules and scope", "Procedure", "Records and purposes", "Conditions and boundaries"]
+    )
     paragraphs = []
-    for paragraph in answer.answer:
-        ids = list(dict.fromkeys(paragraph.clause_ids))
-        if any(i < 1 or i > len(units) for i in ids):
-            raise ValueError("invalid_procedure_clause")
-        selected = [units[i - 1] for i in ids]
+    for role, title in zip(["lead", "step", "record", "limit"], titles):
+        selected = [unit for unit in units if roles[_clause_key(unit)] == role]
+        if not selected:
+            continue
         cited = CitedParagraph(
-            text="**" + paragraph.title + "**\n\n" + " ".join(u["text"] for u in selected),
-            source_ids=list(dict.fromkeys(u["source_id"] for u in selected)),
+            text="**" + title + "**\n\n" + " ".join(unit["text"] for unit in selected),
+            source_ids=list(dict.fromkeys(unit["source_id"] for unit in selected)),
         )
         paragraphs.append(render_paragraph(cited, sources))
     return "\n\n".join(paragraphs)

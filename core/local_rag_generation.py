@@ -67,7 +67,7 @@ def build_generation_request(model, sources, segmented=False, procedure=None):
 
     if not sources:
         raise ValueError("missing evidence sources")
-    from core.procedure_generation import ProcedureAnswer
+    from core.procedure_generation import procedure_schema
 
     profile = get_active_profile()
     prompt_key = (
@@ -89,10 +89,7 @@ def build_generation_request(model, sources, segmented=False, procedure=None):
     body = dict(getattr(model, "extra_body", None) or {})
     body["max_tokens"] = 2048
     if procedure:
-        schema = ProcedureAnswer.model_json_schema()
-        schema["$defs"]["ProcedureParagraph"]["properties"]["clause_ids"]["items"]["enum"] = list(
-            range(1, len(procedure["units"]) + 1)
-        )
+        schema = procedure_schema(procedure)
     else:
         schema = (SegmentedAnswer if segmented else GroundedAnswer).model_json_schema()
         schema["$defs"]["CitedParagraph"]["properties"]["source_ids"]["items"]["enum"] = list(
