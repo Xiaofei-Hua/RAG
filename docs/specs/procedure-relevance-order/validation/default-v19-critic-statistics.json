@@ -1,0 +1,100 @@
+{
+  "rows": [
+    {
+      "row": 1,
+      "case_id": "holdout_v19_spoken_audio_playlist",
+      "mode": "fast",
+      "generation_wire_index": 1,
+      "calls": 1,
+      "first_body_s": 10.29783038000005,
+      "generation_wire_s": 9.958001289000094,
+      "prompt_tokens": 1382,
+      "completion_tokens": 873,
+      "raw_request_selection_body_equal_frozen_v19": true,
+      "full_relevance_unknowns_citations": "pass",
+      "lead": "accepted-display-limitation"
+    },
+    {
+      "row": 2,
+      "case_id": "holdout_v19_doubles_match_assignment",
+      "mode": "fast",
+      "generation_wire_index": 2,
+      "calls": 1,
+      "first_body_s": 9.566178641000079,
+      "generation_wire_s": 9.341336644999501,
+      "prompt_tokens": 1319,
+      "completion_tokens": 815,
+      "raw_request_selection_body_equal_frozen_v19": true,
+      "full_relevance_unknowns_citations": "pass",
+      "lead": "pass"
+    },
+    {
+      "row": 3,
+      "case_id": "holdout_v19_rehearsal_light_cues",
+      "mode": "fast",
+      "generation_wire_index": 3,
+      "calls": 1,
+      "first_body_s": 9.846157875000245,
+      "generation_wire_s": 9.621157613999458,
+      "prompt_tokens": 1357,
+      "completion_tokens": 848,
+      "raw_request_selection_body_equal_frozen_v19": true,
+      "full_relevance_unknowns_citations": "pass",
+      "lead": "pass"
+    },
+    {
+      "row": 4,
+      "case_id": "holdout_v19_spoken_audio_playlist",
+      "mode": "thinking",
+      "generation_wire_index": 7,
+      "calls": 4,
+      "first_body_s": 10.169232094000108,
+      "generation_wire_s": 6.890581558000122,
+      "prompt_tokens": 1117,
+      "completion_tokens": 600,
+      "raw_request_selection_body_equal_frozen_v19": true,
+      "full_relevance_unknowns_citations": "pass",
+      "lead": "accepted-display-limitation"
+    },
+    {
+      "row": 5,
+      "case_id": "holdout_v19_doubles_match_assignment",
+      "mode": "thinking",
+      "generation_wire_index": 11,
+      "calls": 4,
+      "first_body_s": 9.591658217000258,
+      "generation_wire_s": 6.254174534999947,
+      "prompt_tokens": 1054,
+      "completion_tokens": 540,
+      "raw_request_selection_body_equal_frozen_v19": true,
+      "full_relevance_unknowns_citations": "pass",
+      "lead": "pass"
+    },
+    {
+      "row": 6,
+      "case_id": "holdout_v19_rehearsal_light_cues",
+      "mode": "thinking",
+      "generation_wire_index": 15,
+      "calls": 4,
+      "first_body_s": 10.156469313000343,
+      "generation_wire_s": 6.6485006150005574,
+      "prompt_tokens": 1093,
+      "completion_tokens": 578,
+      "raw_request_selection_body_equal_frozen_v19": true,
+      "full_relevance_unknowns_citations": "pass",
+      "lead": "pass"
+    }
+  ],
+  "calls": {
+    "generation": 6,
+    "control": 9
+  },
+  "full_content_pass": 6,
+  "strict_lead_pass": 4,
+  "accepted_display_limitations": 2,
+  "original_v19_generation_request_selection_body_equal": 6,
+  "sse_done_saved_match": 6,
+  "first_body_p50_s": 10.001313594000294,
+  "first_body_p95_s": 10.265680808500065,
+  "decision": "Pass under explicit user acceptance; radio first-section limitation preserved, not fixed."
+}

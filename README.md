@@ -67,7 +67,9 @@ Fast 模式跳过外层 Agent、Grade 和 Rewrite 节点，但复用同一 `Retr
 
 `LOCAL_LLM_SCHEDULER=fair`开启单进程共享模型槽：1个运行、最多8个等待、等待上限30秒；短控制调用有界优先并防止长生成饥饿。队列满/超时立即返回可重试忙碌终态，不继续模型重试。16GB部署使用一个应用worker、Ollama parallel=1；这不提供跨进程全局调度。
 
-`LOCAL_RAG_SEGMENTED=true`仅对明确要求步骤/流程、同语种且未改写的合格本地问题启用条款选择：模型一次选择并排列原文依据，保留动作、触发条件与记录要求，完整生成并通过引用/PII检查后整体发布。比较、非流程、跨语或资格不足时保留原完整生成；不增加在线模型核验。第3步单槽调度默认fair；第4步默认仍false：新留出12/12覆盖全部核心步骤，但6/12因带入无关内容等未通过完整质量验收。显式试用需接受该限制；off/false并重启可独立回滚。
+`LOCAL_RAG_SEGMENTED`默认true，仅作用于合格本地9B/general的中文明确流程、非比较且未改写的问题：一次为完整原文条款分类，程序把主要规则和范围置前，并保留相关步骤、记录用途和所问未知的原文引用。完整输出通过既有引用/PII检查后整体发布，不增加模型核验调用。英文、比较、非流程、跨语或资料资格不足仍使用原完整生成。第3步调度默认fair；设置off/false并重启可独立回滚，已有显式false继续生效。
+
+本轮三道新题、两模式各三轮共18答的关键事实、步骤、记录用途与引用均完整；首节顺序12/18满足要求，余下6答的许可仍在第二节，作为已接受的展示限制保留。快速/深度正文等待中位数分别由10.71/13.78秒降至9.75/10.07秒；有限样本与完整结果见[实验报告](docs/specs/procedure-relevance-order/results.md)。
 
 运行时资格、参数与回滚见[本地生成部署说明](docs/deployment/BOUNDED_LOCAL_RAG.md)，步骤修复、逐题质量和耗时见[流程实验结果](docs/specs/segmented-procedure-coverage/results.md)。
 
@@ -376,7 +378,7 @@ location /rag/ {
 | `LLM_MODEL` | `qwen3.5:9b` | 问答模型名称 |
 | `LOCAL_RAG_POLICY` | `auto` | 仅合格本地运行时启用bounded；legacy回滚 |
 | `LOCAL_LLM_SCHEDULER` | `fair` | fair启用单进程有界模型调度 |
-| `LOCAL_RAG_SEGMENTED` | `false` | 显式试用流程条款选择；完整检查后发布，留出相关性尚未合格 |
+| `LOCAL_RAG_SEGMENTED` | `true` | 中文明确流程的逐条分类与完整检查发布；英文等保留完整生成 |
 | `LLM_TEMPERATURE` | `0.0` | LLM 采样温度 |
 | `LLM_MAX_TOKENS` | `4096` | 单次回答最大生成 token |
 | `LLM_TIMEOUT` | `60` | 单次 LLM 请求超时秒数 |

@@ -40,6 +40,11 @@ def test_segmented_api_persists_completion(
             "conclusion": value["answer"][0],
         }
         value["basis"][0]["text"] += "联系人电话13800138000。"
+    if is_procedure:
+        value["clauses"] = {
+            key.replace("实际交出时间", "实际交出时间及联系人电话13800138000"): role
+            for key, role in value["clauses"].items()
+        }
     output["text"] = json.dumps(value, ensure_ascii=False)
     docs = [
         Document(
@@ -51,9 +56,7 @@ def test_segmented_api_persists_completion(
     if is_procedure:
         docs = [
             Document(
-                page_content=text.replace(
-                    "Velora archival scanner", "Phone 13800138000 Velora archival scanner"
-                ),
+                page_content=text.replace("实际交出时间", "实际交出时间及联系人电话13800138000"),
                 metadata={"source": name, "rerank_prob": 0.9},
             )
             for name, text in zip(procedure["sources"], procedure["contexts"])
@@ -65,7 +68,7 @@ def test_segmented_api_persists_completion(
             )
         docs.append(
             Document(
-                page_content="另一台机器的无关操作记录。",
+                page_content="This is the inventory record for another machine.",
                 metadata={
                     "source": "noise.txt",
                     "rerank_applied": True,
@@ -115,10 +118,13 @@ def test_segmented_api_persists_completion(
     assert "13800138000" not in body
     if finish == "stop":
         if is_procedure:
-            assert "prepare the designated reference sheet" in body.lower()
-            assert "keep failed-check records" in body
-            assert "old head's result does not qualify" in body
-            assert "92 boxes" not in body
+            assert "换件清单和检查结果交给接待员" in body
+            assert "待复核的记录也保留" in body
+            assert "先前的签收不沿用" in body
+            assert "蓝色圆点" not in body
+            lead = body.split("\n\n**")[0]
+            assert "三项都完成才交出物件" in lead
+            assert "不处理电动或带电池玩具" in lead
             for source in procedure["sources"]:
                 assert f"[{source}]" in body
         else:
